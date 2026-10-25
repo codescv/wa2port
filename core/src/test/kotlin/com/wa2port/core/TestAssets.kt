@@ -6,7 +6,13 @@ import java.io.File
 
 /** Shared access to the real WA2 install used by the desktop test-suite. */
 object TestAssets {
-    val root: File = File(System.getProperty("wa2.root") ?: "/usr/local/google/home/chii/Developer/wa2port/resource/WA2")
+    val root: File = File(
+        System.getProperty("wa2.root")
+            ?: System.getenv("WA2_ROOT")
+            ?: listOf(File("resource/WA2"), File("../resource/WA2"), File("../../resource/WA2"), File("../../../resource/WA2"))
+                .firstOrNull { it.isDirectory }?.canonicalPath
+            ?: "../resource/WA2"
+    )
 
     val available: Boolean get() = File(root, "script.pak").isFile || File(root, "ck-gal.pak").isFile
 

@@ -8,9 +8,9 @@
 
 | 组件 | 版本要求 | 默认路径 / 配置说明 |
 |---|---|---|
-| **JDK** | **JDK 21** (JetBrains Runtime / OpenJDK 21) | `/usr/local/google/home/chii/.jdks/jdk21`（已配置于 `gradle.properties` 的 `org.gradle.java.home`，命令行建议同时 `export JAVA_HOME`） |
+| **JDK** | **JDK 21** (JetBrains Runtime / OpenJDK 21) | `$HOME/.jdks/jdk21`（可通过环境变量 `export JAVA_HOME` 或 `~/.gradle/gradle.properties` 的 `org.gradle.java.home` 指定） |
 | **Gradle** | **8.10.2** | 使用仓库自带的 `./gradlew` Wrapper，无需全局安装 |
-| **Android SDK** | `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26` | `/usr/local/google/home/chii/Android/Sdk`（由 `local.properties` 或 `ANDROID_HOME` 指定） |
+| **Android SDK** | `compileSdk = 35`, `targetSdk = 35`, `minSdk = 26` | `$HOME/Android/Sdk`（由 `local.properties` 或 `ANDROID_HOME` 指定） |
 | **Android NDK** | **27.0.12077973** | `$ANDROID_HOME/ndk/27.0.12077973`（支持 Android 15 16 KB page-size 对齐） |
 | **CMake** | **3.22.1** | 由 Android Gradle Plugin 自动调用编译 `app/src/main/cpp/CMakeLists.txt` |
 | **Kotlin** | **2.0.21** | 启用 `plugin.compose` 与 `plugin.serialization` |
@@ -18,8 +18,8 @@
 初始化命令行环境变量：
 
 ```bash
-export JAVA_HOME=/usr/local/google/home/chii/.jdks/jdk21
-export ANDROID_HOME=/usr/local/google/home/chii/Android/Sdk
+export JAVA_HOME="$HOME/.jdks/jdk21"
+export ANDROID_HOME="$HOME/Android/Sdk"
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
@@ -31,7 +31,7 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 
 ### 2.1 运行测试
 
-テスト通过系统属性 `-Dwa2.root` 或环境变量 `WA2_ROOT` 定位完整版《白色相簿2》PC 安装目录（未指定时默认回退到 `/usr/local/google/home/chii/Developer/wa2port/resource/WA2`）。若路径不存在，依赖真实资产的测试会通过 `Assumptions.assumeTrue` 自动跳过。
+测试通过系统属性 `-Dwa2.root` 或环境变量 `WA2_ROOT` 定位完整版《白色相簿2》PC 安装目录（未指定时默认回退到 `<repo>/resource/WA2`）。若路径不存在，依赖真实资产的测试会通过 `Assumptions.assumeTrue` 自动跳过。
 
 ```bash
 # 使用默认资产目录运行全部 :core 测试
@@ -57,18 +57,23 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 
 ---
 
-## 3. 构建 Android APK (`:app:assembleDebug`)
+## 3. 构建 Android APK (`:app:assembleDebug` & `:app:assembleRelease`)
 
-仓库中已内置预编译好的 `arm64-v8a` 与 `x86_64` 架构 FFmpeg 动态库（位于 `app/src/main/cpp/ffmpeg/<abi>/lib/`），因此克隆仓库后可直接构建 Debug APK：
+仓库中已内置预编译好的 `arm64-v8a` 与 `x86_64` 架构 FFmpeg 动态库（位于 `app/src/main/cpp/ffmpeg/<abi>/lib/`），因此克隆仓库后可直接构建 Debug 或已签名的 Release APK：
 
 ```bash
+# 构建 Debug APK
 ./gradlew :app:assembleDebug
+
+# 构建已签名的 Release APK（未配置 WA2_KEYSTORE_PATH 时默认使用 debug 签名以便直接安装）
+./gradlew :app:assembleRelease
 ```
 
 构建产物路径：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/release/app-release.apk
 ```
 
 ---
@@ -167,7 +172,7 @@ adb shell am start -n com.wa2port.android/.MainActivity
 
 ```bash
 DEST=/sdcard/Android/data/com.wa2port.android/files/wa2
-SRC=/usr/local/google/home/chii/Developer/wa2port/resource/WA2
+SRC=/path/to/WA2
 
 # 1. 创建目标目录（先启动一次应用或手动 mkdir）
 adb shell mkdir -p "$DEST" "$DEST/IC"
@@ -195,10 +200,10 @@ adb push "$SRC/IC/." "$DEST/IC/"
 
 ### Q1: 构建时报错 `Unsupported class file major version` 或 Kotlin JVM target 不匹配
 - **原因**：当前终端默认 `java` 版本低于 JDK 17/21。
-- **解决**：确认 `export JAVA_HOME=/usr/local/google/home/chii/.jdks/jdk21`，或检查 `gradle.properties` 中的 `org.gradle.java.home` 路径是否存在。可通过 `./gradlew --version` 验证 Gradle Daemon 实际运行的 JVM 版本。
+- **解决**：确认 `export JAVA_HOME="$HOME/.jdks/jdk21"`，或在 `~/.gradle/gradle.properties` 中配置 `org.gradle.java.home` 指向 JDK 21 目录。可通过 `./gradlew --version` 验证 Gradle Daemon 实际运行的 JVM 版本。
 
 ### Q2: `:core:test` 全部显示 `SKIPPED`
-- **原因**：未找到默认路径 `/usr/local/google/home/chii/Developer/wa2port/resource/WA2` 下的真实游戏包，触发了 `Assumptions.assumeTrue(TestAssets.available)`。
+- **原因**：未找到默认路径 `resource/WA2` 下的真实游戏包，触发了 `Assumptions.assumeTrue(TestAssets.available)`。
 - **解决**：通过 `-Dwa2.root=/your/path/to/WA2` 传入包含 `script.pak` 和 `fnt.pak` 的目录。
 
 ### Q3: 应用启动后进入资源向导页（提示缺少 `script.pak` 或 `fnt.pak`）

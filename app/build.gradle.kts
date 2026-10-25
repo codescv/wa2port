@@ -15,15 +15,32 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    val keystorePath = System.getenv("WA2_KEYSTORE_PATH")?.takeIf { it.isNotBlank() && file(it).isFile }
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("WA2_KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("WA2_KEY_ALIAS") ?: ""
+                keyPassword = System.getenv("WA2_KEY_PASSWORD") ?: ""
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = if (keystorePath != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {

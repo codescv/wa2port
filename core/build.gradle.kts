@@ -23,11 +23,15 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     // Real game assets live outside git; tests skip gracefully when absent.
+    val defaultWa2Root = listOf(
+        rootProject.file("resource/WA2"),
+        rootProject.file("../../resource/WA2"),
+    ).firstOrNull { it.isDirectory } ?: rootProject.file("resource/WA2")
     systemProperty(
         "wa2.root",
         System.getProperty("wa2.root")
             ?: System.getenv("WA2_ROOT")
-            ?: "/usr/local/google/home/chii/Developer/wa2port/resource/WA2",
+            ?: defaultWa2Root.absolutePath,
     )
     maxHeapSize = "3g"
     testLogging {
