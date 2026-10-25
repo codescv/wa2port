@@ -91,22 +91,39 @@ data class StageState(
     /** Background image name (in [bgDir] archive: `bak` for `B%04d%1d%1d.tga`), null = black. */
     val bg: String? = null,
     val bgDir: String = "bak",
-    /** Per-background `.amp` (`B{X}{Y}{T}.amp` in grp) that grades the standing sprites to the scene's lighting. */
+    /**
+     * Sprite LUT A: the background's `B{X}{Y}{T}.amp` if present, else the time-mode default
+     * (`evening`/`night`/`indoor`); grades standing sprites only, never the background.
+     */
     val spriteLut: String? = null,
     /** Event CG (`v%06d.tga` / `h%06d.tga` in `grp`), drawn above sprites; null = none. */
     val cg: String? = null,
     val sprites: List<SpriteState> = emptyList(),
     val layers: List<BmpLayer> = emptyList(),
-    /** `.AMP` colour-grading LUT name in `grp` (e.g. `sepia.AMP`), null = none. */
+    /** Effect LUT slot 1 (`SetEffctMode(name, 0|1)`): grades backgrounds, CG and layers (e.g. `sepia.AMP`). */
     val lut: String? = null,
+    /** Effect LUT slot 2 (`SetEffctMode(name, 0|2)`): grades standing sprites after [spriteLut]. */
+    val spriteEffectLut: String? = null,
     val chroma: Int = 0,
     val timeMode: Int = 0,
     /** Weather effect id (`SetWeather`: 4 = snow), null = none. */
     val weather: Int? = null,
-    /** Flash/fade colour overlay `ARGB` (`FB`), 0 = none. */
+    /** Legacy flash overlay `ARGB` (unused by the engine now; always 0). */
     val overlayColor: Int = 0,
-    /** Duration over which the renderer should fade to [overlayColor] (`FB(time, r, g, b)`). */
     val overlayFadeMs: Long = 0,
+    /**
+     * Stage brightness `0xRRGGBB` from `FB(time, r, g, b)` (`WA2.exe` 0x401de0 / 0x43b290), per channel
+     * v: v < 128 multiplies by 2v/255, v ≥ 128 adds (2v−256)/255 — 0 = black, 128 = neutral, 255 = white.
+     * Applies to the stage picture only, never to the message window.
+     */
+    val tint: Int = NEUTRAL_TINT,
+    /** Duration over which the renderer tweens from the previous [tint] to this one. */
+    val tintFadeMs: Long = 0,
+    /** `F(t1, t2, r, g, b)` flash: tween to [flashColor] over [flashInMs], then back over [flashOutMs]. */
+    val flashSerial: Int = 0,
+    val flashColor: Int = NEUTRAL_TINT,
+    val flashInMs: Long = 0,
+    val flashOutMs: Long = 0,
     val shake: Int = 0,
     val transition: Transition = Transition(TransitionKind.CUT, 0),
     /** Increments whenever the picture changes (renderers crossfade from the previous serial). */
@@ -115,6 +132,9 @@ data class StageState(
     val novelMode: Boolean = false,
     val calendar: CalendarCard? = null,
 )
+
+/** `FB(…, 128, 128, 128)`: neutral screen colour (no tint). */
+const val NEUTRAL_TINT = 0x808080
 
 /** A voice clip reference. */
 @Serializable

@@ -21,8 +21,11 @@ interface TextPainter {
     /** Number of revealable glyphs (ruby readings excluded). */
     fun glyphCount(rich: RichText): Int
 
-    /** Height in px of [rich] wrapped to [maxWidth] at [sizePx]. */
-    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float): Float
+    /**
+     * Height in px of [rich] wrapped to [maxWidth] at [sizePx]. [maxChars] > 0 also caps full-width
+     * characters per line; [reflow] keeps script `\n` only at sentence ends (see GlyphAtlasText.layout).
+     */
+    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false): Float
 
     /** Draws the first [visibleGlyphs] glyphs with the top-left at ([x], [y]); returns the drawn height. */
     fun draw(
@@ -35,6 +38,8 @@ interface TextPainter {
         sizePx: Float,
         color: Int,
         visibleGlyphs: Int = Int.MAX_VALUE,
+        maxChars: Float = 0f,
+        reflow: Boolean = false,
     ): Float
 }
 

@@ -312,13 +312,26 @@ class Wa2Engine(
             146, 147, 148, 149, 225, 226, 227, 228 -> return picture(op, args)
             150, 231 -> { setStage { it.copy(shake = int(args, 0)) }; return ret() }
             151, 214 -> { setStage { it.copy(shake = 0) }; return ret() }
-            152, 153 -> { // F / FB(time, r, g, b)
-                val r = int(args, 1).coerceIn(0, 255)
-                val g = int(args, 2).coerceIn(0, 255)
-                val b = int(args, 3).coerceIn(0, 255)
+            153 -> { // FB(time, r, g, b): stage colour multiplier v/128 (defaults time=-1, 128,128,128)
                 val t = int(args, 0)
-                val color = if (t == 0 && r == 0 && g == 0 && b == 0) 0 else (0x80 shl 24) or (r shl 16) or (g shl 8) or b
-                setStage { it.copy(overlayColor = color, overlayFadeMs = if (skipping) 0 else Stage.framesToMs(t)) }
+                val r = int(args, 1, 128).coerceIn(0, 255)
+                val g = int(args, 2, 128).coerceIn(0, 255)
+                val b = int(args, 3, 128).coerceIn(0, 255)
+                val ms = if (skipping || t <= 0) 0 else Stage.framesToMs(t)
+                setStage { it.copy(tint = (r shl 16) or (g shl 8) or b, tintFadeMs = ms) }
+                return ret()
+            }
+            152 -> { // F(t1, t2, r, g, b): flash to rgb over t1 frames, back to 128 over t2
+                if (skipping) return ret()
+                val r = int(args, 2, 128).coerceIn(0, 255)
+                val g = int(args, 3, 128).coerceIn(0, 255)
+                val b = int(args, 4, 128).coerceIn(0, 255)
+                setStage {
+                    it.copy(
+                        flashSerial = it.flashSerial + 1, flashColor = (r shl 16) or (g shl 8) or b,
+                        flashInMs = Stage.framesToMs(int(args, 0)), flashOutMs = Stage.framesToMs(int(args, 1)),
+                    )
+                }
                 return ret()
             }
             154, 155, 216 -> return showSprite(op, args)
@@ -332,10 +345,17 @@ class Wa2Engine(
             217 -> return ret() // CM (move)
             170 -> { setStage { it.copy(timeMode = int(args, 0)) }; return ret() }
             171 -> { setStage { it.copy(chroma = int(args, 0)) }; return ret() }
-            172 -> { // SetEffctMode(lutName, n)
-                val name = textArg(args.getOrNull(0)).takeIf { it.isNotBlank() }
+            172 -> { // SetEffctMode(lutName, which): 0 = both slots, 1 = backgrounds/CG, 2 = sprites
+                val name = textArg(args.getOrNull(0)).trim().takeIf { it.isNotEmpty() }
                 if (name != null && !assets.exists("grp", name)) missingAssets += "grp/$name"
-                setStage { it.copy(lut = name) }
+                val which = int(args, 1)
+                setStage {
+                    when (which) {
+                        1 -> it.copy(lut = name)
+                        2 -> it.copy(spriteEffectLut = name)
+                        else -> it.copy(lut = name, spriteEffectLut = name)
+                    }
+                }
                 return ret()
             }
             173, 229 -> { setStage { it.copy(weather = int(args, 0)) }; return ret() }
@@ -573,6 +593,7 @@ class Wa2Engine(
                     val name = backgroundName(x, y)
                     if (name == null) missingAssets += "bak/B%04d%d%d".format(Locale.ROOT, x, y, stage.timeMode)
                     val amp = name?.let { it.dropLast(4) + ".amp" }?.takeIf { assets.exists("grp", it) }
+                        ?: com.wa2port.core.image.AmpLut.timeModeDefault(stage.timeMode)?.takeIf { assets.exists("grp", it) }
                     setStage(tr) {
                         it.copy(
                             bg = name, bgDir = "bak", spriteLut = amp, cg = null,

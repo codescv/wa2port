@@ -131,6 +131,20 @@ class VmTest {
     }
 
     @Test
+    fun `FB defaults are a neutral tint, never a grey overlay`() {
+        val e = engine()
+        e.start("1002")
+        val r = HeadlessRunner(e)
+        var nonNeutral = 0
+        repeat(40) {
+            r.run(maxLines = 1)
+            if (e.stage.tint != com.wa2port.core.engine.NEUTRAL_TINT) nonNeutral++
+            assertEquals(0, e.stage.overlayColor)
+        }
+        assertEquals(0, nonNeutral, "1002 opening lines must not be tinted (FB(…,128,128,128) = neutral)")
+    }
+
+    @Test
     fun `background falls back to the closest earlier time variant`() {
         val e = engine()
         assertEquals("B103302.tga", e.backgroundName(1033, 0, 3)?.uppercase()?.replace(".TGA", ".tga"))

@@ -83,17 +83,20 @@ class AssetImageCache(
     }
 
     /**
-     * Returns `dir/name` colour-graded by the `.AMP` LUT [lutName] (e.g. sprites under the
-     * per-background `B….amp`), cached separately; falls back to the ungraded image when the LUT is
-     * missing.
+     * Returns `dir/name` colour-graded by the `.AMP` LUTs [lutNames] applied in order (e.g. sprites
+     * under the background's `B….amp` then the sprite effect slot), cached separately; LUTs that are
+     * missing are skipped, and with none left the ungraded image is returned.
      */
-    suspend fun getGraded(dir: String, name: String, lutName: String): Bitmap? {
-        val k = "lut:" + lutName.lowercase() + "|" + key(dir, name)
+    suspend fun getGraded(dir: String, name: String, vararg lutNames: String?): Bitmap? {
+        val names = lutNames.filterNotNull().filter { it.isNotBlank() }
+        if (names.isEmpty()) return get(dir, name)
+        val k = "lut:" + names.joinToString("+") { it.lowercase() } + "|" + key(dir, name)
         lru.get(k)?.let { return it }
         val base = get(dir, name) ?: return null
         val graded = withContext(Dispatchers.Default) {
-            val lut = lut(lutName) ?: return@withContext null
-            base.copy(Bitmap.Config.ARGB_8888, true)?.also { StageComposer.applyLut(it, lut) }
+            val luts = names.mapNotNull { lut(it) }
+            if (luts.isEmpty()) return@withContext null
+            base.copy(Bitmap.Config.ARGB_8888, true)?.also { b -> luts.forEach { StageComposer.applyLut(b, it) } }
         } ?: return base
         lru.put(k, graded)
         return graded

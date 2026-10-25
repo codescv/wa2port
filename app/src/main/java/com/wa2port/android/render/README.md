@@ -35,7 +35,7 @@ controller.stageToScreen(x, y); controller.stageBounds; controller.finishTransit
 * Sprites: graded by `spriteLut` (per-background `B….amp`, cached via `AssetImageCache.getGraded`),
   scaled by `scale/256` (anchored at the feet), tinted by `bright/128`. MASK honours `reverse`, `flipX`, `flipY`
   (non-reverse = dark mask pixels first).
-* Live layers: `overlayColor` (ARGB fill, faded over `overlayFadeMs`), `shake` (jitter, ≤24 px), `weather != null` → snow.
+* Live layers: `tint` (`FB` screen tint, 0x808080 = neutral; MULTIPLY below 128, SCREEN above, faded over `tintFadeMs`), `shake` (jitter, ≤24 px), `weather != null` → snow.
 
 ## Text — `GlyphAtlasText`
 

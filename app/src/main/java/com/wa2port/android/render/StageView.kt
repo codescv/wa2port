@@ -15,6 +15,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.View
 import com.wa2port.core.engine.Stage
+import com.wa2port.core.engine.NEUTRAL_TINT
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.TransitionKind
 import kotlin.math.PI
@@ -41,8 +42,8 @@ import kotlinx.coroutines.launch
  *   first, bright first when `reverse`; mirrored by `flipX`/`flipY`). GPU: a ColorMatrix maps grey →
  *   alpha with a soft threshold ramp, then `DST_IN`.
  *
- * Drawn live on top: overlay colour ([StageState.overlayColor], faded over
- * [StageState.overlayFadeMs]), screen shake ([StageState.shake]) and
+ * Drawn live on top: screen tint ([StageState.tint], 128 = neutral, faded over
+ * [StageState.tintFadeMs]), screen shake ([StageState.shake]) and
  * snow particles ([StageState.weather] != null).
  *
  * Use [screenToStage] / [stageToScreen] for touch mapping and [captureThumbnail] for save slots.
@@ -92,11 +93,16 @@ class StageView @JvmOverloads constructor(
     private val snowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt() }
     private val stageBounds = RectF(0f, 0f, Stage.WIDTH.toFloat(), Stage.HEIGHT.toFloat())
 
-    // Overlay colour fade (FB(time, r, g, b)).
-    private var overlayFrom = 0
-    private var overlayTo = 0
-    private var overlayStart = 0L
-    private var overlayMs = 0L
+    // Screen tint fade (FB(time, r, g, b); 0x808080 = neutral).
+    private var tintFrom = NEUTRAL_TINT
+    private var tintTo = NEUTRAL_TINT
+    private var tintStart = 0L
+    private var tintMs = 0L
+    private var flashSerial = 0
+    private var flashColor = NEUTRAL_TINT
+    private var flashIn = 0L
+    private var flashOut = 0L
+    private var flashStart = 0L
 
     private val snow = SnowField(SNOW_FLAKES)
     private var lastFrameMs = 0L
@@ -155,13 +161,20 @@ class StageView @JvmOverloads constructor(
             previous = null
             mask = null
         }
-        if (old == null || old.overlayColor != stage.overlayColor) {
+        if (old == null || old.tint != stage.tint) {
             val now = SystemClock.uptimeMillis()
-            overlayFrom = overlayAt(now)
-            overlayTo = stage.overlayColor
-            overlayStart = now
-            overlayMs = stage.overlayFadeMs
+            tintFrom = if (old == null) stage.tint else tintAt(now)
+            tintTo = stage.tint
+            tintStart = now
+            tintMs = stage.tintFadeMs
         }
+        if (old != null && stage.flashSerial != flashSerial && stage.flashSerial != old.flashSerial) {
+            flashColor = stage.flashColor
+            flashIn = stage.flashInMs
+            flashOut = stage.flashOutMs
+            flashStart = SystemClock.uptimeMillis()
+        }
+        flashSerial = stage.flashSerial
         current = bmp
         currentState = stage
         invalidate()
@@ -206,6 +219,14 @@ class StageView @JvmOverloads constructor(
             animating = true
         }
 
+        // FB/F colour modulation of the stage layers (never the UI): multiply by v/128 per channel.
+        val baseTint = tintAt(now)
+        val tint = flashAt(now, baseTint) ?: baseTint
+        val filter = tintFilter(tint)
+        bitmapPaint.colorFilter = filter
+        fadePaint.colorFilter = filter
+        if ((tintMs > 0 && now - tintStart < tintMs) || flashStart != 0L) animating = true
+
         val prev = previous
         val cur = current
         if (prev != null && cur != null) {
@@ -239,12 +260,6 @@ class StageView @JvmOverloads constructor(
         }
 
         if (state != null) {
-            val overlay = overlayAt(now)
-            if (overlay ushr 24 != 0) {
-                fillPaint.color = overlay
-                canvas.drawRect(stageBounds, fillPaint)
-            }
-            if (overlayMs > 0 && now - overlayStart < overlayMs) animating = true
             if (state.weather != null) {
                 snow.step(dt)
                 snow.draw(canvas, snowPaint)
@@ -255,20 +270,62 @@ class StageView @JvmOverloads constructor(
         if (animating) postInvalidateOnAnimation()
     }
 
-    /** Overlay colour at time [now]: ARGB lerp; fading from/to 0 keeps the other end's RGB. */
-    private fun overlayAt(now: Long): Int {
-        if (overlayMs <= 0 || now - overlayStart >= overlayMs) return overlayTo
-        val p = ((now - overlayStart).toFloat() / overlayMs).coerceIn(0f, 1f)
-        val from = if (overlayFrom == 0) overlayTo and 0x00FFFFFF else overlayFrom
-        val to = if (overlayTo == 0) overlayFrom and 0x00FFFFFF else overlayTo
+    /** Tint at time [now] (per-channel lerp from the previous tint over [tintMs]). */
+    private fun tintAt(now: Long): Int {
+        if (tintMs <= 0 || now - tintStart >= tintMs) return tintTo
+        val p = ((now - tintStart).toFloat() / tintMs).coerceIn(0f, 1f)
         var out = 0
-        for (shift in intArrayOf(24, 16, 8, 0)) {
-            val a = (from ushr shift) and 0xFF
-            val b = (to ushr shift) and 0xFF
+        for (shift in intArrayOf(16, 8, 0)) {
+            val a = (tintFrom ushr shift) and 0xFF
+            val b = (tintTo ushr shift) and 0xFF
             out = out or (((a + (b - a) * p).toInt() and 0xFF) shl shift)
         }
         return out
     }
+
+    /** Flash tint at [now] (F: base → flash over in, flash → base over out), or null when idle. */
+    private fun flashAt(now: Long, base: Int): Int? {
+        if (flashStart == 0L) return null
+        val t = now - flashStart
+        return when {
+            t < flashIn -> lerpRgb(base, flashColor, t.toFloat() / max(1L, flashIn))
+            t < flashIn + flashOut -> lerpRgb(flashColor, base, (t - flashIn).toFloat() / max(1L, flashOut))
+            else -> { flashStart = 0L; null }
+        }
+    }
+
+    private fun lerpRgb(a: Int, b: Int, p: Float): Int {
+        var out = 0
+        for (shift in intArrayOf(16, 8, 0)) {
+            val x = (a ushr shift) and 0xFF
+            val y = (b ushr shift) and 0xFF
+            out = out or (((x + (y - x) * p.coerceIn(0f, 1f)).toInt() and 0xFF) shl shift)
+        }
+        return out
+    }
+
+    /**
+     * Colour filter for an `FB`/`F` brightness state (`WA2.exe` 0x43b290), per channel v:
+     * v < 128 → multiply by 2v/255; v ≥ 128 → identity plus an additive (2v−256) pass, so
+     * 0 = black, 128 = unchanged, 255 = white. Null when neutral.
+     */
+    private fun tintFilter(tint: Int): ColorMatrixColorFilter? {
+        if (tint == NEUTRAL_TINT) return null
+        val v = intArrayOf((tint ushr 16) and 0xFF, (tint ushr 8) and 0xFF, tint and 0xFF)
+        val mul = FloatArray(3) { minOf(1f, 2f * v[it] / 255f) }
+        val add = FloatArray(3) { (2f * v[it] - 256f).coerceIn(0f, 255f) }
+        return ColorMatrixColorFilter(
+            ColorMatrix(
+                floatArrayOf(
+                    mul[0], 0f, 0f, 0f, add[0],
+                    0f, mul[1], 0f, 0f, add[1],
+                    0f, 0f, mul[2], 0f, add[2],
+                    0f, 0f, 0f, 1f, 0f,
+                ),
+            ),
+        )
+    }
+
 
     /**
      * Grey → alpha ramp for the pattern dissolve at progress [p] (0..1), a soft version of the
@@ -306,15 +363,18 @@ class StageView @JvmOverloads constructor(
 
     /**
      * Returns a [width]×[height] copy of the current (fully transitioned) stage picture, including
-     * the overlay colour, for save-slot thumbnails. Returns a black bitmap before the first picture.
+     * the screen tint, for save-slot thumbnails. Returns a black bitmap before the first picture.
      */
     fun captureThumbnail(width: Int = THUMB_WIDTH, height: Int = THUMB_HEIGHT): Bitmap {
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
         c.drawColor(0xFF000000.toInt())
-        val src = current ?: return out
-        c.drawBitmap(src, null, RectF(0f, 0f, width.toFloat(), height.toFloat()), Paint(Paint.FILTER_BITMAP_FLAG))
-        overlayTo.takeIf { it ushr 24 != 0 }?.let { c.drawColor(it) }
+        if (current == null) return out
+        c.save()
+        c.scale(width / Stage.WIDTH.toFloat(), height / Stage.HEIGHT.toFloat())
+        val f = tintFilter(tintTo)
+        c.drawBitmap(current!!, null, stageBounds, Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = f })
+        c.restore()
         return out
     }
 

@@ -32,19 +32,53 @@ private const val MAIN_PX = 30f
 private const val SECONDARY_PX = 22f
 private const val NAME_PX = 25f
 
+/** 双语 two-column layout: CN left, JP right, each at a comfortable size with an 18-char line cap. */
+private const val TWO_COL_PX = 28f
+private const val TWO_COL_MAX_CHARS = 18f
+private const val SINGLE_MAX_CHARS = 34f
+private const val NOVEL_TWO_COL_PX = 26f
+
+/** Never shrink text below this fraction of its nominal size when fitting the window. */
+private const val MIN_FIT = 0.8f
+
 private val TEXT_COLOR = Wa2Colors.Text.toArgb()
 private val SECONDARY_COLOR = Color(0xFFC9D6EA).toArgb()
 private val NAME_COLOR = Wa2Colors.Name.toArgb()
 
 /** One language block to draw: text, language, size, colour, visible glyph limit. */
-private data class Block(val rich: RichText, val lang: TextLang, val size: Float, val color: Int, val visible: Int)
+private data class Block(
+    val rich: RichText,
+    val lang: TextLang,
+    val size: Float,
+    val color: Int,
+    val visible: Int,
+    val maxChars: Float = 0f,
+    val reflow: Boolean = false,
+)
+
+/** CN (left) and JP (right) columns of a 双语 line, or null when the line is single-language. */
+private fun twoColumns(line: DialogueLine, lang: DisplayLang, sizePx: Float, maxChars: Float, visJp: Int, visCn: Int): Pair<Block, Block>? {
+    if (lang != DisplayLang.BOTH) return null
+    val cn = line.cn?.takeIf { !it.isEmpty } ?: return null
+    return Block(cn, TextLang.CN, sizePx, TEXT_COLOR, visCn, maxChars, reflow = true) to
+        Block(line.jp, TextLang.JP, sizePx, TEXT_COLOR, visJp, maxChars, reflow = true)
+}
+
+private fun DrawScope.drawBlock(painter: TextPainter, b: Block, x: Float, y: Float, width: Float): Float {
+    var h = 0f
+    drawIntoCanvas { c -> h = painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible, b.maxChars, b.reflow) }
+    return h
+}
+
+private fun measureBlock(painter: TextPainter, b: Block, width: Float): Float =
+    painter.measureHeight(b.rich, b.lang, width, b.size, b.maxChars, b.reflow)
 
 /** Which blocks a line produces for the current [DisplayLang] (CN missing → JP shown instead). */
 private fun blocksFor(line: DialogueLine, lang: DisplayLang, scale: Float, visJp: Int, visCn: Int): List<Block> {
     val cn = line.cn?.takeIf { !it.isEmpty }
     return when {
-        lang == DisplayLang.JP || cn == null -> listOf(Block(line.jp, TextLang.JP, MAIN_PX * scale, TEXT_COLOR, visJp))
-        lang == DisplayLang.CN -> listOf(Block(cn, TextLang.CN, MAIN_PX * scale, TEXT_COLOR, visCn))
+        lang == DisplayLang.JP || cn == null -> listOf(Block(line.jp, TextLang.JP, MAIN_PX * scale, TEXT_COLOR, visJp, SINGLE_MAX_CHARS))
+        lang == DisplayLang.CN -> listOf(Block(cn, TextLang.CN, MAIN_PX * scale, TEXT_COLOR, visCn, SINGLE_MAX_CHARS))
         else -> listOf(
             Block(cn, TextLang.CN, MAIN_PX * scale, TEXT_COLOR, visCn),
             Block(line.jp, TextLang.JP, SECONDARY_PX * scale, SECONDARY_COLOR, visJp),
@@ -71,14 +105,14 @@ private fun DrawScope.drawBlocks(painter: TextPainter, blocks: List<Block>, x: F
     drawIntoCanvas { c ->
         blocks.forEachIndexed { i, b ->
             if (i > 0) y += gap
-            y += painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible)
+            y += painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible, b.maxChars, b.reflow)
         }
     }
     return y - y0
 }
 
 private fun measureBlocks(painter: TextPainter, blocks: List<Block>, width: Float, gap: Float): Float =
-    blocks.mapIndexed { i, b -> painter.measureHeight(b.rich, b.lang, width, b.size) + if (i > 0) gap else 0f }.sum()
+    blocks.mapIndexed { i, b -> painter.measureHeight(b.rich, b.lang, width, b.size, b.maxChars, b.reflow) + if (i > 0) gap else 0f }.sum()
 
 private fun scaled(blocks: List<Block>, f: Float) = blocks.map { it.copy(size = it.size * f) }
 
@@ -98,8 +132,10 @@ private fun DrawScope.drawWaitMark(x: Float, y: Float, s: Float, alpha: Float) {
 }
 
 /**
- * ADV message window drawn over the stage (fills the stage box). Bilingual: CN main + JP secondary,
- * auto-shrinking to fit; speaker name box above the window.
+ * ADV message window drawn over the stage (fills the stage box). 双语: two side-by-side columns
+ * (CN left, JP right, 28 px, ≤18 full-width chars per line, script `\n` reflowed at sentence ends);
+ * single language: one 30 px column (≤34 chars). Shrinks at most to [MIN_FIT] to fit; speaker name
+ * box above the window.
  */
 @Composable
 fun AdvWindow(
@@ -146,15 +182,35 @@ fun AdvWindow(
                 }
             }
         }
-        // Text, shrunk to fit the window when needed.
+        // Text, shrunk (at most to MIN_FIT) to fit the window when needed.
         val textTop = top + pad * (if (names.isNotEmpty()) 1.25f else 1f)
         val avail = bottom - pad * 0.6f - textTop
         val width = right - left - pad * 2
         val gap = 8f * stageScale
-        var blocks = blocksFor(line, lang, scale, visibleJp, visibleCn)
-        val h = measureBlocks(painter, blocks, width, gap)
-        if (h > avail && h > 0f) blocks = scaled(blocks, (avail / h).coerceAtLeast(0.55f))
-        drawBlocks(painter, blocks, left + pad, textTop, width, gap)
+        val cols = twoColumns(line, lang, TWO_COL_PX * scale, TWO_COL_MAX_CHARS, visibleJp, visibleCn)
+        if (cols != null) {
+            // 双语: CN left column | JP right column, separated by a subtle divider.
+            val colGap = 30f * stageScale
+            val colW = (width - colGap) / 2f
+            var (cn, jp) = cols
+            val h = maxOf(measureBlock(painter, cn, colW), measureBlock(painter, jp, colW))
+            if (h > avail && h > 0f) {
+                val f = (avail / h).coerceAtLeast(MIN_FIT)
+                cn = cn.copy(size = cn.size * f); jp = jp.copy(size = jp.size * f)
+            }
+            val divX = left + pad + colW + colGap / 2f
+            drawLine(
+                Wa2Colors.AccentDim.copy(alpha = 0.45f), Offset(divX, textTop + 4f * stageScale),
+                Offset(divX, bottom - pad * 0.8f), strokeWidth = 1.2f * stageScale,
+            )
+            drawBlock(painter, cn, left + pad, textTop, colW)
+            drawBlock(painter, jp, divX + colGap / 2f, textTop, colW)
+        } else {
+            var blocks = blocksFor(line, lang, scale, visibleJp, visibleCn)
+            val h = measureBlocks(painter, blocks, width, gap)
+            if (h > avail && h > 0f) blocks = scaled(blocks, (avail / h).coerceAtLeast(MIN_FIT))
+            drawBlocks(painter, blocks, left + pad, textTop, width, gap)
+        }
         if (waiting) drawWaitMark(right - pad, bottom - pad * 0.9f, 9f * stageScale, blink)
     }
 }
@@ -193,7 +249,7 @@ fun NovelPage(
             val total = page.sumOf { l ->
                 val names = nameBlocks(l, lang, scale * 0.8f)
                 val nameH = if (names.isNotEmpty()) NAME_PX * scale * 0.8f * 1.3f else 0f
-                (measureBlocks(painter, blocksFor(l, lang, scale, Int.MAX_VALUE, Int.MAX_VALUE), width, gap) + nameH + paraGap).toDouble()
+                (paragraphHeight(painter, l, lang, scale, Int.MAX_VALUE, Int.MAX_VALUE, width, gap) + nameH + paraGap).toDouble()
             }
             total > avail
         }
@@ -215,9 +271,37 @@ fun NovelPage(
                 }
                 y += NAME_PX * scale * 0.8f * 1.3f
             }
-            val blocks = blocksFor(l, lang, scale, if (last) visibleJp else Int.MAX_VALUE, if (last) visibleCn else Int.MAX_VALUE)
-            y += drawBlocks(painter, blocks, left, y, width, gap) + paraGap
+            val vJp = if (last) visibleJp else Int.MAX_VALUE
+            val vCn = if (last) visibleCn else Int.MAX_VALUE
+            val cols = novelColumns(l, lang, scale, width, vJp, vCn)
+            y += if (cols != null) {
+                val colGap = 36f * scale
+                val colW = (width - colGap) / 2f
+                val hCn = drawBlock(painter, cols.first, left, y, colW)
+                val hJp = drawBlock(painter, cols.second, left + colW + colGap, y, colW)
+                maxOf(hCn, hJp) + paraGap
+            } else {
+                drawBlocks(painter, blocksFor(l, lang, scale, vJp, vCn), left, y, width, gap) + paraGap
+            }
         }
         if (waiting) drawWaitMark(left + width, (y - paraGap * 0.5f).coerceAtMost(size.height - 20f * stageScale), 9f * stageScale, blink)
     }
+}
+
+/** 双语 columns for NOVEL mode (line cap derived from the column width). */
+private fun novelColumns(l: DialogueLine, lang: DisplayLang, scale: Float, width: Float, visJp: Int, visCn: Int): Pair<Block, Block>? {
+    val size = NOVEL_TWO_COL_PX * scale
+    val colW = (width - 36f * (scale.coerceAtLeast(0.01f))) / 2f
+    val maxChars = kotlin.math.floor(colW / size).coerceIn(8f, TWO_COL_MAX_CHARS + 4f)
+    return twoColumns(l, lang, size, maxChars, visJp, visCn)
+}
+
+/** Height of one NOVEL paragraph (two columns side by side, or stacked single-language blocks). */
+private fun paragraphHeight(painter: TextPainter, l: DialogueLine, lang: DisplayLang, scale: Float, visJp: Int, visCn: Int, width: Float, gap: Float): Float {
+    val cols = novelColumns(l, lang, scale, width, visJp, visCn)
+    if (cols != null) {
+        val colW = (width - 36f * scale) / 2f
+        return maxOf(measureBlock(painter, cols.first, colW), measureBlock(painter, cols.second, colW))
+    }
+    return measureBlocks(painter, blocksFor(l, lang, scale, visJp, visCn), width, gap)
 }

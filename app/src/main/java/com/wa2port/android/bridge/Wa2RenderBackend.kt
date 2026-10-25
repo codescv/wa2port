@@ -23,30 +23,33 @@ import com.wa2port.core.text.TextLang
 /** [TextPainter] over @render's fon.pak/fnt.pak [GlyphAtlasText], with a small layout cache. */
 class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
     /** Identity key: RichText instances are reused across frames, so identity avoids deep hashing. */
-    private class Key(val rich: RichText, val lang: TextLang, val width: Float, val size: Float) {
+    private class Key(val rich: RichText, val lang: TextLang, val width: Float, val size: Float, val maxChars: Float, val reflow: Boolean) {
         override fun equals(other: Any?) =
-            other is Key && other.rich === rich && other.lang == lang && other.width == width && other.size == size
+            other is Key && other.rich === rich && other.lang == lang && other.width == width && other.size == size &&
+                other.maxChars == maxChars && other.reflow == reflow
 
-        override fun hashCode() = ((System.identityHashCode(rich) * 31 + lang.ordinal) * 31 + width.hashCode()) * 31 + size.hashCode()
+        override fun hashCode() =
+            ((((System.identityHashCode(rich) * 31 + lang.ordinal) * 31 + width.hashCode()) * 31 + size.hashCode()) * 31 +
+                maxChars.hashCode()) * 31 + reflow.hashCode()
     }
 
     private val cache = object : LinkedHashMap<Key, GlyphAtlasText.TextLayout>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, GlyphAtlasText.TextLayout>?) = size > 160
     }
 
-    private fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float) =
-        cache.getOrPut(Key(rich, lang, maxWidth, sizePx)) { glyphs.layout(rich, lang, maxWidth, sizePx) }
+    private fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false) =
+        cache.getOrPut(Key(rich, lang, maxWidth, sizePx, maxChars, reflow)) { glyphs.layout(rich, lang, maxWidth, sizePx, maxChars, reflow) }
 
     override fun glyphCount(rich: RichText): Int = glyphs.glyphCount(rich)
 
-    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float): Float =
-        layout(rich, lang, maxWidth, sizePx).height
+    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Boolean): Float =
+        layout(rich, lang, maxWidth, sizePx, maxChars, reflow).height
 
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
-        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int,
+        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Boolean,
     ): Float {
-        val l = layout(rich, lang, maxWidth, sizePx)
+        val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
         glyphs.drawLayout(canvas, l, lang, x, y, color, visibleGlyphs)
         return l.height
     }

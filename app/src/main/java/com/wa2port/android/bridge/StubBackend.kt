@@ -86,23 +86,27 @@ class FallbackTextPainter(private val decoder: BilingualTextDecoder) : TextPaint
         return l
     }
 
-    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float): Float {
+    private fun width(maxWidth: Float, sizePx: Float, maxChars: Float): Int =
+        (if (maxChars > 0f) minOf(maxWidth, maxChars * sizePx * 1.02f) else maxWidth).toInt()
+
+    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Boolean): Float {
         val text = plain(rich, lang, Int.MAX_VALUE)
         if (text.isEmpty()) return 0f
-        return layout(text, lang, maxWidth.toInt(), sizePx, Color.WHITE).height.toFloat()
+        return layout(text, lang, width(maxWidth, sizePx, maxChars), sizePx, Color.WHITE).height.toFloat()
     }
 
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
-        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int,
+        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Boolean,
     ): Float {
         // Lay out the full text (stable line breaks while revealing), then clip to the visible prefix.
         val full = plain(rich, lang, Int.MAX_VALUE)
         if (full.isEmpty()) return 0f
-        val fullLayout = layout(full, lang, maxWidth.toInt(), sizePx, color)
+        val w = width(maxWidth, sizePx, maxChars)
+        val fullLayout = layout(full, lang, w, sizePx, color)
         val text = if (visibleGlyphs >= Int.MAX_VALUE / 2) full else plain(rich, lang, visibleGlyphs)
         if (text.isNotEmpty()) {
-            val l = if (text == full) fullLayout else layout(text, lang, maxWidth.toInt(), sizePx, color)
+            val l = if (text == full) fullLayout else layout(text, lang, w, sizePx, color)
             canvas.save()
             canvas.translate(x, y)
             l.draw(canvas)

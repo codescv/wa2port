@@ -129,8 +129,8 @@ class GlyphAtlasText(
     }
 
     /** Height [drawRich] would use for [rich] wrapped at [maxWidth] (no canvas needed). */
-    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float): Float =
-        layout(rich, lang, maxWidth, sizePx).height
+    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false): Float =
+        layout(rich, lang, maxWidth, sizePx, maxChars, reflow).height
 
     /**
      * Draws [rich] with the box top-left at ([x], [y]), wrapped at [maxWidth], glyph size [sizePx],
@@ -147,8 +147,10 @@ class GlyphAtlasText(
         color: Int,
         visibleGlyphs: Int = Int.MAX_VALUE,
         outlineColor: Int = this.outlineColor,
+        maxChars: Float = 0f,
+        reflow: Boolean = false,
     ): Float {
-        val l = layout(rich, lang, maxWidth, sizePx)
+        val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
         drawLayout(canvas, l, lang, x, y, color, visibleGlyphs, outlineColor)
         return l.height
     }
@@ -184,8 +186,14 @@ class GlyphAtlasText(
 
     /**
      * Lays out [rich] (see class docs). Positions are relative to the box origin.
+     *
+     * [maxChars] (> 0) additionally limits a line to that many full-width characters (half-width
+     * ASCII/kana count 0.5; one trailing closing punctuation may still hang). With [reflow], the
+     * script's hard `\n` breaks (placed for the PC's single wide column) are kept only after
+     * sentence-ending punctuation (。！？…」』） etc.) or before an opening quote; other `\n` join the
+     * lines so a narrower column wraps naturally without orphan stubs.
      */
-    fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float): TextLayout {
+    fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false): TextLayout {
         val full = sizePx * (1f + letterSpacing)
         val pitch = sizePx * lineSpacing
         val band = (pitch - sizePx).coerceAtLeast(0f)
@@ -226,15 +234,65 @@ class GlyphAtlasText(
         var penX = 0f
         var index = 0
         val pageBreaks = ArrayList<Int>()
-        for (u in units) {
+        // 2a) Decide which hard breaks survive (reflow) and balance each paragraph segment so a
+        // long line does not leave a 1–3 character orphan: cap = ceil(N / ceil(N / maxChars)).
+        fun charsOf(u: Chunk) = u.codes.fold(0f) { acc, c -> acc + if (c < 0x100) 0.5f else 1f }
+        val keptBreak = BooleanArray(units.size)
+        run {
+            var prevCode = -1
+            for ((ui, u) in units.withIndex()) {
+                if (u.hardBreak) {
+                    keptBreak[ui] = if (!reflow || u.pageBreak) true else {
+                        val next = units.subList(ui + 1, units.size).firstOrNull { it.codes.isNotEmpty() || it.hardBreak }
+                        prevCode in SENTENCE_END || (next != null && next.codes.isNotEmpty() && next.codes[0] in OPENERS)
+                    }
+                } else if (u.codes.isNotEmpty()) prevCode = u.codes.last()
+            }
+        }
+        val segCap = FloatArray(units.size) { maxChars }
+        if (maxChars > 0f) {
+            var start = 0
+            while (start < units.size) {
+                var end = start
+                var n = 0f
+                var lastChars = 0f
+                var lastHangs = false
+                while (end < units.size && !(units[end].hardBreak && keptBreak[end])) {
+                    val u = units[end]
+                    if (u.codes.isNotEmpty()) {
+                        lastChars = charsOf(u)
+                        lastHangs = u.codes.size == 1 && u.codes[0] in HANGING
+                    }
+                    n += charsOf(u)
+                    end++
+                }
+                // A single trailing closer may hang past the cap, so it does not force an extra line.
+                if (lastHangs) n -= lastChars
+                if (n > maxChars) {
+                    val lines = kotlin.math.ceil(n / maxChars)
+                    val cap = minOf(maxChars, kotlin.math.ceil(n / lines) + 1f)
+                    for (k in start until end) segCap[k] = cap
+                }
+                start = end + 1
+            }
+        }
+
+        var lineChars = 0f
+        for ((ui, u) in units.withIndex()) {
             if (u.pageBreak) pageBreaks += index
             if (u.hardBreak) {
-                line++; penX = 0f; continue
+                if (!keptBreak[ui]) continue // soft join: let the column width / maxChars wrap instead
+                line++; penX = 0f; lineChars = 0f; continue
             }
+            val uChars = charsOf(u)
             val hang = u.codes.size == 1 && u.codes[0] in HANGING
-            if (penX > 0f && penX + u.width > maxWidth && !hang) {
-                line++; penX = 0f
+            val overWidth = penX + u.width > maxWidth
+            val cap = segCap[ui]
+            val overChars = cap > 0f && lineChars + uChars > cap + 0.01f
+            if (penX > 0f && (overWidth || overChars) && !hang) {
+                line++; penX = 0f; lineChars = 0f
             }
+            lineChars += uChars
             val top = line * pitch + band
             val startX = penX
             val firstIndex = index
@@ -349,6 +407,16 @@ class GlyphAtlasText(
             0x815B, 0x8160, // ー ～
             0x2C, 0x2E, 0x21, 0x3F,
         )
+
+        /** Sentence-ending codes after which a script `\n` is kept when reflowing. */
+        private val SENTENCE_END: Set<Int> = setOf(
+            0x8142, 0x8148, 0x8149, 0x8163, 0x8164, // 。？！…‥
+            0x8176, 0x8178, 0x816A, 0x816E, 0x8172, 0x8174, 0x817A, 0x8168, 0x8166, // 」』）］〉》】” ’
+            0x2E, 0x21, 0x3F,
+        )
+
+        /** Opening quotes/brackets before which a script `\n` is kept when reflowing. */
+        private val OPENERS: Set<Int> = setOf(0x8175, 0x8177, 0x8169, 0x816D, 0x8171, 0x8173, 0x8179, 0x8167, 0x8165)
 
         private fun adv(code: Int, full: Float) = if (code < 0x100) full / 2 else full
 
