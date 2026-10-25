@@ -1,5 +1,6 @@
 package com.wa2port.core.engine
 
+import java.util.Locale
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.script.CallOutcome
 import com.wa2port.core.script.FuncSpec
@@ -478,7 +479,7 @@ class Wa2Engine(
     }
 
     private fun voiceRef(sceneId: Int, line: Int, ch: Int): VoiceRef? {
-        val name = "%04d_%04d_%02d.OGG".format(sceneId, line, ch)
+        val name = "%04d_%04d_%02d.OGG".format(Locale.ROOT, sceneId, line, ch)
         if (assets.audio("VOICE", name) == null) {
             missingAssets += "voice/$name"
             return null
@@ -488,17 +489,17 @@ class Wa2Engine(
 
     private fun seName(id: Int): String? {
         for (ext in listOf("WAV", "OGG")) {
-            val n = "SE_%04d.%s".format(id, ext)
+            val n = "SE_%04d.%s".format(Locale.ROOT, id, ext)
             if (assets.audio("SE", n) != null) return n
         }
-        missingAssets += "se/SE_%04d".format(id)
+        missingAssets += "se/SE_%04d".format(Locale.ROOT, id)
         return null
     }
 
     private fun bgmEvent(track: Int, fadeFrames: Int, vol: Int): EngineEvent.PlayBgm? {
-        val a = "BGM_%03d_A.OGG".format(track)
-        val b = "BGM_%03d_B.OGG".format(track)
-        val single = "BGM_%03d.OGG".format(track)
+        val a = "BGM_%03d_A.OGG".format(Locale.ROOT, track)
+        val b = "BGM_%03d_B.OGG".format(Locale.ROOT, track)
+        val single = "BGM_%03d.OGG".format(Locale.ROOT, track)
         val fade = Stage.framesToMs(fadeFrames)
         return when {
             assets.audio("BGM", b) != null -> EngineEvent.PlayBgm(track, if (assets.audio("BGM", a) != null) a else null, b, fade, vol)
@@ -512,13 +513,20 @@ class Wa2Engine(
      * (X = 0 → the solid screens `B000000..B000003`).
      */
     fun backgroundName(x: Int, y: Int, time: Int = stage.timeMode): String? {
-        val candidates = listOf("B%04d%d%d.tga".format(x, y, time), "B%04d%d0.tga".format(x, y), "B%04d00.tga".format(x))
-        return candidates.firstOrNull { assets.exists("bak", it) }
+        // Exact time-of-day variant first, then the closest earlier one (2009: b103303 → b103302),
+        // then any variant of the same picture, then Y = 0.
+        val t0 = time.coerceIn(0, 9)
+        val order = (t0 downTo 0) + ((t0 + 1)..9)
+        for (t in order) {
+            val n = "B%04d%d%d.tga".format(Locale.ROOT, x, y, t)
+            if (assets.exists("bak", n)) return n
+        }
+        return "B%04d00.tga".format(Locale.ROOT, x).takeIf { assets.exists("bak", it) }
     }
 
     /** Event CG file for `V/H(…, X, Y, …)`: X is a 5-digit stem → `v%05d%1d.tga` (10010,0 → v100100). */
     fun eventCgName(prefix: Char, x: Int, y: Int): String? {
-        val candidates = listOf("%c%05d%d.tga".format(prefix, x, y), "%c%05d0.tga".format(prefix, x), "%c%06d.tga".format(prefix, x))
+        val candidates = listOf("%c%05d%d.tga".format(Locale.ROOT, prefix, x, y), "%c%05d0.tga".format(Locale.ROOT, prefix, x), "%c%06d.tga".format(Locale.ROOT, prefix, x))
         return candidates.firstOrNull { assets.exists("grp", it) }
     }
 
@@ -532,7 +540,7 @@ class Wa2Engine(
         val ms = Stage.framesToMs(frames)
         if (ms <= 0 || skipping || mode == -1) return Transition(TransitionKind.CUT, 0)
         if (mode >= 128) {
-            val mask = "f0%03d.bmp".format(mode and 0x7F)
+            val mask = "f0%03d.bmp".format(Locale.ROOT, mode and 0x7F)
             if (assets.exists("grp", mask)) {
                 return Transition(
                     TransitionKind.MASK, ms, mask,
@@ -563,7 +571,7 @@ class Wa2Engine(
                     setStage(tr) { it }
                 } else {
                     val name = backgroundName(x, y)
-                    if (name == null) missingAssets += "bak/B%04d%d%d".format(x, y, stage.timeMode)
+                    if (name == null) missingAssets += "bak/B%04d%d%d".format(Locale.ROOT, x, y, stage.timeMode)
                     val amp = name?.let { it.dropLast(4) + ".amp" }?.takeIf { assets.exists("grp", it) }
                     setStage(tr) {
                         it.copy(
@@ -576,7 +584,7 @@ class Wa2Engine(
             else -> { // V / V2 / H / H2: event CG (grp), clears standing sprites
                 val prefix = if (op == 149 || op == 228) 'h' else 'v'
                 val name = if (x > 0) eventCgName(prefix, x, y) else null
-                if (x > 0 && name == null) missingAssets += "grp/%c%05d%d".format(prefix, x, y)
+                if (x > 0 && name == null) missingAssets += "grp/%c%05d%d".format(Locale.ROOT, prefix, x, y)
                 setStage(tr) { it.copy(cg = name, sprites = emptyList()) }
             }
         }
@@ -602,7 +610,7 @@ class Wa2Engine(
             setStage(tr) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
             return ret()
         }
-        val image = "%s%06d.tga".format(prefix, number)
+        val image = "%s%06d.tga".format(Locale.ROOT, prefix, number)
         if (!assets.exists("char", image)) missingAssets += "char/$image"
         val existing = stage.sprites.firstOrNull { it.charId == ch }
         val sp = SpriteState(ch, prefix, number, pos, image, existing?.order ?: ++spriteOrder, scale, bright)

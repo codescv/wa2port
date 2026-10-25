@@ -103,7 +103,7 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
 
 private val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
 
-private fun slotName(slot: Int) = if (slot == SaveStore.QUICK_SLOT) "Q" else "%02d".format(slot)
+private fun slotName(slot: Int) = if (slot == SaveStore.QUICK_SLOT) "Q" else "%02d".format(Locale.ROOT, slot)
 
 /** Human label for a scene id (`1xxx` = IC, `2xxx` = CC, `3xxx` = coda). */
 fun sceneLabel(scene: String): String = when (scene.firstOrNull()) {

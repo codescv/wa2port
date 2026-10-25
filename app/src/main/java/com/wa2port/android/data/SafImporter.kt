@@ -1,5 +1,6 @@
 package com.wa2port.android.data
 
+import java.util.Locale
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
@@ -54,7 +55,7 @@ class SafImporter(private val context: Context) {
                 if (dest.usableSpace in 1 until needed) {
                     return@withContext ImportProgress(
                         ImportProgress.Phase.FAILED, 0, entries.size, 0, total,
-                        message = "空间不足 Not enough space: need %.1f GB, free %.1f GB".format(needed / 1e9, dest.usableSpace / 1e9),
+                        message = "空间不足 Not enough space: need %.1f GB, free %.1f GB".format(Locale.ROOT, needed / 1e9, dest.usableSpace / 1e9),
                     ).also(onProgress)
                 }
                 var done = 0L

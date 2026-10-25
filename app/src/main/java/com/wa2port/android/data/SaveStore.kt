@@ -1,5 +1,6 @@
 package com.wa2port.android.data
 
+import java.util.Locale
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -30,7 +31,7 @@ class SaveStore(private val dir: File) {
         dir.mkdirs()
     }
 
-    fun file(slot: Int): File = File(dir, if (slot == QUICK_SLOT) "quick.json" else "slot_%02d.json".format(slot))
+    fun file(slot: Int): File = File(dir, if (slot == QUICK_SLOT) "quick.json" else "slot_%02d.json".format(Locale.ROOT, slot))
 
     fun exists(slot: Int): Boolean = file(slot).isFile
 

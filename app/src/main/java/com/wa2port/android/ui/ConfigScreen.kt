@@ -1,5 +1,6 @@
 package com.wa2port.android.ui
 
+import java.util.Locale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,7 +46,7 @@ fun ConfigPanel(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, 
                 "文字速度 Text speed", settings.textSpeed, 5..Settings.TEXT_SPEED_INSTANT,
                 if (settings.instantText) "瞬间 Instant" else "${settings.textSpeed}/s",
             ) { v -> onChange { it.copy(textSpeed = v) } }
-            LabeledSlider("自动速度 Auto delay", settings.autoDelayMs / 100, 3..60, "%.1f s".format(settings.autoDelayMs / 1000f)) { v ->
+            LabeledSlider("自动速度 Auto delay", settings.autoDelayMs / 100, 3..60, "%.1f s".format(Locale.ROOT, settings.autoDelayMs / 1000f)) { v ->
                 onChange { it.copy(autoDelayMs = v * 100) }
             }
             LabeledSlider("文字大小 Text size", settings.textScale, 70..150, "${settings.textScale}%") { v -> onChange { it.copy(textScale = v) } }

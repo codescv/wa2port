@@ -1,5 +1,6 @@
 package com.wa2port.android.ui
 
+import java.util.Locale
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -117,8 +118,8 @@ private fun ImportStatus(p: ImportProgress) {
     Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
         val title = when (p.phase) {
             ImportProgress.Phase.SCANNING -> "扫描中… Scanning…"
-            ImportProgress.Phase.COPYING -> "复制中 Copying %d/%d  %.2f / %.2f GB".format(p.filesDone + 1, p.filesTotal, p.bytesDone / 1e9, p.bytesTotal / 1e9)
-            ImportProgress.Phase.DONE -> "完成 Done (%d files, %.2f GB)".format(p.filesTotal, p.bytesTotal / 1e9)
+            ImportProgress.Phase.COPYING -> "复制中 Copying %d/%d  %.2f / %.2f GB".format(Locale.ROOT, p.filesDone + 1, p.filesTotal, p.bytesDone / 1e9, p.bytesTotal / 1e9)
+            ImportProgress.Phase.DONE -> "完成 Done (%d files, %.2f GB)".format(Locale.ROOT, p.filesTotal, p.bytesTotal / 1e9)
             ImportProgress.Phase.FAILED -> "失败 Failed"
             ImportProgress.Phase.CANCELLED -> "已暂停 Paused"
         }

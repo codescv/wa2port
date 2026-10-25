@@ -113,6 +113,30 @@ class VmTest {
     }
 
     @Test
+    fun `asset names are locale independent`() {
+        val saved = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"))
+            val e = engine()
+            e.start("1002")
+            val r = HeadlessRunner(e)
+            r.run(maxLines = 5)
+            assertEquals("1002_0000_10.OGG", r.trace.first().voice)
+            assertTrue(r.trace.first().bg?.matches(Regex("B\\d{6}\\.tga")) == true, "bg=${r.trace.first().bg}")
+            assertTrue(r.events.any { it is EngineEvent.PlayBgm }, "BGM resolved")
+            assertTrue(e.missingAssets.isEmpty(), "${e.missingAssets}")
+        } finally {
+            java.util.Locale.setDefault(saved)
+        }
+    }
+
+    @Test
+    fun `background falls back to the closest earlier time variant`() {
+        val e = engine()
+        assertEquals("B103302.tga", e.backgroundName(1033, 0, 3)?.uppercase()?.replace(".TGA", ".tga"))
+    }
+
+    @Test
     fun `save and load roundtrip resumes at the same line`() {
         val e = engine()
         e.start("1002")
