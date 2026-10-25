@@ -53,6 +53,7 @@ fun TitleScreen(vm: AppViewModel) {
                 MenuButton("序章 Introductory Chapter", "开始 / はじめから (1001)", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.startGame("1001") }
                 MenuButton("终章 Closing Chapter", "开始 / はじめから (2001)", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.startGame("2001") }
                 MenuButton("读取进度 Load", "ロード", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Load) }
+                MenuButton("CG 鉴赏 CG Gallery", "CG モード / ギャラリー", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Gallery) }
                 MenuButton("设置 Config", "コンフィグ", modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Config) }
                 MenuButton("资源文件夹 Asset Folder", "素材フォルダ設定", modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Assets) }
             }

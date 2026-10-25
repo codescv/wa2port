@@ -24,6 +24,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.wa2port.android.game.GameScreen
 import com.wa2port.android.ui.AssetSetupScreen
+import com.wa2port.android.ui.CgGalleryScreen
 import com.wa2port.android.ui.ConfigScreen
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadScreen
@@ -85,6 +86,7 @@ fun Wa2App(vm: AppViewModel) {
                 onPick = { slot -> vm.loadGame(slot) },
                 onClose = { vm.back() },
             )
+            Screen.Gallery -> CgGalleryScreen(vm = vm, onClose = { vm.back() })
         }
         if (vm.screen != Screen.Title && vm.screen != Screen.Game) BackHandler { vm.back() }
 

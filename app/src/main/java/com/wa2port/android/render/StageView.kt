@@ -125,6 +125,14 @@ class StageView @JvmOverloads constructor(
     }
 
     private fun startCompose(stage: StageState) {
+        val existing = current
+        if (existing != null && currentState?.serial == stage.serial) {
+            present(stage, existing, mask)
+            val next = pending
+            pending = null
+            if (next != null) startCompose(next)
+            return
+        }
         val c = cache ?: run { pending = stage; return }
         composeJob = scope.launch {
             try {
@@ -157,10 +165,10 @@ class StageView @JvmOverloads constructor(
             transitionMs = tr.durationMs
             transitionStart = SystemClock.uptimeMillis()
             mask = newMask?.also { it.setHasAlpha(true) } // keep blending on for the DST_IN pass
-        } else {
+        } else if (serialChanged) {
             previous = null
             mask = null
-        }
+        } // else: same picture serial (e.g. window/tint-only change) — keep any running transition.
         if (old == null || old.tint != stage.tint) {
             val now = SystemClock.uptimeMillis()
             tintFrom = if (old == null) stage.tint else tintAt(now)

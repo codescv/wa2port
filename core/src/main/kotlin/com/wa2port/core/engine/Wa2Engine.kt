@@ -309,20 +309,36 @@ class Wa2Engine(
             }
 
             // ---- pictures
-            146, 147, 148, 149, 225, 226, 227, 228 -> return picture(op, args)
-            150, 231 -> { setStage { it.copy(shake = int(args, 0)) }; return ret() }
+            146, 147, 148, 149, 225, 226, 227, 228 -> {
+                if (resume != null) return ret()
+                picture(op, args)
+                val wait = int(args, 0) != -1 && (op !in 225..228 || int(args, 10, 1) != 0)
+                return if (!wait) ret() else effectWait(int(args, 3, 30))
+            }
+            150, 231 -> { // SetShake(mode, amp, frames, curve, mask) / SetShake2(..., wait=1)
+                if (resume != null) { setStage { it.copy(shake = 0) }; return ret() }
+                val amp = int(args, 1).let { if (it != 0) it else int(args, 0).let { a -> if (a != 0) a else 8 } }
+                val frames = int(args, 2)
+                val wait = op == 150 || int(args, 5, 1) != 0
+                setStage { it.copy(shake = amp) }
+                if (frames <= 0 || !wait) return ret()
+                val out = effectWait(frames)
+                if (out is CallOutcome.Ret) setStage { it.copy(shake = 0) }
+                return out
+            }
             151, 214 -> { setStage { it.copy(shake = 0) }; return ret() }
             153 -> { // FB(time, r, g, b): stage colour multiplier v/128 (defaults time=-1, 128,128,128)
                 val t = int(args, 0)
                 val r = int(args, 1, 128).coerceIn(0, 255)
                 val g = int(args, 2, 128).coerceIn(0, 255)
                 val b = int(args, 3, 128).coerceIn(0, 255)
+                if (resume != null) return ret()
                 val ms = if (skipping || t <= 0) 0 else Stage.framesToMs(t)
                 setStage { it.copy(tint = (r shl 16) or (g shl 8) or b, tintFadeMs = ms) }
-                return ret()
+                return effectWait(t)
             }
-            152 -> { // F(t1, t2, r, g, b): flash to rgb over t1 frames, back to 128 over t2
-                if (skipping) return ret()
+            152 -> { // F(t1, t2, r, g, b): flash to rgb over t1 frames, back to 128 over t2 (blocking)
+                if (skipping || resume != null) return ret()
                 val r = int(args, 2, 128).coerceIn(0, 255)
                 val g = int(args, 3, 128).coerceIn(0, 255)
                 val b = int(args, 4, 128).coerceIn(0, 255)
@@ -332,17 +348,23 @@ class Wa2Engine(
                         flashInMs = Stage.framesToMs(int(args, 0)), flashOutMs = Stage.framesToMs(int(args, 1)),
                     )
                 }
-                return ret()
+                return effectWait(int(args, 0) + int(args, 1))
             }
-            154, 155, 216 -> return showSprite(op, args)
-            156, 157, 218 -> { // CR(char, mode, fade=15) / CRW(char)
+            154, 216 -> { // C / CS: blocking crossfade of `fade` frames (arg5, default 15)
+                if (resume != null) return ret()
+                showSprite(op, args)
+                return effectWait(int(args, 5, 15))
+            }
+            155 -> return showSprite(op, args) // CW: asynchronous (the renderer fades it while the script runs)
+            156, 157, 218 -> { // CR(char, mode, fade=15) blocking / CRW(char) asynchronous
+                if (resume != null) return ret()
                 val ch = int(args, 0)
                 val fade = if (op == 156) int(args, 2, 15) else 15
                 val tr = if (skipping || fade <= 0) Transition(TransitionKind.CUT, 0) else Transition(TransitionKind.FADE, Stage.framesToMs(fade))
                 setStage(tr) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
-                return ret()
+                return if (op == 156) effectWait(fade) else ret()
             }
-            217 -> return ret() // CM (move)
+            217 -> return ret() // CM (move): unused in the corpus
             170 -> { setStage { it.copy(timeMode = int(args, 0)) }; return ret() }
             171 -> { setStage { it.copy(chroma = int(args, 0)) }; return ret() }
             172 -> { // SetEffctMode(lutName, which): 0 = both slots, 1 = backgrounds/CG, 2 = sprites
@@ -462,7 +484,11 @@ class Wa2Engine(
             197 -> { vm.end(); return CallOutcome.Block(WaitState.Ended) }
             198 -> return ret(system.gflags.getOrElse(int(args, 0)) { 0 })
             199 -> { val i = int(args, 0); if (i in system.gflags.indices) system.gflags[i] = int(args, 1); return ret() }
-            201, 202 -> { system.cgFlags += "${if (op == 201) 'v' else 'h'}:${int(args, 0)}:${int(args, 1)}:${int(args, 2)}"; return ret() }
+            201, 202 -> { // V_Flag / H_Flag(X, Y, flag=1): mark CG stem X*10+Y as seen for the gallery
+                val name = "%c%06d".format(Locale.ROOT, if (op == 201) 'v' else 'h', int(args, 0) * 10 + int(args, 1))
+                if (int(args, 2, 1) != 0) system.cgFlags += name else system.cgFlags -= name
+                return ret()
+            }
             200, 128, 129 -> return ret()
             221, 222 -> return ret(0)
 
@@ -488,6 +514,17 @@ class Wa2Engine(
     }
 
     // ------------------------------------------------------------------------------- helpers
+
+    /**
+     * `WA2.exe` "yielding" handlers (B/BC/V/H, C, CR, F/FB, SetShake …) start their effect and keep
+     * the script waiting until it has finished, so the renderer draws every intermediate frame
+     * (pose changes, entrances, crossfades). Returns the wait for [frames] (none while skipping).
+     */
+    private fun effectWait(frames: Int): CallOutcome {
+        val ms = Stage.framesToMs(frames)
+        if (ms <= 0 || skipping) return ret()
+        return CallOutcome.Block(WaitState.Until(nowMs + ms))
+    }
 
     private fun setStage(transition: Transition? = null, f: (StageState) -> StageState) {
         val next = f(stage)
@@ -575,7 +612,7 @@ class Wa2Engine(
         }
     }
 
-    private fun picture(op: Int, args: List<Value>): CallOutcome {
+    private fun picture(op: Int, args: List<Value>) {
         val mode = int(args, 0)
         val x = int(args, 1)
         val y = int(args, 2)
@@ -606,10 +643,11 @@ class Wa2Engine(
                 val prefix = if (op == 149 || op == 228) 'h' else 'v'
                 val name = if (x > 0) eventCgName(prefix, x, y) else null
                 if (x > 0 && name == null) missingAssets += "grp/%c%05d%d".format(Locale.ROOT, prefix, x, y)
+                // Displaying a CG marks it as seen for the CG gallery (WA2.exe 0x416929 → cgSeen[stem]).
+                if (name != null) system.cgFlags += name.substringBefore('.').lowercase()
                 setStage(tr) { it.copy(cg = name, sprites = emptyList()) }
             }
         }
-        return ret()
     }
 
     /**

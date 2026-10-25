@@ -20,6 +20,7 @@ import com.wa2port.android.data.Settings
 import com.wa2port.android.data.SettingsStore
 import com.wa2port.android.game.GameSession
 import com.wa2port.core.archive.Wa2Assets
+import com.wa2port.core.engine.SystemData
 import com.wa2port.core.engine.Wa2Engine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +35,7 @@ sealed interface Screen {
     data object Config : Screen
     data object Assets : Screen
     data object Load : Screen
+    data object Gallery : Screen
 }
 
 /** App-wide state: navigation, settings, asset location/import, engine and the active [GameSession]. */
@@ -225,6 +227,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Memory pressure: drop decoded bitmaps. */
     fun trimMemory() {
         backend?.trimMemory()
+    }
+
+    /** Returns the current [SystemData] (live from the engine if initialized, otherwise read from disk). */
+    fun currentSystemData(): SystemData {
+        engine?.system?.let { return it }
+        val sys = SystemData()
+        if (systemFile.isFile) runCatching { sys.loadJson(systemFile.readText()) }
+        return sys
     }
 
     private fun closeEngine() {

@@ -42,9 +42,20 @@ via the in-app SAF picker.
 | `script` | `LscrProgram` (`.bnr`), `FunctionTable` (`.fnc` signatures + defaults), `LscrVm` (RPN expressions, if/else/elif, for, switch, call/SCall/SLoad, resumable blocking calls), `ScenarioStore` (paired JP `script.pak` / CN `ck-gal.pak`, 1:1 token ordinals) |
 | `engine` | `Wa2Engine` (engine functions → `StageState`, dialogue, choices, `EngineEvent`s), `SaveData`/`SystemData` (JSON; 既読 bitsets, GFLAG), `HeadlessRunner` |
 
-Engine facts used (lifted from `WA2.exe`, corpus-verified; see `WA2_LSCR_Spec.md`): statements end
+Engine facts used (lifted from `WA2.exe`, corpus-verified; see `docs/WA2_LSCR_Spec.md`): statements end
 with `(6,30)`; tag 1 = `Global.vrb` var, tag 2 = local array, tag 3 = text token, tag 4 = call,
 tag 5 = push, tag 6 = operator, tag 0 = control; jump targets are absolute byte offsets; voice
 `{scene}_{line:04d}_{speaker:02d}.OGG`; sprites `char\{prefix}{num:06d}.tga` at x-offset table
 `[-288,0,288,-384,384,-480,480,-480,-160,160,480]`; `B`/`BC` → `B%04d%1d%1d.tga` (time-of-day
 mode), `V`/`H` → `v%05d%1d.tga`; timings in 60 Hz frames.
+
+## Documentation
+
+详细开发与逆向工程文档（简体中文）位于 [`docs/`](docs/README.md)：
+
+- **[`docs/README.md`](docs/README.md)** — 文档索引与导航
+- **[`docs/reverse-engineering.md`](docs/reverse-engineering.md)** — 逆向工程规格手册（KCAP/LZSS、LAC、TGA/BMP、`.AMP` 调色、FB/F 亮度、59 段字库与 CK-GAL 汉化表、双语剧本语法、LSCR 字节码与引擎函数语义表）
+- **[`docs/architecture.md`](docs/architecture.md)** — 架构设计（`:core` / `:app` 模块映射、单向数据流、LSCR 可重入挂起模型、存读档与既读追踪、线程模型与双栏排版决策）
+- **[`docs/build-and-test.md`](docs/build-and-test.md)** — 构建、测试与部署指南（JDK 21 / Gradle、`:core:test`、`:app:assembleDebug`、FFmpeg 重编译与设备资产推送）
+- **[`docs/WA2_LSCR_Spec.md`](docs/WA2_LSCR_Spec.md)** — 原始英文逆向规格参考（LSCR VM 与字库映射表）
+

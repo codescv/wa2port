@@ -53,7 +53,34 @@ class VmTest {
         assertEquals("1002_0000_10.OGG", t.first { it.voice != null }.voice)
         assertTrue(voiced > 200, "voiced=$voiced")
         assertTrue(t.any { it.sprites.isNotEmpty() }, "sprites")
-        assertTrue(t.any { it.cg != null }, "event CG")
+        val firstCg = t.first { it.cg != null }.cg!!.substringBefore('.').lowercase()
+        assertTrue(firstCg in e.system.cgFlags, "event CG $firstCg recorded in system.cgFlags: ${e.system.cgFlags}")
+    }
+
+    @Test
+    fun `IC 1002 character sprite transitions yield across frames instead of collapsing`() {
+        val e = engine()
+        assertTrue(e.start("1002"))
+        val seenWaitFrames = ArrayList<String>()
+        var clicks = 0
+        var frames = 0
+        while (clicks < 35 && frames < 5000) {
+            e.update(16)
+            frames++
+            val spr = e.stage.sprites.map { it.image }
+            when (val w = e.wait) {
+                is WaitState.Until -> if (spr.isNotEmpty()) seenWaitFrames += "${w.untilMs}:${spr.joinToString(",")}:${e.stage.transition.kind}(${e.stage.transition.durationMs})"
+                WaitState.Click -> {
+                    clicks++
+                    e.advance()
+                }
+                else -> {}
+            }
+        }
+        println("1002 opening wait frames (${seenWaitFrames.size}): ${seenWaitFrames.distinct().take(15)}")
+        assertTrue(seenWaitFrames.any { "tak001111.tga" in it }, "CW+BC yields while tak001111 enters: $seenWaitFrames")
+        assertTrue(seenWaitFrames.any { "tak001103.tga" in it }, "C(10, 1103) yields during pose transition: $seenWaitFrames")
+        assertTrue(seenWaitFrames.any { "tak001107.tga" in it }, "C(10, 1107) yields during pose transition: $seenWaitFrames")
     }
 
     @Test
