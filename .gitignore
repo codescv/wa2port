@@ -1,0 +1,15 @@
+/resource/
+/.worktrees/
+/build/
+/**/.gradle/
+/**/build/
+/local.properties
+*.apk
+*.ap_
+*.dex
+*.class
+*.o
+*.so
+.DS_Store
+__pycache__/
+.venv/
