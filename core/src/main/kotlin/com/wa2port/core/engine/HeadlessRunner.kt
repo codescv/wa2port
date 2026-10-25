@@ -49,6 +49,7 @@ class HeadlessRunner(
             }
             when (w) {
                 WaitState.Click -> {
+                    if (engine.willAutoAdvance) continue
                     record()
                     lines++
                     if (lines >= maxLines) return lines

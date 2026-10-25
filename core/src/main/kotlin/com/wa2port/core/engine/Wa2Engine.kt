@@ -85,6 +85,9 @@ class Wa2Engine(
     val isEnded: Boolean get() = vm.isEnded
     val skipping: Boolean get() = skipMode != SkipMode.OFF
 
+    /** True when the current message will be skipped automatically on the next [update]. */
+    val willAutoAdvance: Boolean get() = vm.wait == WaitState.Click && skipping && canSkipCurrent()
+
     fun currentScene(): Scene? = store.scene(scene)
 
     // ------------------------------------------------------------------------------- host API
@@ -259,10 +262,8 @@ class Wa2Engine(
             }
             132, 134 -> { // EndMessage / WaitMessage2
                 if (resume != null) return ret()
-                if (skipping && canSkipCurrent()) {
-                    currentLine?.let { system.read.markRead(it.ref.scene, it.ref.lineNo) }
-                    return ret()
-                }
+                // Even while skipping we block here: update() auto-advances one line per frame so the
+                // player sees the text fly by (~60 lines/s) and can stop mid-scene.
                 return CallOutcome.Block(WaitState.Click)
             }
             135, 136 -> return ret() // K / SetDemoMode
