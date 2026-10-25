@@ -241,7 +241,10 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
                                 pc = end; return
                             }
                             elseEntry = -1
-                            condIf = intArrayOf(0, w[i + 2]); i += 3
+                            // An elif whose false-target is 0 has no else: continue at the chain end.
+                            val t = w[i + 2]
+                            condIf = intArrayOf(0, if (t != 0) t else (end ?: statementEnd(w, i + 3)))
+                            i += 3
                         }
                         6 -> { condIf = intArrayOf(0, w[i + 2]); i += 3 }
                         13, 15 -> {
@@ -251,6 +254,7 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
                                 i += 2
                             } else {
                                 pc = elseTarget(w, if (c[0] != 0) c[0] else c[1])
+                                checkJump()
                                 return
                             }
                         }
@@ -302,7 +306,7 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
                             }
                             i += 2
                         }
-                        12 -> { pc = w[i + 2]; return }
+                        12 -> { pc = w[i + 2]; checkJump(); return }
                         else -> { unknown("ctl$sub"); i += LscrProgram.controlLength(w, i) }
                     }
                 }
@@ -310,6 +314,11 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
             }
         }
         pc = i * 4
+    }
+
+    private fun checkJump() {
+        val p = program ?: return
+        if (pc < p.headerBytes || pc >= p.words.size * 4) unknown("jump-out-of-code")
     }
 
     /** Address set when a false condition enters an `else if` header (so it is not taken as fall-through). */

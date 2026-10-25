@@ -70,6 +70,45 @@ class VmTest {
     }
 
     @Test
+    fun `2018 if-elif-else chain takes exactly one branch`() {
+        // if (G12 小春ルート消滅 == 0) {T206…} elif (G13 千晶ルート消滅 == 0) {T242…} else {T274…}
+        fun tokens(g12: Int, g13: Int): Set<Int> {
+            val e = engine()
+            e.start("2018")
+            e.vm.globals[12] = com.wa2port.core.script.Value.I(g12)
+            e.vm.globals[13] = com.wa2port.core.script.Value.I(g13)
+            val toks = HashSet<Int>()
+            val r = HeadlessRunner(e)
+            r.run(stayIn = "2018")
+            r.trace.forEach { _ -> }
+            e.backlog.forEach { toks += it.token }
+            assertTrue(e.vm.unknownOps.isEmpty(), "${e.vm.unknownOps}")
+            return toks
+        }
+        val a = tokens(0, 0)
+        assertTrue(206 in a && 242 !in a && 274 !in a, "if-branch")
+        val b = tokens(1, 0)
+        assertTrue(206 !in b && 242 in b && 274 !in b, "elif-branch")
+        val c = tokens(1, 1)
+        assertTrue(206 !in c && 242 !in c && 274 in c, "else-branch")
+    }
+
+    @Test
+    fun `2019 elif with zero target falls through to the chain end`() {
+        for ((choice, expect) in listOf(0 to "2401", 1 to "2501", 2 to "2019")) {
+            val e = engine()
+            e.start("2019")
+            val r = HeadlessRunner(e, chooser = { choice.coerceAtMost(it.size - 1) })
+            r.run(stayIn = "2019")
+            assertTrue(e.vm.unknownOps.isEmpty(), "choice $choice: ${e.vm.unknownOps}")
+            println("2019 choice=$choice choices=${r.choicesSeen.lastOrNull()} visited=${r.scenesVisited}")
+            if (r.choicesSeen.lastOrNull()?.size ?: 0 > choice) {
+                assertTrue(expect in r.scenesVisited || (expect == "2019" && r.scenesVisited.size >= 2), "choice $choice → ${r.scenesVisited}")
+            }
+        }
+    }
+
+    @Test
     fun `save and load roundtrip resumes at the same line`() {
         val e = engine()
         e.start("1002")
