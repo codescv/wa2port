@@ -22,6 +22,16 @@ Device assets: copy the PC install (incl. `IC/`, `ck-gal.pak`, `fon.pak`, `grp/`
 `/sdcard/Android/data/com.wa2port.android/files/wa2/` (or `/data/local/tmp/wa2`), or import a folder
 via the in-app SAF picker.
 
+## `:app` map (`com.wa2port.android`)
+
+| Package | Contents |
+|---|---|
+| (root), `ui/`, `data/` | `MainActivity`, `AppViewModel`, title / config / asset setup (path scan + SAF import) / save-load screens, settings + save store |
+| `game/` | `GameSession` (frame-driven engine loop, typewriter, auto/skip, quick/slot saves), `GameScreen`, ADV/NOVEL message windows, choices, backlog with ▶ voice replay, quick-bar, touch gestures (tap, ≥350 ms hold = skip, swipe-up = log, two-finger tap = hide) |
+| `render/` | `StageView`/`StageCanvas` (1280×720 letterboxed compositor: bg → sprites → layers → CG, `.amp` LUTs, crossfade + mask dissolve, overlay fades, snow), `AssetImageCache`, `GlyphAtlasText` (CN from `fon.pak`, JP from `fnt.pak` atlases, outline + body, ruby), `MoviePlayer` |
+| `audio/` | `AudioEngine` (BGM `_A`→`_B` gapless loop, 4 ambient SE channels + one-shots, voice) streaming straight from the LAC archives |
+| `movie/` + `src/main/cpp` | `NativeMovieDecoder`/`AsfMoviePlayer`: original `mvNN0.pak` ASF (WMV3 + WMAv2) via a minimal LGPL FFmpeg 7.0.2 build (`build_ffmpeg.sh`, prebuilt `.so` for arm64-v8a/x86_64); a user `mvNN.mp4` overrides |
+
 ## `:core` map
 
 | Package | Contents |
