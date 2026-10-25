@@ -57,13 +57,13 @@ flowchart TB
 | `com.wa2port.core.text` | `Wa2FontMap`, `ScenarioTextParser`, `BilingualText`, `CnCellTable` | 59 段 SJIS → 字库格映射表（Table B，7,655 格）；CP932 剧本控制符词法解析（`\n`, `\k`, `<R..\|..>`, `<W..>`, `<F..>`, `<S..>`）；CK-GAL 汉化版 cell `748..4349` 反查表（`cn_cells.tsv`）与末尾 31 字 `4320..4350` 错位修正表（`cn_render_remap.tsv`）。 |
 | `com.wa2port.core.script` | `Value`, `FunctionTable`, `LscrProgram`, `LscrVm`, `ScenarioStore` | 逆向自 `WA2_chs.exe` 的 LSCR 脚本引擎：解析 `function.fnc`（含参数签名与默认值）；解析 `.bnr` 字节码并预扫描 `if/elif/else` 块尾与 `for` 步进入口；执行后缀表达式（RPN）与控制流；对齐加载 `script.pak`（日文）与 `ck-gal.pak`（中文）同序号双语词条及 `Global.vrb` / `GFLAG.dat`。 |
 | `com.wa2port.core.engine` | `Wa2Engine`, `Stage`, `StageState`, `EngineEvent`, `SaveData`, `HeadlessRunner` | 游戏主状态机：实现 ~150 个引擎内置函数（`LscrVm.Host`），维护不可变舞台快照 `StageState` 与一次性事件队列 `EngineEvent`，管理计时器（Wait / Transition / Tint / Shake / Choice / Movie / Message）、存读档序列化、全局标志与既读位图 `ReadTracker`。 |
-| `com.wa2port.core.gallery` | `CgGallery`, `CgGroup`, `CgCategory` | CG 鉴赏索引器：加载 `WA2.exe` `.data 0x4c01b0` 卡片表（`cg_cards.tsv`，149 张卡片 / 272 个变体，分属 `IC` 与 `CC`），扫描 `grp/`、`patch.pak`、`grp.pak` 与 `IC/grp.pak`，过滤合成部件与未引用文件，并结合 `SystemData.cgFlags` 判定卡片与差分变体解锁状态。 |
+| `com.wa2port.core.gallery` | `CgGallery`, `BgmGallery`, `SceneReplayGallery` | 鉴赏与回想目录索引器：<br>• `CgGallery`：加载 `WA2.exe` `.data 0x4c01b0` 卡片表（`cg_cards.tsv`，149 张卡片 / 272 个变体），结合 `SystemData.cgFlags` 判定解锁状态；<br>• `BgmGallery`：63 首音乐鉴赏目录（`.data 0x4c1dd0`），处理 `gflags[100 + bgmId]` 解锁、#25 `BGM_021/035` 切换与 #31 完整版主题曲联动解锁，解析 `_A`+`_B` 无缝循环事件；<br>• `SceneReplayGallery`：24 幕场景回想目录（`.data 0x4c1bf0`），提供中日双语标题、女主分类、`tv%06d.tga` 预裁切缩略图解析与 `gflags[80 / 300..322]` 解锁判定。 |
 
 ### 1.2 `:app` 包职责
 
 | 包路径 | 核心类 / 文件 | 职责说明 |
 |---|---|---|
-| `com.wa2port.android` (root & `ui/`) | `MainActivity`, `AppViewModel`, `Screens.kt`, `CgGalleryScreen.kt`, `Overlays.kt` | 横屏沉浸式 Activity；轻量级页面栈导航（`Title`, `Game`, `Gallery`, `Config`, `Assets`, `Load`）；CG 鉴赏网格与全屏多级缩放查看器（`CgGalleryScreen` / `CgViewer`）；存档/读档弹窗、回想历史（Backlog）、设置面板与主菜单 UI。 |
+| `com.wa2port.android` (root & `ui/`) | `MainActivity`, `AppViewModel`, `Screens.kt`, `CgGalleryScreen.kt`, `BgmGalleryScreen.kt`, `SceneReplayScreen.kt`, `Overlays.kt` | 横屏沉浸式 Activity；轻量级页面栈导航（`Title`, `Game`, `Gallery`, `BgmGallery`, `SceneReplay`, `Config`, `Assets`, `Load`）；CG 鉴赏网格与全屏缩放查看器；63 曲音乐鉴赏播放器（`BgmGalleryScreen`）；24 幕场景回想网格（`SceneReplayScreen`，通过 `9999.bnr` 与 `replayMode` 启动并在结束后返回回想页）；存档/读档弹窗、回想历史（Backlog）、设置面板与主菜单 UI。 |
 | `com.wa2port.android.data` | `AssetLocator`, `SafImporter`, `SaveStore`, `SettingsStore` | 自动探测外部存储或 `/data/local/tmp/wa2` 中的游戏资源；通过 Android SAF (`DocumentsContract`) 断点续传导入游戏目录；管理 24 个存档槽 + 快速存档槽（含 320×180 JPEG 缩略图与原子写文件）；持久化语言、文本框模式、音量与文字速度配置。 |
 | `com.wa2port.android.bridge` | `RenderBackend`, `Wa2RenderBackend`, `StageHandle`, `AudioSink`, `TextPainter` | 连接 `:core` 状态/事件与 Android 渲染/音频子系统的桥接层；内含 `AtlasTextPainter`（带 160 项 `IdentityHashMap` LRU 布局缓存）。 |
 | `com.wa2port.android.game` | `GameSession`, `MessageWindow`, `RevealPlan`, `Gestures`, `QuickBar` | 驱动每帧更新的会话控制器：协调 `Wa2Engine.update(dtMs)`、消费 `EngineEvent`、执行跨 `\k` 段的打字机揭示计划（`RevealPlan`）、管理 `AUTO`/`SKIP` 模式、绘制 ADV 双栏双语对话框与 NOVEL 全屏电子书模式、处理触控手势。 |
@@ -194,11 +194,10 @@ stateDiagram-v2
   - `audio: AudioState`：正在播放的 `bgmTrack`、`bgmVolume` 与循环环境音效 `loops`；
   - `message: LineRef?`、`voiceScene: Int`、`speakerToken: Int?`：当前正在显示的台词引用与说话人状态。
 - **系统全局存档（`system.json`）**：对应 `SystemData`，跨所有存档槽共享：
-  - `version`；
-  - `gflags: IntArray`：62 个跨周目全局标志（对应原版 `GFLAG.dat`，由 `GetGameFlag`/`SetGameFlag` 读写）；
+  - `gflags: IntArray(1024)`：1024 个跨周目全局标志（对应原版 `0x521930` / `GFLAG.dat`，由 `GetGameFlag`/`SetGameFlag` 读写，含 `80` 与 `300..322` 场景回想解锁、`100..199` BGM 鉴赏解锁、`200..224` 动画解锁）；
   - `cgFlags: MutableSet<String>`：已解锁的 CG 变体集合（如 `"v100100"`，供 CG 鉴赏模式使用）；
-  - `bgmFlags: MutableSet<Int>`：已播放过的 BGM 曲目集合；
-  - `read: ReadTracker`：每个剧本已读台词行号集合 `lines: MutableMap<String, MutableSet<Int>>`。
+  - `bgmFlags: MutableSet<Int>`：已播放过的 BGM 曲目集合（加载时同步映射至 `gflags[100 + bgmId]`）；
+  - `read: ReadTracker`：每个剧本已读台词行号位图（`BitSet` Base64 导出）。
 
 ### 4.2 台词与选项挂起态存档恢复
 

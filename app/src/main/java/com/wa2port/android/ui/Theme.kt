@@ -36,6 +36,9 @@ object Wa2Colors {
     val Text = Color(0xFFF2F5FA)
     val TextDim = Color(0xFFA8B3C7)
     val Name = Color(0xFFFFD9A0)
+    val Button = Color(0x66203050)
+    val ButtonActive = Color(0x99305088)
+    val Border = Color(0xFF4A6A99)
 }
 
 @Composable

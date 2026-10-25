@@ -34,26 +34,39 @@ class ReadTracker {
     }
 }
 
+/** Number of global flags in `WA2.exe` (`0x521930`, `Sys.sav` offset `0x268480`: 1024 `i32`s). */
+const val GFLAG_COUNT = 1024
+
 /** Global, save-independent data (`Sys.sav` equivalent). */
 @Serializable
 data class SystemDataJson(
     val gflags: List<Int> = emptyList(),
     val read: Map<String, String> = emptyMap(),
     val cgFlags: List<String> = emptyList(),
+    val bgmFlags: List<Int> = emptyList(),
 )
 
 class SystemData {
-    val gflags = IntArray(64)
+    val gflags = IntArray(GFLAG_COUNT)
     val read = ReadTracker()
     val cgFlags = LinkedHashSet<String>()
+    val bgmFlags = LinkedHashSet<Int>()
 
-    fun toJson(): String = JSON.encodeToString(SystemDataJson(gflags.toList(), read.export(), cgFlags.toList()))
+    fun toJson(): String = JSON.encodeToString(
+        SystemDataJson(gflags.toList(), read.export(), cgFlags.toList(), bgmFlags.toList())
+    )
 
     fun loadJson(text: String) {
         val d = JSON.decodeFromString<SystemDataJson>(text)
+        gflags.fill(0)
         d.gflags.forEachIndexed { i, v -> if (i < gflags.size) gflags[i] = v }
         read.import(d.read)
         cgFlags.clear(); cgFlags.addAll(d.cgFlags)
+        bgmFlags.clear(); bgmFlags.addAll(d.bgmFlags)
+        // Sync legacy bgmFlags into gflags[100 + id]
+        for (id in bgmFlags) {
+            if (id in 1..199 && (100 + id) in gflags.indices) gflags[100 + id] = 1
+        }
     }
 }
 

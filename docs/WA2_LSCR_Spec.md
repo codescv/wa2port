@@ -210,8 +210,8 @@ u8 argType[16]; i32 default[16]` (type 3 int, 4 float, 5 text-token, 6 string, 7
 | 193 | SetMovie | (tok, int=0) | 15 | play movie by token (`mv01`…) |
 | 194 | Wait | (frames, 0, 0) | 7 014 | wait N frames (60 fps base) |
 | 195/196/204 | StartTimer / WaitTimer / GetTimer | | 437/231/480 | |
-| 197 | GoTitle | () | 37 | return to title |
-| 198/199 | GetGameFlag / SetGameFlag | (idx[, val]) | 34/67 | GFLAG.dat global flags |
+| 197 | GoTitle | () | 37 | return to title (or return to Scene Replay when `GetReplayMode() != 0`) |
+| 198/199 | GetGameFlag / SetGameFlag | (idx[, val]) | 34/67 | `0x521930` 1024-int global flags (`80`/`300..322` = replay, `100..199` = BGM) |
 | 200 | LogOut | (int) | 2 | |
 | 201 | V_Flag | (int,int,int) | 27 | CG-seen flag |
 | 203 | Calender | (y, m, d, -1, 1) | 238 | date card |
@@ -221,7 +221,7 @@ u8 argType[16]; i32 default[16]` (type 3 int, 4 float, 5 text-token, 6 string, 7
 | 209 | SetSelect | (?=3) | 34 | **present choice**, result used by following `switch`/`if` on a variable |
 | 210/211/213/214 | S / Z / WSZ / StopSZR | | 484/87/8/12 | scroll / zoom camera |
 | 220 | NevelMode | (int) | 14 | novel-mode window |
-| 221/222 | EroMode / GetReplayMode | | 50/43 | |
+| 221/222 | EroMode / GetReplayMode | | 50/43 | `222` returns `ds:0x4be048` (`0` in normal play, `1..24` in Scene Replay via `9999.bnr`) |
 | 225/227 | B2 / V2 | (…, sx f, sy f, f, 1) | 519/43 | zoomable background / CG |
 | 229/231 | SetWeather2 / SetShake2 | | 36/6 | |
 | 233 | NB | (0,1) | 249 | novel-mode page (5xxx novels) |

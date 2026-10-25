@@ -53,6 +53,7 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 | `ScenarioTest` | 遍历 `script.pak` 与 `ck-gal.pak` 全部 187 个剧本，验证中日双语词条 1:1 序号对齐、CP932 控制符解析、Table B 59 段映射（7,655 格）、CK-GAL 3,602 汉字表（`748..4349`）与 `4320..4350` 错位修正表。 |
 | `VmTest` | 验证 `function.fnc` 签名解析、全部 `.bnr` 剧本字节码加载、控制流（`if/elif/else` 链、`for`、`switch`）、可重入挂起/恢复（`CallOutcome.Block`）、`FB`/`F` 亮度与 `.AMP` 槽位路由，以及通过 `HeadlessRunner` 对主线剧本进行数千步无头推演。 |
 | `CgGalleryTest` | 验证 `cg_cards.tsv`（`.data 0x4c01b0`）对真实安装目录的 149 张卡片（27 IC + 122 CC）/ 272 个差分变体精确匹配、9 个合成图层部件与 8 张未引用 `v*.tga` 过滤，以及 `SystemData.cgFlags` 卡片级/变体级解锁逻辑。 |
+| `BgmAndReplayTest` | 验证 `SystemData.gflags`（1024 项）持久化、`BgmGallery` 全部 63 首曲目在 `BGM.PAK`/`IC/BGM.PAK` 中的解析与特殊解锁规则（#25 `BGM_021/035` 切换、#31 完整版联动解锁），以及 `SceneReplayGallery` 全部 24 个回想槽位的缩略图（`tv%06d.tga`）、`9999.bnr` + `GetReplayMode()`（op `222`）剧本分发与 `GoTitle()` 结束回归。 |
 
 ---
 

@@ -60,6 +60,13 @@ class Wa2Engine(
     var skipMode: SkipMode = SkipMode.OFF
     /** When true, skipping also passes unread lines (the "skip-all" setting). */
     var skipUnread: Boolean = false
+    /**
+     * `WA2.exe` `ds:0x4be048` (`g_replayMode`): `0` during normal story play, `1..24` when launched
+     * from Scene Replay (`回想モード`). Returned by opcode `222` (`GetReplayMode`).
+     */
+    var replayMode: Int = 0
+    /** `WA2.exe` `ds:0x4d2d20` (`g_eroMode`): set by opcode `221` (`EroMode`). */
+    var eroMode: Int = 0
 
     private val events = ArrayList<EngineEvent>()
     private var voiceScene = 0
@@ -95,6 +102,27 @@ class Wa2Engine(
 
     /** Starts a new game at [sceneName] (`1001` = IC prologue, `2001` = CC). */
     fun start(sceneName: String): Boolean {
+        replayMode = 0
+        eroMode = 0
+        return startInternal(sceneName)
+    }
+
+    /**
+     * Starts Scene Replay slot [slotNumber] (`1..24`).
+     *
+     * Sets [replayMode] = [slotNumber] (`WA2.exe` `0x42eff2`) and starts dispatcher script `"9999"`
+     * (which switches on `GetReplayMode()` and calls the target scene script), falling back to
+     * [fallbackScript] if `"9999"` is not present.
+     */
+    fun startReplay(slotNumber: Int, fallbackScript: String? = null): Boolean {
+        require(slotNumber in 1..24) { "Invalid replay slot $slotNumber (expected 1..24)" }
+        replayMode = slotNumber
+        eroMode = 0
+        val target = if (loadProgram("9999") != null) "9999" else (fallbackScript ?: "9999")
+        return startInternal(target)
+    }
+
+    private fun startInternal(sceneName: String): Boolean {
         stage = StageState()
         currentLine = null
         choices = emptyList()
@@ -148,7 +176,7 @@ class Wa2Engine(
 
     private fun canSkipCurrent(): Boolean {
         val l = currentLine ?: return true
-        return skipMode == SkipMode.ALL || skipUnread || system.read.isRead(l.ref.scene, l.ref.lineNo)
+        return skipMode == SkipMode.ALL || skipUnread || replayMode != 0 || system.read.isRead(l.ref.scene, l.ref.lineNo)
     }
 
     fun choose(index: Int) {
@@ -176,7 +204,7 @@ class Wa2Engine(
             cn = sc?.cn?.rich(ref.token),
             speakerJp = if (ref.speakerToken >= 0) sc?.jp?.rich(ref.speakerToken) else null,
             speakerCn = if (ref.speakerToken >= 0) sc?.cn?.rich(ref.speakerToken) else null,
-            read = system.read.isRead(ref.scene, ref.lineNo),
+            read = replayMode != 0 || system.read.isRead(ref.scene, ref.lineNo),
         )
     }
 
@@ -401,7 +429,7 @@ class Wa2Engine(
             203 -> { setStage { it.copy(calendar = CalendarCard(int(args, 0), int(args, 1), int(args, 2))) }; return ret() }
 
             // ---- audio
-            158, 232 -> { // M(track, fade, loop, vol)
+            158, 232 -> { // M(track, fade, loop, vol) / M2: also sets gflags[100 + track] = 1 (WA2.exe 0x40fb80)
                 val track = int(args, 0)
                 val fade = int(args, 1)
                 val vol = int(args, 3, 255)
@@ -409,6 +437,10 @@ class Wa2Engine(
                     audio = audio.copy(bgmTrack = 0)
                     events += EngineEvent.StopBgm(Stage.framesToMs(fade))
                 } else {
+                    if (track in 1..199 && (100 + track) in system.gflags.indices) {
+                        system.gflags[100 + track] = 1
+                    }
+                    system.bgmFlags += track
                     audio = audio.copy(bgmTrack = track, bgmVolume = vol)
                     bgmEvent(track, fade, vol)?.let { events += it }
                 }
@@ -490,7 +522,8 @@ class Wa2Engine(
                 return ret()
             }
             200, 128, 129 -> return ret()
-            221, 222 -> return ret(0)
+            221 -> { eroMode = int(args, 0); return ret(0) } // EroMode(flag, ?)
+            222 -> return ret(replayMode) // GetReplayMode(): 0 in normal play, 1..24 in Scene Replay
 
             // ---- choices
             208 -> { // SetSelectMess(text, …)
@@ -553,7 +586,7 @@ class Wa2Engine(
         return null
     }
 
-    private fun bgmEvent(track: Int, fadeFrames: Int, vol: Int): EngineEvent.PlayBgm? {
+    fun bgmEvent(track: Int, fadeFrames: Int = 0, vol: Int = 255): EngineEvent.PlayBgm? {
         val a = "BGM_%03d_A.OGG".format(Locale.ROOT, track)
         val b = "BGM_%03d_B.OGG".format(Locale.ROOT, track)
         val single = "BGM_%03d.OGG".format(Locale.ROOT, track)

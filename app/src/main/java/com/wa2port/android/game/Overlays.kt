@@ -163,8 +163,18 @@ fun BacklogOverlay(
 
 /** In-game system menu (MENU button / Android Back). */
 @Composable
-fun GameMenu(scene: String, onResume: () -> Unit, onSave: () -> Unit, onLoad: () -> Unit, onLog: () -> Unit, onConfig: () -> Unit, onTitle: () -> Unit) {
+fun GameMenu(
+    scene: String,
+    inReplayMode: Boolean = false,
+    onResume: () -> Unit,
+    onSave: () -> Unit,
+    onLoad: () -> Unit,
+    onLog: () -> Unit,
+    onConfig: () -> Unit,
+    onTitle: () -> Unit,
+) {
     var confirmTitle by remember { mutableStateOf(false) }
+    val exitLabel = if (inReplayMode) "结束回想 Exit Replay" else "返回标题 Title"
     Box(Modifier.fillMaxSize().background(Color(0xCC050A16)).clickable(onClick = onResume), contentAlignment = Alignment.Center) {
         Column(
             Modifier.width(320.dp).clickable(enabled = false) {},
@@ -173,21 +183,25 @@ fun GameMenu(scene: String, onResume: () -> Unit, onSave: () -> Unit, onLoad: ()
         ) {
             Text(sceneLabel(scene), color = Wa2Colors.TextDim, fontSize = 12.sp)
             MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), onClick = onResume)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuButton("保存 Save", modifier = Modifier.weight(1f), onClick = onSave)
-                MenuButton("读取 Load", modifier = Modifier.weight(1f), onClick = onLoad)
+            if (!inReplayMode) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MenuButton("保存 Save", modifier = Modifier.weight(1f), onClick = onSave)
+                    MenuButton("读取 Load", modifier = Modifier.weight(1f), onClick = onLoad)
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MenuButton("回想 Log", modifier = Modifier.weight(1f), onClick = onLog)
                 MenuButton("设置 Config", modifier = Modifier.weight(1f), onClick = onConfig)
             }
-            MenuButton("返回标题 Title", modifier = Modifier.fillMaxWidth()) { confirmTitle = true }
+            MenuButton(exitLabel, modifier = Modifier.fillMaxWidth()) {
+                if (inReplayMode) onTitle() else confirmTitle = true
+            }
         }
     }
     if (confirmTitle) {
         AlertDialog(
             onDismissRequest = { confirmTitle = false },
-            confirmButton = { TextButton(onClick = { confirmTitle = false; onTitle() }) { Text("返回标题 Title") } },
+            confirmButton = { TextButton(onClick = { confirmTitle = false; onTitle() }) { Text(exitLabel) } },
             dismissButton = { TextButton(onClick = { confirmTitle = false }) { Text("取消 Cancel") } },
             text = { Text("未保存的进度将丢失。返回标题？\nタイトルに戻りますか？") },
         )

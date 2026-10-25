@@ -54,6 +54,8 @@ fun TitleScreen(vm: AppViewModel) {
                 MenuButton("终章 Closing Chapter", "开始 / はじめから (2001)", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.startGame("2001") }
                 MenuButton("读取进度 Load", "ロード", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Load) }
                 MenuButton("CG 鉴赏 CG Gallery", "CG モード / ギャラリー", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Gallery) }
+                MenuButton("音乐鉴赏 BGM Gallery", "音楽モード / サウンド", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.BgmGallery) }
+                MenuButton("场景回想 Scene Replay", "回想モード / シーン回想", enabled = ready, modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.SceneReplay) }
                 MenuButton("设置 Config", "コンフィグ", modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Config) }
                 MenuButton("资源文件夹 Asset Folder", "素材フォルダ設定", modifier = Modifier.fillMaxWidth()) { vm.navigate(Screen.Assets) }
             }

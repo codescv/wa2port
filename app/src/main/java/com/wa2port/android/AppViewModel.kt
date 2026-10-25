@@ -36,6 +36,8 @@ sealed interface Screen {
     data object Assets : Screen
     data object Load : Screen
     data object Gallery : Screen
+    data object BgmGallery : Screen
+    data object SceneReplay : Screen
 }
 
 /** App-wide state: navigation, settings, asset location/import, engine and the active [GameSession]. */
@@ -218,10 +220,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Starts Scene Replay slot [slotNumber] (`1..24`) and returns to [Screen.SceneReplay] when finished. */
+    fun startReplay(slotNumber: Int, fallbackScript: String? = null) {
+        if (busy != null) return
+        viewModelScope.launch {
+            busy = "载入回想… Loading replay…"
+            try {
+                val s = newSession() ?: return@launch
+                if (!s.startReplay(slotNumber, fallbackScript)) {
+                    error = "无法开始回想 Cannot start replay #$slotNumber"
+                    return@launch
+                }
+                if (backStack.lastOrNull() != Screen.Game) navigate(Screen.Game)
+            } catch (t: Throwable) {
+                error = "启动失败 Start failed: ${t.message}"
+            } finally {
+                busy = null
+            }
+        }
+    }
+
     fun exitToTitle() {
+        val wasReplay = session?.inReplayMode == true
         session?.dispose()
         session = null
-        resetTo(Screen.Title)
+        if (wasReplay && Screen.SceneReplay in backStack) {
+            while (backStack.size > 1 && backStack.last() != Screen.SceneReplay) {
+                backStack.removeAt(backStack.size - 1)
+            }
+        } else {
+            resetTo(Screen.Title)
+        }
     }
 
     /** Memory pressure: drop decoded bitmaps. */

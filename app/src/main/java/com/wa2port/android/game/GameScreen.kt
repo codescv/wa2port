@@ -143,26 +143,30 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     }
     fun act(f: () -> Unit): () -> Unit = { barInteraction++; f() }
 
-    val actions = listOf(
-        QuickAction("AUTO", session.autoMode, act { session.toggleAuto() }),
-        QuickAction("SKIP", session.skipToggle, act { session.toggleSkip() }),
-        QuickAction("LOG", false, act { session.overlay = Overlay.BACKLOG }),
-        QuickAction("Q.SAVE", false, act { scope.launch { session.quickSave() } }),
-        QuickAction("Q.LOAD", false, act { scope.launch { session.quickLoad() } }),
-        QuickAction("SAVE", false, act { session.overlay = Overlay.SAVE }),
-        QuickAction("LOAD", false, act { session.overlay = Overlay.LOAD }),
-        QuickAction(
-            when (settings.lang) {
-                DisplayLang.BOTH -> "中/日 双"
-                DisplayLang.CN -> "中文"
-                DisplayLang.JP -> "日本語"
-            },
-            false, act { vm.updateSettings { it.copy(lang = it.lang.next()) } },
-        ),
-        QuickAction(settings.windowMode.label, false, act { vm.updateSettings { it.copy(windowMode = it.windowMode.next()) } }),
-        QuickAction("HIDE", session.windowHidden, act { session.windowHidden = true }),
-        QuickAction("MENU", false, act { session.overlay = Overlay.MENU }),
-    )
+    val actions = buildList {
+        add(QuickAction("AUTO", session.autoMode, act { session.toggleAuto() }))
+        add(QuickAction("SKIP", session.skipToggle, act { session.toggleSkip() }))
+        add(QuickAction("LOG", false, act { session.overlay = Overlay.BACKLOG }))
+        if (!session.inReplayMode) {
+            add(QuickAction("Q.SAVE", false, act { scope.launch { session.quickSave() } }))
+            add(QuickAction("Q.LOAD", false, act { scope.launch { session.quickLoad() } }))
+            add(QuickAction("SAVE", false, act { session.overlay = Overlay.SAVE }))
+            add(QuickAction("LOAD", false, act { session.overlay = Overlay.LOAD }))
+        }
+        add(
+            QuickAction(
+                when (settings.lang) {
+                    DisplayLang.BOTH -> "中/日 双"
+                    DisplayLang.CN -> "中文"
+                    DisplayLang.JP -> "日本語"
+                },
+                false, act { vm.updateSettings { it.copy(lang = it.lang.next()) } },
+            ),
+        )
+        add(QuickAction(settings.windowMode.label, false, act { vm.updateSettings { it.copy(windowMode = it.windowMode.next()) } }))
+        add(QuickAction("HIDE", session.windowHidden, act { session.windowHidden = true }))
+        add(QuickAction("MENU", false, act { session.overlay = Overlay.MENU }))
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
@@ -280,9 +284,10 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             Overlay.NONE -> {}
             Overlay.MENU -> GameMenu(
                 scene = session.engine.scene,
+                inReplayMode = session.inReplayMode,
                 onResume = { session.overlay = Overlay.NONE },
-                onSave = { session.overlay = Overlay.SAVE },
-                onLoad = { session.overlay = Overlay.LOAD },
+                onSave = { if (!session.inReplayMode) session.overlay = Overlay.SAVE },
+                onLoad = { if (!session.inReplayMode) session.overlay = Overlay.LOAD },
                 onLog = { session.overlay = Overlay.BACKLOG },
                 onConfig = { session.overlay = Overlay.CONFIG },
                 onTitle = { vm.exitToTitle() },

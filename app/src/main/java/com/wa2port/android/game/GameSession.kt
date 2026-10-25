@@ -84,12 +84,21 @@ class GameSession(
 
     val revealDone: Boolean get() = plan == null || (segmentComplete && segment >= (plan?.segments ?: 1) - 1)
     val skipping: Boolean get() = (skipHeld || skipToggle) && !skipSuppressed
+    /** True while running a Scene Replay (`回想モード`, `WA2.exe` `ds:0x4be048 != 0`). */
+    val inReplayMode: Boolean get() = engine.replayMode != 0
 
     // ------------------------------------------------------------------------- lifecycle
 
     fun startNew(scene: String): Boolean {
         resetUi()
         val ok = engine.start(scene)
+        sync()
+        return ok
+    }
+
+    fun startReplay(slotNumber: Int, fallbackScript: String? = null): Boolean {
+        resetUi()
+        val ok = engine.startReplay(slotNumber, fallbackScript)
         sync()
         return ok
     }
@@ -119,6 +128,7 @@ class GameSession(
     }
 
     fun dispose() {
+        engine.replayMode = 0
         persistSystemBlocking()
         audio.release()
     }
@@ -313,6 +323,7 @@ class GameSession(
     // ------------------------------------------------------------------------- save / load
 
     suspend fun saveTo(slot: Int, thumbnailB64: String? = null): Boolean {
+        if (inReplayMode) return false
         val thumb = thumbnailB64 ?: SaveStore.encodeThumbnail(stageHandle?.captureThumbnail())
         val data = engine.save(thumb)
         val system = engine.system.toJson()
@@ -324,16 +335,19 @@ class GameSession(
     }
 
     suspend fun loadFrom(slot: Int): Boolean {
+        if (inReplayMode) return false
         val data = saves.read(slot) ?: return false
         loadData(data)
         return true
     }
 
     suspend fun quickSave() {
+        if (inReplayMode) { toast = "回想模式下无法存档 Save disabled in replay"; return }
         toast = if (saveTo(SaveStore.QUICK_SLOT)) "已快速存档 Quick saved" else "存档失败 Save failed"
     }
 
     suspend fun quickLoad() {
+        if (inReplayMode) { toast = "回想模式下无法读档 Load disabled in replay"; return }
         toast = if (loadFrom(SaveStore.QUICK_SLOT)) "已快速读档 Quick loaded" else "没有快速存档 No quick save"
     }
 
