@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withContext
 
 /**
  * Asynchronous decoder + LRU cache turning WA2 archive images (TGA sprites/backgrounds/CGs, BMP
@@ -79,6 +80,23 @@ class AssetImageCache(
     fun prefetch(dir: String, name: String) {
         if (peek(dir, name) != null || isMissing(dir, name)) return
         scope.async { get(dir, name) }
+    }
+
+    /**
+     * Returns `dir/name` colour-graded by the `.AMP` LUT [lutName] (e.g. sprites under the
+     * per-background `B….amp`), cached separately; falls back to the ungraded image when the LUT is
+     * missing.
+     */
+    suspend fun getGraded(dir: String, name: String, lutName: String): Bitmap? {
+        val k = "lut:" + lutName.lowercase() + "|" + key(dir, name)
+        lru.get(k)?.let { return it }
+        val base = get(dir, name) ?: return null
+        val graded = withContext(Dispatchers.Default) {
+            val lut = lut(lutName) ?: return@withContext null
+            base.copy(Bitmap.Config.ARGB_8888, true)?.also { StageComposer.applyLut(it, lut) }
+        } ?: return base
+        lru.put(k, graded)
+        return graded
     }
 
     /** Loads (and caches) the `.AMP` LUT [name] from `grp`, or `null` if absent/invalid. Blocking; call off the UI thread. */

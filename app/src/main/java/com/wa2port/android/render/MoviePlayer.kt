@@ -19,6 +19,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.wa2port.android.movie.AsfMoviePlayer
+import com.wa2port.android.movie.NativeMovieDecoder
 import com.wa2port.core.archive.Wa2Assets
 import java.io.File
 import kotlinx.coroutines.delay
@@ -45,8 +47,9 @@ fun findMovieFile(assets: Wa2Assets, stem: String): File? {
 /**
  * Full-screen movie for `EngineEvent.PlayMovie(stem)`.
  *
- * Plays the user-supplied MP4 found by [findMovieFile] (letterboxed by [VideoView], tap to skip).
- * Without one, shows a short "movie unavailable" card for [unavailableMs] (tap to skip).
+ * Source priority: (1) a user-supplied MP4 found by [findMovieFile] (explicit override, played by
+ * [VideoView]); (2) the original `mvNN0.pak` ASF (WMV3/WMAv2) via the native decoder
+ * ([AsfMoviePlayer], when [NativeMovieDecoder.isAvailable]); (3) otherwise shows a short "movie unavailable" card for [unavailableMs] (tap to skip).
  * [onFinished] is invoked exactly once — on completion, skip or playback error — after which the host
  * should call `Wa2Engine.movieFinished()` and remove this composable.
  */
@@ -67,7 +70,12 @@ fun MoviePlayer(
         }
     }
     val file = remember(stem, assets) { findMovieFile(assets, stem) }
-    Box(
+    val asf = remember(stem, assets) {
+        if (file == null && NativeMovieDecoder.isAvailable) assets.movie(stem, 0) else null
+    }
+    if (asf != null) {
+        AsfMoviePlayer(asf, complete, modifier)
+    } else Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)

@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.wa2port.android"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.wa2port.android"
@@ -31,6 +32,11 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
     buildFeatures {
         compose = true

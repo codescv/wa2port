@@ -2,8 +2,11 @@ package com.wa2port.android.render
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.RectF
 import com.wa2port.core.engine.Stage
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.image.AmpLut
@@ -14,7 +17,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
- * Flattens the static part of a [StageState] (background → sprites → bitmap layers → event CG →
+ * Flattens the static part of a [StageState] (background → sprites (graded by
+ * [StageState.spriteLut], scaled by `scale/256`, tinted by `bright/128`) → bitmap layers → event CG →
  * `.AMP` LUT) into one opaque 1280×720 bitmap. Animated parts (transitions, overlay colour, shake,
  * weather) are drawn live by [StageView] on top of the result.
  *
@@ -36,7 +40,10 @@ object StageComposer {
         val layers = stage.layers.filter { it.visible && it.alpha > 0 }.sortedWith(compareBy({ it.layer }, { it.slot }))
         // Kick off all decodes concurrently.
         val bgJob = async { stage.bg?.let { cache.get(stage.bgDir, it) } }
-        val spriteJobs = sprites.map { async { cache.get("char", it.image) } }
+        val spriteLut = stage.spriteLut
+        val spriteJobs = sprites.map {
+            async { if (spriteLut != null) cache.getGraded("char", it.image, spriteLut) else cache.get("char", it.image) }
+        }
         val layerJobs = layers.map { async { cache.get(it.dir, it.image) } }
         val cgJob = async { stage.cg?.let { cache.get("grp", it) } }
         val lutJob = async(Dispatchers.IO) { stage.lut?.let { cache.lut(it) } }
@@ -53,10 +60,18 @@ object StageComposer {
             bg?.let { drawFull(c, it, paint) }
             sprites.forEachIndexed { i, sp ->
                 val b = spriteBmps[i] ?: return@forEachIndexed
-                // Bottom-aligned, horizontally centred on the slot x.
-                val left = sp.centerX - b.width / 2f
-                val top = (Stage.HEIGHT - b.height).toFloat()
-                c.drawBitmap(b, left, top, paint)
+                // Bottom-aligned, horizontally centred on the slot x; scale in 1/256 anchored at the feet.
+                val s = sp.scale.coerceAtLeast(1) / 256f
+                val w = b.width * s
+                val h = b.height * s
+                val left = sp.centerX - w / 2f
+                val top = Stage.HEIGHT - h
+                val p = if (sp.bright == 128) paint else Paint(paint).apply {
+                    // Brightness: per-channel multiply by bright/128 (128 = neutral).
+                    val k = sp.bright.coerceIn(0, 255) / 128f
+                    colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setScale(k, k, k, 1f) })
+                }
+                c.drawBitmap(b, null, RectF(left, top, left + w, top + h), p)
             }
             layers.forEachIndexed { i, l ->
                 val b = layerBmps[i] ?: return@forEachIndexed

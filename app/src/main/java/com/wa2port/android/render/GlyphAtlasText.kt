@@ -26,7 +26,9 @@ import kotlinx.coroutines.withContext
  * `本体80` body atlas in the text colour — as tinted `ALPHA_8` bitmaps, so any scale/colour works.
  *
  * Layout model (all values in the caller's pixel units):
- * * full-width (double-byte) codes advance `sizePx·(1+letterSpacing)`, single-byte codes half that;
+ * * `sizePx` is the em: full-width (double-byte) codes advance `sizePx·(1+letterSpacing)`,
+ *   single-byte codes half that; the glyph ink fills ≈ 0.87 em (the 40-px atlas cell is drawn at
+ *   4/3 em, offset so its 30-px em box lands on the layout box);
  * * each line box is `sizePx·lineSpacing` tall; glyphs sit at its bottom, the band above holds ruby
  *   (furigana, [TextItem.Ruby] readings drawn at `sizePx·rubyScale`, centred over the base);
  * * lines wrap at `maxWidth`; ruby groups and ASCII words are kept together; closing punctuation

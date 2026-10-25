@@ -37,8 +37,9 @@ import kotlinx.coroutines.launch
  * [StageState.serial] changed the new picture is revealed with the state's transition:
  * * [TransitionKind.CUT] — instant;
  * * [TransitionKind.FADE] — crossfade over `durationMs`;
- * * [TransitionKind.MASK] — pattern dissolve driven by the grey mask `grp/f0NNN.bmp` (GPU: a
- *   ColorMatrix maps grey → alpha with the `pf0x.psh` threshold ramp, then `DST_IN`).
+ * * [TransitionKind.MASK] — pattern dissolve driven by the grey mask `grp/f0NNN.bmp` (dark pixels
+ *   first, bright first when `reverse`; mirrored by `flipX`/`flipY`). GPU: a ColorMatrix maps grey →
+ *   alpha with a soft threshold ramp, then `DST_IN`.
  *
  * Drawn live on top: overlay colour ([StageState.overlayColor], faded over
  * [StageState.overlayFadeMs]), screen shake ([StageState.shake]) and
@@ -74,6 +75,9 @@ class StageView @JvmOverloads constructor(
     private var previous: Bitmap? = null
     private var mask: Bitmap? = null
     private var transitionKind = TransitionKind.CUT
+    private var maskReverse = false
+    private var maskFlipX = false
+    private var maskFlipY = false
     private var transitionStart = 0L
     private var transitionMs = 0L
 
@@ -141,6 +145,9 @@ class StageView @JvmOverloads constructor(
         if (animate) {
             previous = current // a transition interrupted mid-way restarts from the last full picture
             transitionKind = tr.kind
+            maskReverse = tr.reverse
+            maskFlipX = tr.flipX
+            maskFlipY = tr.flipY
             transitionMs = tr.durationMs
             transitionStart = SystemClock.uptimeMillis()
             mask = newMask?.also { it.setHasAlpha(true) } // keep blending on for the DST_IN pass
@@ -208,8 +215,15 @@ class StageView @JvmOverloads constructor(
             if (transitionKind == TransitionKind.MASK && m != null) {
                 val save = canvas.saveLayer(stageBounds, null)
                 canvas.drawBitmap(cur, null, stageBounds, bitmapPaint)
-                maskPaint.colorFilter = ColorMatrixColorFilter(maskAlphaMatrix(p))
-                canvas.drawBitmap(m, null, stageBounds, maskPaint)
+                maskPaint.colorFilter = ColorMatrixColorFilter(maskAlphaMatrix(p, maskReverse))
+                if (maskFlipX || maskFlipY) {
+                    canvas.save()
+                    canvas.scale(if (maskFlipX) -1f else 1f, if (maskFlipY) -1f else 1f, Stage.WIDTH / 2f, Stage.HEIGHT / 2f)
+                    canvas.drawBitmap(m, null, stageBounds, maskPaint)
+                    canvas.restore()
+                } else {
+                    canvas.drawBitmap(m, null, stageBounds, maskPaint)
+                }
                 canvas.restoreToCount(save)
             } else {
                 fadePaint.alpha = (p * 255).toInt()
@@ -257,19 +271,21 @@ class StageView @JvmOverloads constructor(
     }
 
     /**
-     * Grey → alpha ramp for the pattern dissolve at progress [p] (0..1), the `pf0x.psh`
-     * `add_x4 r0.a, mask, c0` threshold: alpha = clamp((grey − 1 + p·(1+s)) / s) with softness s.
-     * Bright mask pixels are revealed first.
+     * Grey → alpha ramp for the pattern dissolve at progress [p] (0..1), a soft version of the
+     * engine threshold (`pf0x.psh` `add_x4`): pixels switch where `grey ≤ p` (dark first), i.e.
+     * alpha = clamp((p·(1+s) − grey) / s) with softness s; [reverse] switches where `grey ≥ 1 − p`
+     * (bright first): alpha = clamp((grey − 1 + p·(1+s)) / s).
      */
-    private fun maskAlphaMatrix(p: Float): ColorMatrix {
+    private fun maskAlphaMatrix(p: Float, reverse: Boolean): ColorMatrix {
         val s = MASK_SOFTNESS
-        val offset = 255f * (p * (1f + s) - 1f) / s
+        val gain = if (reverse) 1f / s else -1f / s
+        val offset = if (reverse) 255f * (p * (1f + s) - 1f) / s else 255f * p * (1f + s) / s
         maskMatrix.set(
             floatArrayOf(
                 0f, 0f, 0f, 0f, 0f,
                 0f, 0f, 0f, 0f, 0f,
                 0f, 0f, 0f, 0f, 0f,
-                1f / s, 0f, 0f, 0f, offset,
+                gain, 0f, 0f, 0f, offset,
             ),
         )
         return maskMatrix

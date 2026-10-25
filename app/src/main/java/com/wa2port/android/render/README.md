@@ -32,6 +32,9 @@ controller.stageToScreen(x, y); controller.stageBounds; controller.finishTransit
   thread, once per state change (latest state wins when the engine changes faster than we compose).
 * `serial` change → transition: CUT, FADE (crossfade `durationMs`), MASK (grey `grp/f0NNN.bmp`
   threshold sweep, `pf0x.psh` ramp with softness 0.25, GPU via ColorMatrix + `DST_IN`).
+* Sprites: graded by `spriteLut` (per-background `B….amp`, cached via `AssetImageCache.getGraded`),
+  scaled by `scale/256` (anchored at the feet), tinted by `bright/128`. MASK honours `reverse`, `flipX`, `flipY`
+  (non-reverse = dark mask pixels first).
 * Live layers: `overlayColor` (ARGB fill, faded over `overlayFadeMs`), `shake` (jitter, ≤24 px), `weather != null` → snow.
 
 ## Text — `GlyphAtlasText`
@@ -48,7 +51,8 @@ text.drawLayout(canvas, l, lang, x, y, color, visibleGlyphs)
 * Glyphs come from `fon.pak` (CN) / `fnt.pak` (JP) `袋影80.tga` (outline, drawn first) +
   `本体80.tga` (body) as tinted `ALPHA_8` atlases → pixel-faithful CK-GAL glyphs incl. `0x??7F`.
   System-font fallback (via `BilingualTextDecoder`) when an atlas or cell is missing.
-* Full-width advance = `sizePx·(1+letterSpacing)`, single-byte = half. Line box = `sizePx·lineSpacing`
+* `sizePx` = em: full-width advance = `sizePx·(1+letterSpacing)`, single-byte = half; glyph ink ≈ 0.87 em
+  (40-px cell drawn at 4/3 em). Line box = `sizePx·lineSpacing`
   (default 1.5) with glyphs at the bottom and the ruby band on top (`rubyScale` 0.45).
 * Wraps at `maxWidth` (ruby groups / ASCII words unbroken, closing punctuation hangs), `\n` breaks,
   `\k` does not break (positions in `TextLayout.pageBreaks` = glyph counts, for typewriter pauses),
@@ -77,6 +81,7 @@ channel (ambient loops 0..3) with fade-in/out and `SeVolume` ramps.
 MoviePlayer(stem = "mv100", assets = assets, onFinished = { engine.movieFinished() }, modifier = Modifier.fillMaxSize())
 findMovieFile(assets, stem): File?
 ```
-Android cannot decode the original WMV3/WMAv2 `mvNN0.pak`. Plays a user-supplied
-`mvNN.mp4` / `mvNN0.mp4` (root, `IC/` or `movie/`, case-insensitive) in a `VideoView`; otherwise
-shows a "movie unavailable" card for 1.5 s. Tap skips. `onFinished` fires exactly once.
+Source priority: (1) user-supplied `mvNN.mp4` / `mvNN0.mp4` (root, `IC/` or `movie/`,
+case-insensitive) in a `VideoView`; (2) the original `mvNN0.pak` ASF via `movie.AsfMoviePlayer`
+(native WMV3/WMAv2 decoder, when `NativeMovieDecoder.isAvailable`); (3) a "movie unavailable" card
+for 1.5 s. Tap skips. `onFinished` fires exactly once.
