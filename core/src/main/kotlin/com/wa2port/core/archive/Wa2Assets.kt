@@ -18,8 +18,8 @@ class Wa2Assets(val root: File) : Closeable {
     private val rootListing: Map<String, File> = listing(root)
     private val icDir: File? = rootListing["ic"]?.takeIf { it.isDirectory }
     private val icListing: Map<String, File> = icDir?.let { listing(it) } ?: emptyMap()
-    private val kcapCache = ConcurrentHashMap<String, KcapArchive?>()
-    private val lacCache = ConcurrentHashMap<String, LacArchive?>()
+    private val kcapCache = HashMap<String, KcapArchive?>()
+    private val lacCache = HashMap<String, LacArchive?>()
     private val looseCache = ConcurrentHashMap<String, Map<String, File>>()
 
     /** True when this directory looks like a WA2 install (has at least the JP or CN scenario archive). */
@@ -36,21 +36,25 @@ class Wa2Assets(val root: File) : Closeable {
             .sortedBy { it.path }
 
     /** KCAP archive `<name>.pak` in the root (`ic = false`) or the `IC/` folder (`ic = true`). */
+    @Synchronized
     fun kcap(name: String, ic: Boolean = false): KcapArchive? {
         val key = (if (ic) "ic/" else "") + name.lowercase()
-        return kcapCache.getOrPut(key) {
-            val f = (if (ic) icFile("$name.pak") else file("$name.pak")) ?: return@getOrPut null
-            if (KcapArchive.isKcap(f)) KcapArchive(f) else null
-        }
+        if (kcapCache.containsKey(key)) return kcapCache[key]
+        val f = if (ic) icFile("$name.pak") else file("$name.pak")
+        val a = if (f != null && KcapArchive.isKcap(f)) KcapArchive(f) else null
+        kcapCache[key] = a
+        return a
     }
 
     /** LAC archive `<name>.PAK` in the root (`ic = false`) or the `IC/` folder (`ic = true`). */
+    @Synchronized
     fun lac(name: String, ic: Boolean = false): LacArchive? {
         val key = (if (ic) "ic/" else "") + name.lowercase()
-        return lacCache.getOrPut(key) {
-            val f = (if (ic) icFile("$name.pak") else file("$name.pak")) ?: return@getOrPut null
-            if (LacArchive.isLac(f)) LacArchive(f) else null
-        }
+        if (lacCache.containsKey(key)) return lacCache[key]
+        val f = if (ic) icFile("$name.pak") else file("$name.pak")
+        val a = if (f != null && LacArchive.isLac(f)) LacArchive(f) else null
+        lacCache[key] = a
+        return a
     }
 
     private fun looseDir(dir: String): Map<String, File> = looseCache.getOrPut(dir.lowercase()) {
@@ -95,6 +99,7 @@ class Wa2Assets(val root: File) : Closeable {
     fun movie(stem: String, variant: Int = 0): File? =
         file("$stem$variant.pak") ?: icFile("$stem$variant.pak")
 
+    @Synchronized
     override fun close() {
         kcapCache.values.forEach { it?.close() }
         lacCache.values.forEach { it?.close() }

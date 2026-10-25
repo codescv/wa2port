@@ -163,7 +163,7 @@ enum class TextLang { JP, CN }
  * * CN: codes are pseudo-SJIS cell indices into `fon.pak`; Unicode comes from the recovered
  *   cell table ([CnCellTable]) — glyph rendering never needs it (the atlas is used directly).
  */
-class BilingualTextDecoder(private val cnTable: CnCellTable = CnCellTable.load()) {
+class BilingualTextDecoder(val cnTable: CnCellTable = CnCellTable.shared) {
 
     fun jpChar(code: Int): String = codeToCp932(code)
 
@@ -201,7 +201,15 @@ class BilingualTextDecoder(private val cnTable: CnCellTable = CnCellTable.load()
         toPlain(ScenarioTextParser.parse(bytes), lang, withRuby)
 
     private companion object {
+        /** CP932 vs JIS differences pinned explicitly (some runtimes map Shift_JIS to plain JIS). */
+        private val FIXUPS = mapOf(
+            0x8160 to "\uFF5E", 0x8161 to "\u2225", 0x817C to "\uFF0D",
+            0x8191 to "\uFFE0", 0x8192 to "\uFFE1", 0x81CA to "\uFFE2",
+        )
+
         fun codeToCp932(code: Int): String {
+            FIXUPS[code]?.let { return it }
+            if (code < 0x20) return ""
             if (code < 0x100) {
                 if (code in 0x20..0x7E) return code.toChar().toString()
                 return Cp932.decode(byteArrayOf(code.toByte()))
@@ -214,13 +222,26 @@ class BilingualTextDecoder(private val cnTable: CnCellTable = CnCellTable.load()
     }
 }
 
-/** Recovered CN atlas cell → Unicode table (`wa2/cn_cells.tsv`: `cell<TAB>U+XXXX<TAB>char<TAB>score`). */
-class CnCellTable(private val map: Map<Int, String>) {
+/**
+ * Recovered CN atlas cell → Unicode table (`wa2/cn_cells.tsv`: `cell<TAB>U+XXXX<TAB>char<TAB>score`,
+ * template-matched against the `fon.pak` atlas; cells 748..4350 are CK-GAL hanzi, the rest keep their
+ * CP932 meaning) plus the render remap (`wa2/cn_render_remap.tsv`) that fixes CK-GAL's off-by-one
+ * atlas bug for cells 4320..4350 (the PC patch shows the neighbouring glyph there).
+ */
+class CnCellTable(private val map: Map<Int, String>, private val remap: Map<Int, Int> = emptyMap()) {
     val size: Int get() = map.size
 
     fun unicodeOf(cell: Int): String? = map[cell]
 
+    internal fun mapView(): Map<Int, String> = map
+
+    /** Atlas cell to draw for CN text cell [cell] (identity except the CK-GAL bug range). */
+    fun atlasCell(cell: Int): Int = remap[cell] ?: cell
+
     companion object {
+        /** Process-wide instance loaded from the classpath resources. */
+        val shared: CnCellTable by lazy { load() }
+
         fun parse(text: String): CnCellTable {
             val m = HashMap<Int, String>()
             for (line in text.lineSequence()) {
@@ -235,10 +256,19 @@ class CnCellTable(private val map: Map<Int, String>) {
         }
 
         fun load(): CnCellTable {
-            val text = CnCellTable::class.java.getResourceAsStream("/wa2/cn_cells.tsv")?.use {
-                it.readBytes().toString(Charsets.UTF_8)
-            } ?: return CnCellTable(emptyMap())
-            return parse(text)
+            val text = resource("/wa2/cn_cells.tsv") ?: return CnCellTable(emptyMap())
+            val remap = HashMap<Int, Int>()
+            resource("/wa2/cn_render_remap.tsv")?.lineSequence()?.forEach { line ->
+                if (line.isBlank() || line.startsWith("#")) return@forEach
+                val f = line.split('\t')
+                val a = f.getOrNull(0)?.trim()?.toIntOrNull()
+                val b = f.getOrNull(1)?.trim()?.toIntOrNull()
+                if (a != null && b != null) remap[a] = b
+            }
+            return CnCellTable(parse(text).mapView(), remap)
         }
+
+        private fun resource(path: String): String? =
+            CnCellTable::class.java.getResourceAsStream(path)?.use { it.readBytes().toString(Charsets.UTF_8) }
     }
 }

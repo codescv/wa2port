@@ -265,7 +265,9 @@ class Wa2Engine(
                 }
                 return CallOutcome.Block(WaitState.Click)
             }
-            135 -> return ret() // K
+            135, 136 -> return ret() // K / SetDemoMode
+            210, 211, 212, 213 -> return ret() // S (scroll) / Z (zoom) / R (rotate) / WSZ: camera effects
+            233, 234 -> return ret() // NB / NBR: novel-mode page box
             144, 223 -> { // WN / WN2: speaker name token, 0 = protagonist/none, -1 = narration
                 speakerToken = (args.getOrNull(0) as? Value.Text)?.token ?: -1
                 return ret()
@@ -282,7 +284,7 @@ class Wa2Engine(
 
             // ---- voice
             137 -> { // VI(?, scene)
-                voiceScene = int(args, 1).takeIf { it != 0 } ?: textArg(args.getOrNull(0)).toIntOrNull() ?: voiceScene
+                voiceScene = int(args, 1).takeIf { it > 0 } ?: voiceScene
                 return ret()
             }
             138 -> { // VV(char, 256, 0, 0, line)
@@ -291,13 +293,14 @@ class Wa2Engine(
                 pendingVoice = voiceRef(voiceScene, line, ch)
                 return ret()
             }
-            139, 235 -> { // VX / VXV(char, scene-or-id, line, …)
+            139 -> { // VX(char, line, scene = -1 → current, vol, ?, ?)
                 val ch = int(args, 0)
-                val a = int(args, 1)
-                val b = int(args, 2)
-                pendingVoice = if (b >= 0) voiceRef(a, b, ch) else null
+                val line = int(args, 1)
+                val sc = int(args, 2).takeIf { it > 0 } ?: voiceScene
+                pendingVoice = voiceRef(sc, line, ch)
                 return ret()
             }
+            235 -> return ret() // VXV(vol, time, ?): voice volume ramp
             140, 141, 215 -> { // VW / VS / VA
                 if (op == 141) events += EngineEvent.StopVoice
                 return ret()
@@ -305,7 +308,7 @@ class Wa2Engine(
 
             // ---- pictures
             146, 147, 148, 149, 225, 226, 227, 228 -> return picture(op, args)
-            150, 231, 210 -> { setStage { it.copy(shake = int(args, 0)) }; return ret() }
+            150, 231 -> { setStage { it.copy(shake = int(args, 0)) }; return ret() }
             151, 214 -> { setStage { it.copy(shake = 0) }; return ret() }
             152, 153 -> { // F / FB(time, r, g, b)
                 val r = int(args, 1).coerceIn(0, 255)
@@ -313,7 +316,7 @@ class Wa2Engine(
                 val b = int(args, 3).coerceIn(0, 255)
                 val t = int(args, 0)
                 val color = if (t == 0 && r == 0 && g == 0 && b == 0) 0 else (0x80 shl 24) or (r shl 16) or (g shl 8) or b
-                setStage { it.copy(overlayColor = color) }
+                setStage { it.copy(overlayColor = color, overlayFadeMs = if (skipping) 0 else Stage.framesToMs(t)) }
                 return ret()
             }
             154, 155, 216 -> return showSprite(args)
@@ -334,7 +337,7 @@ class Wa2Engine(
             173, 229 -> { setStage { it.copy(weather = int(args, 0)) }; return ret() }
             174, 230 -> return ret()
             175 -> { setStage { it.copy(weather = null) }; return ret() }
-            176, 177 -> return loadBmp(args)
+            176, 177 -> return loadBmp(op, args)
             180 -> { val slot = int(args, 0); setStage { s -> s.copy(layers = s.layers.filter { it.slot != slot }) }; return ret() }
             183 -> { layer(int(args, 0)) { it.copy(visible = int(args, 1) != 0) }; return ret() }
             184 -> { layer(int(args, 0)) { it.copy(layer = int(args, 1)) }; return ret() }
@@ -507,14 +510,9 @@ class Wa2Engine(
         return candidates.firstOrNull { assets.exists("bak", it) }
     }
 
-    /** Event CG file for `BC/V/H(…, X, Y, …)`. */
-    fun eventCgName(prefix: Char, x: Int, y: Int, time: Int = stage.timeMode): String? {
-        val candidates = listOf(
-            "%c%04d%d%d.tga".format(prefix, x, y, time),
-            "%c%04d%d0.tga".format(prefix, x, y),
-            "%c%06d.tga".format(prefix, x * 100 + y),
-            "%c%06d.tga".format(prefix, x),
-        )
+    /** Event CG file for `V/H(…, X, Y, …)`: X is a 5-digit stem → `v%05d%1d.tga` (10010,0 → v100100). */
+    fun eventCgName(prefix: Char, x: Int, y: Int): String? {
+        val candidates = listOf("%c%05d%d.tga".format(prefix, x, y), "%c%05d0.tga".format(prefix, x), "%c%06d.tga".format(prefix, x))
         return candidates.firstOrNull { assets.exists("grp", it) }
     }
 
@@ -536,15 +534,20 @@ class Wa2Engine(
         val frames = int(args, 3)
         val tr = transitionFor(mode, frames)
         when (op) {
-            146, 225 -> { // B: background, clears sprites and CG
+            146, 225, 147, 226 -> {
+                // B / B2: background, clears sprites + CG. BC / BC2: background change keeping the
+                // standing characters (corpus: every BC stem exists in bak.pak, never only in grp).
                 val name = if (x > 0) backgroundName(x, y) else null
                 if (x > 0 && name == null) missingAssets += "bak/B%04d%d%d".format(x, y, stage.timeMode)
-                setStage(tr) { it.copy(bg = name, bgDir = "bak", cg = null, sprites = emptyList(), layers = emptyList()) }
+                val keepChars = op == 147 || op == 226
+                setStage(tr) {
+                    it.copy(bg = name, bgDir = "bak", cg = null, sprites = if (keepChars) it.sprites else emptyList(), layers = emptyList())
+                }
             }
-            else -> { // BC / V / H: event CG
+            else -> { // V / V2 / H / H2: event CG (grp), clears standing sprites
                 val prefix = if (op == 149 || op == 228) 'h' else 'v'
                 val name = if (x > 0) eventCgName(prefix, x, y) else null
-                if (x > 0 && name == null) missingAssets += "grp/%c%04d%d".format(prefix, x, y)
+                if (x > 0 && name == null) missingAssets += "grp/%c%05d%d".format(prefix, x, y)
                 setStage(tr) { it.copy(cg = name, sprites = emptyList()) }
             }
         }
@@ -556,7 +559,7 @@ class Wa2Engine(
         val number = int(args, 1)
         val pos = int(args, 2)
         val prefix = Stage.CHAR_PREFIX[ch]
-        if (prefix == null) {
+        if (prefix == null || number == 4000) { // 4000 = hide sentinel
             setStage(Transition(TransitionKind.FADE, 200)) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
             return ret()
         }
@@ -572,11 +575,12 @@ class Wa2Engine(
         return ret()
     }
 
-    private fun loadBmp(args: List<Value>): CallOutcome {
+    private fun loadBmp(op: Int, args: List<Value>): CallOutcome {
         val slot = int(args, 0)
         val name = textArg(args.getOrNull(1)).trim()
         val layerNo = int(args, 2)
-        val dir = textArg(args.getOrNull(6)).trim().ifEmpty { "grp" }
+        // LoadBmp(slot, name, layer, ?, name2, ?, dir, ?) / LoadBmpAnime(slot, name, ?, name2, ?, dir, ?)
+        val dir = textArg(args.getOrNull(if (op == 177) 5 else 6)).trim().ifEmpty { "grp" }
         if (name.isEmpty()) return ret()
         if (!assets.exists(dir, name)) missingAssets += "$dir/$name"
         setStage(Transition(TransitionKind.FADE, 300)) { s ->

@@ -72,9 +72,16 @@ interface VmHost {
  * statement is re-executed and the first blocking call returns the resume value instead of blocking
  * again. This makes every suspension point a clean save point.
  *
- * Operator numbering (corpus-derived, see docs): 0 `=`, 1 `+=`, 2 `-=`, 3 `*=`, 4 `/=`, 5 `%=`,
- * 8 `==`, 9 `!=`, 10 `>`, 11 `<`, 12 `>=`, 13 `<=`, 14 `||`, 15 `&&`, 16 `+`, 17 `-`, 18 `*`,
- * 19 `/`, 20 `%`, 21 `&`, 22 `|`, 23 unary `-`, 24 `!`, 25 `++`, 26 `--`, 27 `[]`, 30 end.
+ * Operator numbering (lifted from `WA2.exe` 0x451a60): 0 `=`, 1 `+=`, 2 `-=`, 3 `*=`, 4 `/=`,
+ * 5 `%=`, 6 `&=`, 7 `|=`, 8 `==`, 9 `<`, 10 `>`, 11 `<=`, 12 `>=`, 13 `&&`, 14 `||`, 15 `!=`,
+ * 16 `+`, 17 `-`, 18 `*`, 19 `/`, 20 `%`, 21 `&`, 22 `|`, 23 unary `-`, 24 `!`, 25 `++`, 26 `--`,
+ * 27 `[]`, 30 end of statement.
+ *
+ * Control `(0,sub)`: 0 function begin, 1 return/end, 2 `if (elseAddr, endAddr) cond (0,13)` (false →
+ * `elseAddr + 8` skipping the `(0,4)` else marker, or `endAddr` when there is no else), 4 else marker
+ * (reached sequentially = end of the then-block → jump to `endAddr`), 5 `for (end, cond, incr, body)`,
+ * 7 `switch n {addr, value}×n default expr (0,16)`, 8 case label, 10 break, 12 goto, 13/14/15/16
+ * expression terminators.
  */
 class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, globalCount: Int = 64) {
     var program: LscrProgram? = null
@@ -89,6 +96,15 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
     val locals = HashMap<Int, HashMap<Int, Value>>()
     private var resumeValue: Value? = null
     private val stack = ArrayList<Value>(32)
+
+    // A statement may contain several engine calls (e.g. `SEW(0,0) EndMessage(1)`). When one of
+    // them blocks, the statement re-executes on resume: calls before the blocking one replay their
+    // cached results (no duplicated side effects) and the blocking call receives the resume value.
+    private var callIndex = 0
+    private var blockedCallIndex = -1
+    private var blockedPc = -1
+    private val cachedResults = ArrayList<Value>()
+    private val stmtResults = ArrayList<Value>()
 
     /** Unknown operator / opcode counters (diagnostics). */
     val unknownOps = HashMap<String, Int>()
@@ -175,6 +191,12 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
         }
         statementsExecuted++
         stack.clear()
+        callIndex = 0
+        stmtResults.clear()
+        if (blockedPc != start) {
+            blockedPc = -1
+            blockedCallIndex = -1
+        }
         val protectBase = if (isAssignment(w, i)) 1 else 0
         var condIf: IntArray? = null // (elseAddr, endAddr)
         var switchInfo: IntArray? = null
@@ -211,14 +233,24 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
                         0, 8 -> i += 2
                         1 -> { doReturn(); return }
                         2 -> { condIf = intArrayOf(w[i + 2], w[i + 3]); i += 4 }
-                        3, 6 -> { condIf = intArrayOf(0, w[i + 2]); i += 3 }
+                        3 -> {
+                            val here = i * 4
+                            val end = p.elseEnd[here]
+                            if (end != null && elseEntry != here) {
+                                // Reached sequentially = end of the previous branch → leave the if-chain.
+                                pc = end; return
+                            }
+                            elseEntry = -1
+                            condIf = intArrayOf(0, w[i + 2]); i += 3
+                        }
+                        6 -> { condIf = intArrayOf(0, w[i + 2]); i += 3 }
                         13, 15 -> {
                             val v = truthy(pop())
                             val c = condIf
                             if (c == null || v) {
                                 i += 2
                             } else {
-                                pc = if (c[0] != 0) c[0] + 8 else c[1]
+                                pc = elseTarget(w, if (c[0] != 0) c[0] else c[1])
                                 return
                             }
                         }
@@ -251,17 +283,14 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
                             if (sw == null) {
                                 i += 2
                             } else {
+                                // sw = [n, (addr, value)×n, default]
                                 val n = sw[0]
-                                val default = sw[1]
+                                val default = sw.getOrElse(1 + 2 * n) { pc }
                                 var target = default
-                                var maxAddr = default
                                 for (k in 0 until n) {
-                                    val addr = sw[2 + 2 * k]
-                                    val value = sw[3 + 2 * k]
-                                    maxAddr = maxOf(maxAddr, addr)
-                                    if (value == v && target == default) target = addr
+                                    if (sw[2 + 2 * k] == v) { target = sw[1 + 2 * k]; break }
                                 }
-                                switchStack.addLast(SwitchFrame(maxOf(default, maxAddr)))
+                                switchStack.addLast(SwitchFrame(default))
                                 pc = target
                                 return
                             }
@@ -281,6 +310,21 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
             }
         }
         pc = i * 4
+    }
+
+    /** Address set when a false condition enters an `else if` header (so it is not taken as fall-through). */
+    private var elseEntry = -1
+
+    /** Where a false condition continues: past a `(0,4)` else marker, onto a `(0,3)` elif header, or [t]. */
+    private fun elseTarget(w: IntArray, t: Int): Int {
+        val wi = t / 4
+        if (w.getOrNull(wi) == 0) {
+            when (w.getOrNull(wi + 1)) {
+                4 -> return t + 8
+                3 -> { elseEntry = t; return t }
+            }
+        }
+        return t
     }
 
     private enum class CallResult { Continue, Abort }
@@ -352,13 +396,33 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
             }
             18 -> { stack += Value.I(host.nowMs.toInt()); return CallResult.Continue }
         }
-        val resume = resumeValue
-        resumeValue = null
+        val idx = callIndex++
+        val replaying = blockedPc == stmtStart && blockedCallIndex >= 0
+        if (replaying && idx < blockedCallIndex && idx < cachedResults.size) {
+            stack += cachedResults[idx]
+            stmtResults += cachedResults[idx]
+            return CallResult.Continue
+        }
+        val resume = if (replaying && idx == blockedCallIndex) resumeValue else null
+        if (replaying && idx >= blockedCallIndex) {
+            // The blocked call is being resumed: the statement continues normally from here on.
+            blockedPc = -1
+            blockedCallIndex = -1
+            resumeValue = null
+        }
         return when (val out = host.call(this, op, spec, args, resume)) {
-            is CallOutcome.Ret -> { stack += out.value; CallResult.Continue }
+            is CallOutcome.Ret -> {
+                stack += out.value
+                stmtResults += out.value
+                CallResult.Continue
+            }
             is CallOutcome.Block -> {
                 wait = out.wait
                 pc = stmtStart
+                blockedPc = stmtStart
+                blockedCallIndex = idx
+                cachedResults.clear()
+                cachedResults.addAll(stmtResults)
                 CallResult.Abort
             }
         }
@@ -412,23 +476,23 @@ class LscrVm(private val host: VmHost, val functions: Map<Int, FuncSpec>, global
                 assign(ref, v)
                 stack += v
             }
-            in 8..13 -> {
+            8, 9, 10, 11, 12, 15 -> {
                 val b = deref(pop())
                 val a = deref(pop())
                 val r = when (op) {
                     8 -> equalsV(a, b)
-                    9 -> !equalsV(a, b)
+                    9 -> toNum(a) < toNum(b)
                     10 -> toNum(a) > toNum(b)
-                    11 -> toNum(a) < toNum(b)
+                    11 -> toNum(a) <= toNum(b)
                     12 -> toNum(a) >= toNum(b)
-                    else -> toNum(a) <= toNum(b)
+                    else -> !equalsV(a, b)
                 }
                 stack += Value.of(r)
             }
-            14, 15 -> {
+            13, 14 -> {
                 val b = truthy(deref(pop()))
                 val a = truthy(deref(pop()))
-                stack += Value.of(if (op == 14) a || b else a && b)
+                stack += Value.of(if (op == 13) a && b else a || b)
             }
             in 16..22 -> {
                 val b = deref(pop())

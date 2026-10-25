@@ -19,7 +19,7 @@ object Stage {
         10 to "tak", 11 to "ioo", 12 to "chi", 13 to "pap", 14 to "mam", 15 to "oto", 16 to "you",
         17 to "tan", 18 to "shi", 19 to "tom", 20 to "sat", 21 to "hon", 22 to "nak", 23 to "say",
         24 to "aco", 25 to "mih", 26 to "mhh", 27 to "ueh", 28 to "yos", 29 to "tan", 30 to "ham",
-        31 to "mat", 32 to "kiz", 33 to "suz", 34 to "saw", 35 to "miy", 36 to "yan",
+        31 to "mat", 32 to "kiz", 33 to "suz", 34 to "saw", 35 to "miy", 36 to "yan", 37 to "mas",
     )
 
     /** Script timing values are in 60 Hz frames. */
@@ -88,6 +88,8 @@ data class StageState(
     val weather: Int? = null,
     /** Flash/fade colour overlay `ARGB` (`FB`), 0 = none. */
     val overlayColor: Int = 0,
+    /** Duration over which the renderer should fade to [overlayColor] (`FB(time, r, g, b)`). */
+    val overlayFadeMs: Long = 0,
     val shake: Int = 0,
     val transition: Transition = Transition(TransitionKind.CUT, 0),
     /** Increments whenever the picture changes (renderers crossfade from the previous serial). */

@@ -58,6 +58,19 @@ class LscrProgram(val name: String, val words: IntArray, val labels: Map<Int, In
                 else -> i += 1
             }
         }
+        // Propagate the chain end through `else if` headers: (0,2,A,B) with (0,3,T) at A → T ends at B too.
+        for ((a, b) in ee.entries.toList()) {
+            var at = a
+            var guard = 0
+            while (guard++ < 64) {
+                val wi = at / 4
+                if (words.getOrNull(wi) != 0 || words.getOrNull(wi + 1) != 3) break
+                val t = words.getOrElse(wi + 2) { 0 }
+                if (t == 0 || ee.containsKey(t)) break
+                ee[t] = b
+                at = t
+            }
+        }
         elseEnd = ee
         forByCond = fc
         callCensus = census

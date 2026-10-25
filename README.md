@@ -1,0 +1,40 @@
+# wa2port — White Album 2 (PC + CK-GAL CHS) for Android
+
+Clean-room re-implementation of Leaf's AVG engine (`WA2.exe`) in Kotlin. The APK ships **engine
+only**; players supply their own PC install (BYOA). Bilingual 中/日 display, full touch controls.
+
+```
+:core  pure Kotlin/JVM — archives, image decoders, font cell map, scenario text, LSCR VM, engine,
+       saves; unit-tested on desktop against the real install in seconds
+:app   Android (minSdk 26, target/compile 35) — Compose UI, stage renderer, glyph-atlas text,
+       audio, movie playback, touch controls
+```
+
+## Build & test
+
+```bash
+export JAVA_HOME=/usr/local/google/home/chii/.jdks/jdk21
+./gradlew :core:test          # uses -Dwa2.root / $WA2_ROOT, default ../resource/WA2 (skips if absent)
+./gradlew :app:assembleDebug  # app/build/outputs/apk/debug/app-debug.apk
+```
+
+Device assets: copy the PC install (incl. `IC/`, `ck-gal.pak`, `fon.pak`, `grp/`) to
+`/sdcard/Android/data/com.wa2port.android/files/wa2/` (or `/data/local/tmp/wa2`), or import a folder
+via the in-app SAF picker.
+
+## `:core` map
+
+| Package | Contents |
+|---|---|
+| `archive` | `KcapArchive` (+`OkumuraLzss`; decompress `raw[8:size]` to `usize`, never trust `csize`), `LacArchive` (XOR-0xFF names), `Wa2Assets` (loose → `patch.pak` → `<dir>.pak` → `IC/<dir>.pak`, case-insensitive) |
+| `image` | `TgaDecoder` (bpp=0 quirk, premultiplied alpha, indexed atlases), `BmpDecoder` (dissolve masks), `AmpLut` |
+| `text` | `Wa2FontMap` (exe range table B, 7655 cells), `ScenarioTextParser` (SJIS-aware, trail 0x7F, `<R…\|…>`, `<F..>`, `<W..>`, `\n`, `\k`), `BilingualTextDecoder`, `CnCellTable` (CN cell→Unicode + CK-GAL render remap) |
+| `script` | `LscrProgram` (`.bnr`), `FunctionTable` (`.fnc` signatures + defaults), `LscrVm` (RPN expressions, if/else/elif, for, switch, call/SCall/SLoad, resumable blocking calls), `ScenarioStore` (paired JP `script.pak` / CN `ck-gal.pak`, 1:1 token ordinals) |
+| `engine` | `Wa2Engine` (engine functions → `StageState`, dialogue, choices, `EngineEvent`s), `SaveData`/`SystemData` (JSON; 既読 bitsets, GFLAG), `HeadlessRunner` |
+
+Engine facts used (lifted from `WA2.exe`, corpus-verified; see `WA2_LSCR_Spec.md`): statements end
+with `(6,30)`; tag 1 = `Global.vrb` var, tag 2 = local array, tag 3 = text token, tag 4 = call,
+tag 5 = push, tag 6 = operator, tag 0 = control; jump targets are absolute byte offsets; voice
+`{scene}_{line:04d}_{speaker:02d}.OGG`; sprites `char\{prefix}{num:06d}.tga` at x-offset table
+`[-288,0,288,-384,384,-480,480,-480,-160,160,480]`; `B`/`BC` → `B%04d%1d%1d.tga` (time-of-day
+mode), `V`/`H` → `v%05d%1d.tga`; timings in 60 Hz frames.
