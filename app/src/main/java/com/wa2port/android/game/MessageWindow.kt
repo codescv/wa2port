@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -38,8 +39,8 @@ private const val TWO_COL_MAX_CHARS = 18f
 private const val SINGLE_MAX_CHARS = 34f
 private const val NOVEL_TWO_COL_PX = 26f
 
-/** Never shrink text below this fraction of its nominal size when fitting the window. */
-private const val MIN_FIT = 0.8f
+/** Size steps tried (largest first) when a message does not fit the window; last resort = clip. */
+private val FIT_STEPS = floatArrayOf(1f, 0.93f, 0.86f, 0.8f, 0.75f, 0.71f)
 
 private val TEXT_COLOR = Wa2Colors.Text.toArgb()
 private val SECONDARY_COLOR = Color(0xFFC9D6EA).toArgb()
@@ -134,7 +135,7 @@ private fun DrawScope.drawWaitMark(x: Float, y: Float, s: Float, alpha: Float) {
 /**
  * ADV message window drawn over the stage (fills the stage box). 双语: two side-by-side columns
  * (CN left, JP right, 28 px, ≤18 full-width chars per line, script `\n` reflowed at sentence ends);
- * single language: one 30 px column (≤34 chars). Shrinks at most to [MIN_FIT] to fit; speaker name
+ * single language: one 30 px column (≤34 chars). Steps the size down (widening the line cap) until it fits, clipping as a last resort; speaker name
  * box above the window.
  */
 @Composable
@@ -182,34 +183,47 @@ fun AdvWindow(
                 }
             }
         }
-        // Text, shrunk (at most to MIN_FIT) to fit the window when needed.
+        // Text, stepped down in size (FIT_STEPS) until it fits the window; clipped as a last resort.
         val textTop = top + pad * (if (names.isNotEmpty()) 1.25f else 1f)
         val avail = bottom - pad * 0.6f - textTop
         val width = right - left - pad * 2
         val gap = 8f * stageScale
         val cols = twoColumns(line, lang, TWO_COL_PX * scale, TWO_COL_MAX_CHARS, visibleJp, visibleCn)
+        val clipBottom = bottom - pad * 0.3f
         if (cols != null) {
-            // 双语: CN left column | JP right column, separated by a subtle divider.
+            // 双语: CN left column | JP right column, separated by a subtle divider. Long messages
+            // step the size down and widen the per-line cap to what the column holds at that size
+            // (28 px/18 chars → … → 20 px/26 chars) until the taller column fits.
             val colGap = 30f * stageScale
             val colW = (width - colGap) / 2f
             var (cn, jp) = cols
-            val h = maxOf(measureBlock(painter, cn, colW), measureBlock(painter, jp, colW))
-            if (h > avail && h > 0f) {
-                val f = (avail / h).coerceAtLeast(MIN_FIT)
-                cn = cn.copy(size = cn.size * f); jp = jp.copy(size = jp.size * f)
+            for (f in FIT_STEPS) {
+                val size = cols.first.size * f
+                val cap = if (f >= 1f) TWO_COL_MAX_CHARS else maxOf(TWO_COL_MAX_CHARS, kotlin.math.floor(colW / size))
+                cn = cols.first.copy(size = size, maxChars = cap)
+                jp = cols.second.copy(size = size, maxChars = cap)
+                if (maxOf(measureBlock(painter, cn, colW), measureBlock(painter, jp, colW)) <= avail) break
             }
             val divX = left + pad + colW + colGap / 2f
             drawLine(
                 Wa2Colors.AccentDim.copy(alpha = 0.45f), Offset(divX, textTop + 4f * stageScale),
                 Offset(divX, bottom - pad * 0.8f), strokeWidth = 1.2f * stageScale,
             )
-            drawBlock(painter, cn, left + pad, textTop, colW)
-            drawBlock(painter, jp, divX + colGap / 2f, textTop, colW)
+            clipRect(left, top, right, clipBottom) {
+                drawBlock(painter, cn, left + pad, textTop, colW)
+                drawBlock(painter, jp, divX + colGap / 2f, textTop, colW)
+            }
         } else {
-            var blocks = blocksFor(line, lang, scale, visibleJp, visibleCn)
-            val h = measureBlocks(painter, blocks, width, gap)
-            if (h > avail && h > 0f) blocks = scaled(blocks, (avail / h).coerceAtLeast(MIN_FIT))
-            drawBlocks(painter, blocks, left + pad, textTop, width, gap)
+            val base = blocksFor(line, lang, scale, visibleJp, visibleCn)
+            var blocks = base
+            for (f in FIT_STEPS) {
+                blocks = base.map {
+                    val size = it.size * f
+                    it.copy(size = size, maxChars = if (f >= 1f) it.maxChars else maxOf(it.maxChars, kotlin.math.floor(width / size)))
+                }
+                if (measureBlocks(painter, blocks, width, gap) <= avail) break
+            }
+            clipRect(left, top, right, clipBottom) { drawBlocks(painter, blocks, left + pad, textTop, width, gap) }
         }
         if (waiting) drawWaitMark(right - pad, bottom - pad * 0.9f, 9f * stageScale, blink)
     }

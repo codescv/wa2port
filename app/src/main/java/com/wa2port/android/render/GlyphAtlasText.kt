@@ -278,19 +278,21 @@ class GlyphAtlasText(
         }
 
         var lineChars = 0f
+        var hungOnLine = false
         for ((ui, u) in units.withIndex()) {
             if (u.pageBreak) pageBreaks += index
             if (u.hardBreak) {
                 if (!keptBreak[ui]) continue // soft join: let the column width / maxChars wrap instead
-                line++; penX = 0f; lineChars = 0f; continue
+                line++; penX = 0f; lineChars = 0f; hungOnLine = false; continue
             }
             val uChars = charsOf(u)
-            val hang = u.codes.size == 1 && u.codes[0] in HANGING
             val overWidth = penX + u.width > maxWidth
             val cap = segCap[ui]
             val overChars = cap > 0f && lineChars + uChars > cap + 0.01f
-            if (penX > 0f && (overWidth || overChars) && !hang) {
-                line++; penX = 0f; lineChars = 0f
+            // At most one closing punctuation glyph may hang past the edge per line.
+            val hang = u.codes.size == 1 && u.codes[0] in HANGING && !hungOnLine
+            if (penX > 0f && (overWidth || overChars)) {
+                if (hang) hungOnLine = true else { line++; penX = 0f; lineChars = 0f; hungOnLine = false }
             }
             lineChars += uChars
             val top = line * pitch + band
