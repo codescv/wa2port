@@ -319,10 +319,12 @@ class Wa2Engine(
                 setStage { it.copy(overlayColor = color, overlayFadeMs = if (skipping) 0 else Stage.framesToMs(t)) }
                 return ret()
             }
-            154, 155, 216 -> return showSprite(args)
-            156, 157, 218 -> { // CR(char, mode, param) / CRW(char)
+            154, 155, 216 -> return showSprite(op, args)
+            156, 157, 218 -> { // CR(char, mode, fade=15) / CRW(char)
                 val ch = int(args, 0)
-                setStage(Transition(TransitionKind.FADE, 250)) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
+                val fade = if (op == 156) int(args, 2, 15) else 15
+                val tr = if (skipping || fade <= 0) Transition(TransitionKind.CUT, 0) else Transition(TransitionKind.FADE, Stage.framesToMs(fade))
+                setStage(tr) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
                 return ret()
             }
             217 -> return ret() // CM (move)
@@ -504,7 +506,10 @@ class Wa2Engine(
         }
     }
 
-    /** Background file for `B(…, X, Y, …)` under the current time-of-day mode. */
+    /**
+     * Background file for `B(…, X, Y, …)`: `B{X:04d}{Y:1d}{T:1d}.tga` with T = current `SetTimeMode`
+     * (X = 0 → the solid screens `B000000..B000003`).
+     */
     fun backgroundName(x: Int, y: Int, time: Int = stage.timeMode): String? {
         val candidates = listOf("B%04d%d%d.tga".format(x, y, time), "B%04d%d0.tga".format(x, y), "B%04d00.tga".format(x))
         return candidates.firstOrNull { assets.exists("bak", it) }
@@ -516,15 +521,29 @@ class Wa2Engine(
         return candidates.firstOrNull { assets.exists("grp", it) }
     }
 
+    /**
+     * Transition for the B/BC/V primitive (`WA2.exe` 0x4171dd): −1 instant; 1 and 11..19 crossfade
+     * (11..14 zoom and 16..19 slide variants are approximated by a crossfade); ≥128 mask dissolve with
+     * `f0{mode & 0x7F:03d}.bmp`, flag bits 0x100 reverse / 0x800 flip-X / 0x1000 flip-Y (missing mask →
+     * crossfade); anything else is an engine error that switches instantly.
+     */
     private fun transitionFor(mode: Int, frames: Int): Transition {
         val ms = Stage.framesToMs(frames)
-        if (ms <= 0 || skipping) return Transition(TransitionKind.CUT, 0)
-        val maskId = mode and 0x7F
-        if (mode > 1 && maskId >= 2) {
-            val mask = "f0%03d.bmp".format(maskId)
-            if (assets.exists("grp", mask)) return Transition(TransitionKind.MASK, ms, mask)
+        if (ms <= 0 || skipping || mode == -1) return Transition(TransitionKind.CUT, 0)
+        if (mode >= 128) {
+            val mask = "f0%03d.bmp".format(mode and 0x7F)
+            if (assets.exists("grp", mask)) {
+                return Transition(
+                    TransitionKind.MASK, ms, mask,
+                    reverse = mode and 0x100 != 0, flipX = mode and 0x800 != 0, flipY = mode and 0x1000 != 0,
+                )
+            }
+            return Transition(TransitionKind.FADE, ms)
         }
-        return Transition(TransitionKind.FADE, ms)
+        return when (mode) {
+            1, in 11..19 -> Transition(TransitionKind.FADE, ms)
+            else -> Transition(TransitionKind.CUT, 0)
+        }
     }
 
     private fun picture(op: Int, args: List<Value>): CallOutcome {
@@ -537,11 +556,20 @@ class Wa2Engine(
             146, 225, 147, 226 -> {
                 // B / B2: background, clears sprites + CG. BC / BC2: background change keeping the
                 // standing characters (corpus: every BC stem exists in bak.pak, never only in grp).
-                val name = if (x > 0) backgroundName(x, y) else null
-                if (x > 0 && name == null) missingAssets += "bak/B%04d%d%d".format(x, y, stage.timeMode)
+                // X = −2 keeps the current picture and only runs the transition.
                 val keepChars = op == 147 || op == 226
-                setStage(tr) {
-                    it.copy(bg = name, bgDir = "bak", cg = null, sprites = if (keepChars) it.sprites else emptyList(), layers = emptyList())
+                if (x < 0) {
+                    setStage(tr) { it }
+                } else {
+                    val name = backgroundName(x, y)
+                    if (name == null) missingAssets += "bak/B%04d%d%d".format(x, y, stage.timeMode)
+                    val amp = name?.let { it.dropLast(4) + ".amp" }?.takeIf { assets.exists("grp", it) }
+                    setStage(tr) {
+                        it.copy(
+                            bg = name, bgDir = "bak", spriteLut = amp, cg = null,
+                            sprites = if (keepChars) it.sprites else emptyList(), layers = emptyList(),
+                        )
+                    }
                 }
             }
             else -> { // V / V2 / H / H2: event CG (grp), clears standing sprites
@@ -554,20 +582,29 @@ class Wa2Engine(
         return ret()
     }
 
-    private fun showSprite(args: List<Value>): CallOutcome {
+    /**
+     * `C(char, num, pos, 0, 0, fade=15, scale=256, bright=128)` / `CW(char, num, pos, 0, scale, bright)`:
+     * shows `char\{prefix}{num:06d}.tga` at position index `pos` (corpus: values 0..10, 1 = centre);
+     * `num == 4000` hides the character.
+     */
+    private fun showSprite(op: Int, args: List<Value>): CallOutcome {
         val ch = int(args, 0)
         val number = int(args, 1)
         val pos = int(args, 2)
+        val isC = op != 155
+        val fade = if (isC) int(args, 5, 15) else 15
+        val scale = int(args, if (isC) 6 else 4, 256)
+        val bright = int(args, if (isC) 7 else 5, 128)
         val prefix = Stage.CHAR_PREFIX[ch]
+        val tr = if (skipping || fade <= 0) Transition(TransitionKind.CUT, 0) else Transition(TransitionKind.FADE, Stage.framesToMs(fade))
         if (prefix == null || number == 4000) { // 4000 = hide sentinel
-            setStage(Transition(TransitionKind.FADE, 200)) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
+            setStage(tr) { s -> s.copy(sprites = s.sprites.filter { it.charId != ch }) }
             return ret()
         }
         val image = "%s%06d.tga".format(prefix, number)
         if (!assets.exists("char", image)) missingAssets += "char/$image"
         val existing = stage.sprites.firstOrNull { it.charId == ch }
-        val sp = SpriteState(ch, prefix, number, pos, image, existing?.order ?: ++spriteOrder)
-        val tr = if (skipping) Transition(TransitionKind.CUT, 0) else Transition(TransitionKind.FADE, 250)
+        val sp = SpriteState(ch, prefix, number, pos, image, existing?.order ?: ++spriteOrder, scale, bright)
         setStage(tr) { s ->
             val list = s.sprites.filter { it.charId != ch } + sp
             s.copy(sprites = list.sortedBy { it.order }.take(8))

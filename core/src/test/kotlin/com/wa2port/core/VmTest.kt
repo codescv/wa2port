@@ -95,16 +95,20 @@ class VmTest {
 
     @Test
     fun `2019 elif with zero target falls through to the chain end`() {
-        for ((choice, expect) in listOf(0 to "2401", 1 to "2501", 2 to "2019")) {
+        // L0 = SetSelect()+1; if (L0 == 1) SLoad 2401; elif (L0 == 2) SLoad 2501; (elif target 0) → continue.
+        for ((choice, expect) in listOf(0 to "2401", 1 to "2501", 2 to "2301")) { // 3rd → falls through to a 2nd choice; its option 1 → 2301
             val e = engine()
             e.start("2019")
-            val r = HeadlessRunner(e, chooser = { choice.coerceAtMost(it.size - 1) })
+            var first: List<String>? = null
+            val r = HeadlessRunner(e, chooser = { opts ->
+                if (first == null) { first = opts.map { e.plain(it.jp, TextLang.JP) }; choice } else 0
+            })
             r.run(stayIn = "2019")
+            println("2019 choice=$choice first=$first visited=${r.scenesVisited}")
             assertTrue(e.vm.unknownOps.isEmpty(), "choice $choice: ${e.vm.unknownOps}")
-            println("2019 choice=$choice choices=${r.choicesSeen.lastOrNull()} visited=${r.scenesVisited}")
-            if (r.choicesSeen.lastOrNull()?.size ?: 0 > choice) {
-                assertTrue(expect in r.scenesVisited || (expect == "2019" && r.scenesVisited.size >= 2), "choice $choice → ${r.scenesVisited}")
-            }
+            assertEquals(3, first?.size, "first 2019 choice has 3 options")
+            assertTrue(expect in r.scenesVisited, "choice $choice should reach $expect: ${r.scenesVisited}")
+            if (choice == 2) assertTrue("CATCH2" in r.scenesVisited, "fall-through passes the CATCH2 eyecatch")
         }
     }
 

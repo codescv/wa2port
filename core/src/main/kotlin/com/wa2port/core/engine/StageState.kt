@@ -39,6 +39,10 @@ data class SpriteState(
     val image: String,
     /** Draw order (allocation order; later = on top). */
     val order: Int,
+    /** Scale in 1/256 units (256 = 100 %). */
+    val scale: Int = 256,
+    /** Brightness/tint per channel (128 = neutral). */
+    val bright: Int = 128,
 ) {
     /** Centre x on the 1280-wide stage. */
     val centerX: Int get() = Stage.WIDTH / 2 + Stage.POSITION_X.getOrElse(position) { 0 }
@@ -62,9 +66,20 @@ data class BmpLayer(
 @Serializable
 enum class TransitionKind { CUT, FADE, MASK }
 
-/** How the renderer should animate the change to the current stage picture. */
+/**
+ * How the renderer should animate the change to the current stage picture.
+ * For [TransitionKind.MASK], pixels switch where `maskLevel ≤ progress·255` (or `≥` when [reverse]);
+ * the mask may be mirrored with [flipX]/[flipY] (`WA2.exe` transition renderer 0x40ba5a).
+ */
 @Serializable
-data class Transition(val kind: TransitionKind, val durationMs: Long, val mask: String? = null)
+data class Transition(
+    val kind: TransitionKind,
+    val durationMs: Long,
+    val mask: String? = null,
+    val reverse: Boolean = false,
+    val flipX: Boolean = false,
+    val flipY: Boolean = false,
+)
 
 /** On-screen date card (`Calender(y, m, d, …)`). */
 @Serializable
@@ -76,6 +91,8 @@ data class StageState(
     /** Background image name (in [bgDir] archive: `bak` for `B%04d%1d%1d.tga`), null = black. */
     val bg: String? = null,
     val bgDir: String = "bak",
+    /** Per-background `.amp` (`B{X}{Y}{T}.amp` in grp) that grades the standing sprites to the scene's lighting. */
+    val spriteLut: String? = null,
     /** Event CG (`v%06d.tga` / `h%06d.tga` in `grp`), drawn above sprites; null = none. */
     val cg: String? = null,
     val sprites: List<SpriteState> = emptyList(),
