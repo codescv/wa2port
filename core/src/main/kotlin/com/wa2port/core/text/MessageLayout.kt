@@ -26,6 +26,38 @@ object MessageLayout {
     /** Size steps tried (largest first) when an ADV message does not fit the window; last resort = clip. */
     val FIT_STEPS: FloatArray = floatArrayOf(1f, 0.93f, 0.86f, 0.8f, 0.75f, 0.71f)
 
+    /** Ratio between the extra fit steps appended for text larger than 100 % ([fitSteps]). */
+    const val FIT_EXTRA_RATIO = 0.95f
+
+    /**
+     * Fit steps (multipliers of the scaled size, largest first) for [textScale]. At ≤ 100 % this is
+     * exactly [FIT_STEPS]. Above 100 % it is the sorted union of
+     * * [FIT_STEPS] (relative to the scaled size, as before),
+     * * every 100 % size below the nominal one (`f / textScale`), and
+     * * finer steps (× [FIT_EXTRA_RATIO]) from 0.71 down to the 100 % floor,
+     * ending exactly on the 100 % floor (`textScale × f == FIT_STEPS.last()`). So a long message that
+     * fits at 100 % (e.g. three `。\n` sentences that wrap to 5 lines at 145 %) still fits instead
+     * of falling off the 0.71 step and being clipped, and since fitting is monotone in size (the
+     * window is never smaller and [advColumnGapFor] gives the same columns at equal glyph size) the
+     * size chosen is never smaller than the one chosen at 100 %.
+     */
+    fun fitSteps(textScale: Float): FloatArray {
+        if (textScale <= 1f) return FIT_STEPS
+        val floor = FIT_STEPS.last()
+        val last = floor / textScale
+        val all = FIT_STEPS.toMutableList()
+        for (f in FIT_STEPS) if (f / textScale < 1f) all += f / textScale
+        var f = floor * FIT_EXTRA_RATIO
+        while (f > last) {
+            all += f
+            f *= FIT_EXTRA_RATIO
+        }
+        all.sortDescending()
+        val out = ArrayList<Float>(all.size)
+        for (v in all) if (v >= last - 1e-6f && (out.isEmpty() || out.last() - v > 1e-4f)) out += v
+        return out.toFloatArray()
+    }
+
     /** Line pitch as a multiple of the glyph size (`GlyphAtlasText.lineSpacing`). */
     const val LINE_PITCH = 1.5f
 
@@ -113,13 +145,21 @@ object MessageLayout {
     }
 
     /**
-     * Gap between the 双语 ADV columns (stage px) at [textScale]: grows with large text so one
-     * hanging closer (up to one em past the column) cannot cross the divider into the JP column.
+     * Gap between the 双语 ADV columns (stage px) for glyphs of [glyphPx] stage px: grows above the
+     * 28 px default so one hanging closer (up to one em past the column) cannot cross the divider
+     * into the JP column. Depends on the drawn size, so a stepped-down message gets the same
+     * columns as at 100 % for the same glyph size.
      */
-    fun advColumnGap(textScale: Float): Float = ADV_COL_GAP * maxOf(1f, textScale)
+    fun advColumnGapFor(glyphPx: Float): Float = ADV_COL_GAP * maxOf(1f, glyphPx / TWO_COL_PX)
 
-    /** Column width (stage px) of the 双语 ADV layout at [textScale]. */
-    fun advColumnWidth(textScale: Float): Float = (advSingleWidth() - advColumnGap(textScale)) / 2f
+    /** Column width (stage px) of the 双语 ADV layout for glyphs of [glyphPx] stage px. */
+    fun advColumnWidthFor(glyphPx: Float): Float = (advSingleWidth() - advColumnGapFor(glyphPx)) / 2f
+
+    /** [advColumnGapFor] at the nominal 双语 size for [textScale]. */
+    fun advColumnGap(textScale: Float): Float = advColumnGapFor(TWO_COL_PX * textScale)
+
+    /** [advColumnWidthFor] at the nominal 双语 size for [textScale]. */
+    fun advColumnWidth(textScale: Float): Float = advColumnWidthFor(TWO_COL_PX * textScale)
 
     /** Single-column text width (stage px) of the ADV window. */
     fun advSingleWidth(): Float = (ADV_RIGHT - ADV_LEFT) * STAGE_W - ADV_PAD * 2

@@ -38,9 +38,6 @@ import com.wa2port.core.text.TextLang
 // Text sizes / line caps (1280×720 stage px, scaled by the stage scale × text scale) and the
 // window geometry live in [MessageLayout] so the font-size math is unit-tested in :core.
 
-/** Size steps tried (largest first) when a message does not fit the window; last resort = clip. */
-private val FIT_STEPS = MessageLayout.FIT_STEPS
-
 private val TEXT_COLOR = Wa2Colors.Text.toArgb()
 private val SECONDARY_COLOR = Color(0xFFC9D6EA).toArgb()
 private val NAME_COLOR = Wa2Colors.Name.toArgb()
@@ -190,23 +187,29 @@ fun AdvWindow(
                 }
             }
         }
-        // Text, stepped down in size (FIT_STEPS) until it fits the window; clipped as a last resort.
+        // Text, stepped down in size (fitSteps) until it fits the window; clipped as a last resort.
         val textTop = top + pad * (if (names.isNotEmpty()) 1.25f else 1f)
         val avail = bottom - pad * 0.6f - textTop
         val width = right - left - pad * 2
         val gap = 8f * stageScale
         val cols = twoColumns(line, lang, TWO_COL_PX * scale, TWO_COL_MAX_CHARS, visibleJp, visibleCn)
         val clipBottom = bottom - pad * 0.3f
+        // Size steps tried (largest first) until the message fits; last resort = clip. Above 100 %
+        // they continue down to the 100 % floor so long multi-sentence messages never clip.
+        val fitSteps = MessageLayout.fitSteps(textScale)
         if (cols != null) {
             // 双语: CN left column | JP right column, separated by a subtle divider. Long messages
             // step the size down and widen the per-line cap to what the column holds at that size
             // (28 px/18 chars → … → 20 px/26 chars) until the taller column fits. At the nominal size
             // the cap is min(18, what the column holds) so large text never double-wraps.
-            val colGap = MessageLayout.advColumnGap(textScale) * stageScale
-            val colW = (width - colGap) / 2f
+            var colGap = 0f
+            var colW = 0f
             var (cn, jp) = cols
-            for (f in FIT_STEPS) {
+            for (f in fitSteps) {
                 val size = cols.first.size * f
+                // Column gap follows the drawn glyph size (wider for large glyphs; hanging closers).
+                colGap = MessageLayout.advColumnGapFor(size / stageScale) * stageScale
+                colW = (width - colGap) / 2f
                 val cap = MessageLayout.lineCap(colW, size, TWO_COL_MAX_CHARS, stepped = f < 1f)
                 cn = cols.first.copy(size = size, maxChars = cap)
                 jp = cols.second.copy(size = size, maxChars = cap)
@@ -224,7 +227,7 @@ fun AdvWindow(
         } else {
             val base = blocksFor(line, lang, scale, width, visibleJp, visibleCn)
             var blocks = base
-            for (f in FIT_STEPS) {
+            for (f in fitSteps) {
                 blocks = base.map {
                     val size = it.size * f
                     it.copy(size = size, maxChars = if (f >= 1f || it.maxChars <= 0f) it.maxChars else MessageLayout.lineCap(width, size, it.maxChars, stepped = true))

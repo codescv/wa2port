@@ -53,10 +53,10 @@ class FontScaleTest {
     /** cap × size ≤ width for every slider value and every fit step: the pixel wrap never fires first. */
     @Test
     fun capNeverExceedsColumnWidth() {
-        for (t in allScales) for (f in FIT_STEPS) {
+        for (t in allScales) for (f in MessageLayout.fitSteps(t)) {
             val stepped = f < 1f
-            val colW = MessageLayout.advColumnWidth(t)
             val two = TWO_COL_PX * t * f
+            val colW = MessageLayout.advColumnWidthFor(two)
             assertTrue(MessageLayout.lineCap(colW, two, TWO_COL_MAX_CHARS, stepped) * two <= colW, "two-col t=$t f=$f")
             val w = MessageLayout.advSingleWidth()
             val one = MAIN_PX * t * f
@@ -70,8 +70,9 @@ class FontScaleTest {
         for (t in allScales) {
             val colW = MessageLayout.advColumnWidth(t)
             val nominal = MessageLayout.lineCap(colW, TWO_COL_PX * t, TWO_COL_MAX_CHARS, false)
-            for (f in FIT_STEPS.drop(1)) {
-                assertTrue(MessageLayout.lineCap(colW, TWO_COL_PX * t * f, TWO_COL_MAX_CHARS, true) >= nominal, "t=$t f=$f")
+            for (f in MessageLayout.fitSteps(t).drop(1)) {
+                val size = TWO_COL_PX * t * f
+                assertTrue(MessageLayout.lineCap(MessageLayout.advColumnWidthFor(size), size, TWO_COL_MAX_CHARS, true) >= nominal, "t=$t f=$f")
             }
         }
     }
@@ -185,6 +186,70 @@ class FontScaleTest {
     fun balancerUnchangedAtHundredPercent() {
         for (cap in listOf(18f, 19f, 34f)) for (n in 1..(cap.toInt() * 5)) {
             assertEquals(oldBalancedCap(n.toFloat(), cap), MessageLayout.balancedCap(n.toFloat(), cap), "cap=$cap n=$n")
+        }
+    }
+
+    @Test
+    fun fitStepsUnchangedUpToHundredPercent() {
+        for (t in allScales.filter { it <= 1f }) assertTrue(MessageLayout.fitSteps(t).contentEquals(FIT_STEPS), "t=$t")
+        for (t in allScales.filter { it > 1f }) {
+            val steps = MessageLayout.fitSteps(t)
+            assertEquals(1f, steps.first(), "t=$t starts at the nominal size")
+            assertTrue(steps.toList().zipWithNext().all { (a, b) -> b < a }, "t=$t strictly decreasing")
+            assertEquals(FIT_STEPS.last(), t * steps.last(), 1e-5f, "t=$t ends exactly on the 100 % floor")
+            for (f in FIT_STEPS) {
+                assertTrue(steps.any { kotlin.math.abs(it - f) < 1e-4f }, "t=$t keeps scaled step $f")
+                if (f < t) assertTrue(steps.any { kotlin.math.abs(it * t - f) < 1e-4f }, "t=$t includes the 100 % size $f")
+            }
+        }
+    }
+
+    /**
+     * Mirrors `AdvWindow`'s 双语 fit loop for paragraphs of full-width char counts (kept `。\n`
+     * breaks split paragraphs): returns the glyph size (stage px) that fits, or null = clipped.
+     */
+    private fun fittedTwoColSize(t: Float, columns: List<List<Int>>): Float? {
+        val avail = MessageLayout.advTextAvail(MessageLayout.advTop(t))
+        for (f in MessageLayout.fitSteps(t)) {
+            val size = TWO_COL_PX * t * f
+            val colW = MessageLayout.advColumnWidthFor(size)
+            val cap = MessageLayout.lineCap(colW, size, TWO_COL_MAX_CHARS, stepped = f < 1f)
+            val lines = columns.maxOf { col -> col.sumOf { n -> ceil(n / cap).toInt() } }
+            if (lines * LINE_PITCH * size <= avail) return size
+        }
+        return null
+    }
+
+    /**
+     * QA #121: IC 1002 token 194 (CN 13+21+21, JP 15+25+25 chars in three `。\n` sentences) wrapped
+     * to 5 lines at 115 %+ and fell off the 0.71 step → bottom line clipped. Now it fits at every
+     * scale 70 %–150 %, never smaller than at 100 % for scales above it, and larger at 130 %+.
+     */
+    @Test
+    fun longMultiSentenceMessageNeverClips() {
+        val msg = listOf(listOf(13, 21, 21), listOf(15, 25, 25))
+        val at100 = fittedTwoColSize(1f, msg)!!
+        assertEquals(21f, at100, 1e-3f) // 0.75 step, cap 25, 3 lines — unchanged
+        for (p in TextScale.MIN..TextScale.MAX) {
+            val size = fittedTwoColSize(p / 100f, msg)
+            assertTrue(size != null, "$p% clipped")
+            if (p >= 100) assertTrue(size!! >= at100 - 1e-3f, "$p%: $size < $at100")
+        }
+        assertTrue(fittedTwoColSize(1.3f, msg)!! > at100 + 1f)
+        assertTrue(fittedTwoColSize(1.45f, msg)!! > at100 + 4f)
+    }
+
+    /** Anything that fits the window at 100 % also fits at every larger scale, at a size ≥ the 100 % one. */
+    @Test
+    fun whatFitsAtHundredFitsAtEveryLargerScale() {
+        for (a in 1..40 step 3) for (b in 0..40 step 4) for (c in 0..40 step 6) {
+            val col = listOf(a, b, c).filter { it > 0 }
+            val msg = listOf(col, col.map { it + it / 5 }) // JP runs ~20 % longer than CN
+            val at100 = fittedTwoColSize(1f, msg) ?: continue
+            for (p in 101..TextScale.MAX) {
+                val size = fittedTwoColSize(p / 100f, msg)
+                assertTrue(size != null && size >= at100 - 1e-3f, "$msg at $p%: $size < $at100")
+            }
         }
     }
 
