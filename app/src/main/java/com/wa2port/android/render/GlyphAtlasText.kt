@@ -11,6 +11,7 @@ import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.image.IndexedImage
 import com.wa2port.core.image.TgaDecoder
 import com.wa2port.core.text.BilingualTextDecoder
+import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextItem
 import com.wa2port.core.text.TextLang
@@ -235,7 +236,7 @@ class GlyphAtlasText(
         var index = 0
         val pageBreaks = ArrayList<Int>()
         // 2a) Decide which hard breaks survive (reflow) and balance each paragraph segment so a
-        // long line does not leave a 1–3 character orphan: cap = ceil(N / ceil(N / maxChars)).
+        // long line does not leave a 1–3 character orphan (MessageLayout.balancedCap).
         fun charsOf(u: Chunk) = u.codes.fold(0f) { acc, c -> acc + if (c < 0x100) 0.5f else 1f }
         val keptBreak = BooleanArray(units.size)
         run {
@@ -269,8 +270,7 @@ class GlyphAtlasText(
                 // A single trailing closer may hang past the cap, so it does not force an extra line.
                 if (lastHangs) n -= lastChars
                 if (n > maxChars) {
-                    val lines = kotlin.math.ceil(n / maxChars)
-                    val cap = minOf(maxChars, kotlin.math.ceil(n / lines) + 1f)
+                    val cap = MessageLayout.balancedCap(n, maxChars)
                     for (k in start until end) segCap[k] = cap
                 }
                 start = end + 1

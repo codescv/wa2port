@@ -9,6 +9,7 @@ The APK ships **engine only** (Bring Your Own Assets); players supply their own 
 
 - **Side-by-Side Bilingual Display (`中/日 双` / `中文` / `日本語`)**:
   - Instant runtime toggle between **Left-CN / Right-JP two-column bilingual layout** (with 18-char balanced line wrapping, sentence-boundary reflow, and 6-step adaptive font sizing so long sentences never clip), **Simplified Chinese**, and **Japanese** (with `<R漢字|かな>` furigana ruby) in both **ADV Window** and **Novel Full-Screen** modes.
+  - **Font Size Adjustment (`字号` 70%–150%)**: one-tap presets (`小 85%` · `标准 100%` · `大 115%` · `特大 130%` · `超大 145%`), `−`/`+` 5% steps, a fine slider and a live `实时预览 Preview` card in Config, plus an in-game `字号100%` quick-bar button cycling `100 → 115 → 130 → 145 → 85`. Line caps shrink to what each column holds (`min(18, ⌊colW/size⌋)`, no orphan double-wraps) and the ADV window grows upwards so 3 lines render at the chosen size; NOVEL pages, choices and the Backlog scale too.
   - Pixel-accurate glyph rendering straight from `fon.pak` (`本体80.tga` + `袋影80.tga`, covering all 3,602 CK-GAL extended kanji cells `748..4349` + off-by-one remap `4320..4350`) and `fnt.pak` via `WA2.exe`'s exact 59-range Shift-JIS / GBK cell map (`7,655` cells).
 - **1280×720 Hardware-Accelerated Stage & Faithful Visuals**:
   - Premultiplied-alpha character sprites (`char.pak` `bpp=0` header repair + α=2 edge cleanup), backgrounds with time-of-day fallback, event CGs, and `f0%03d.bmp` soft-threshold (`add_x4`) pattern dissolves.

@@ -49,6 +49,8 @@ import com.wa2port.android.ui.ConfigPanel
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadPanel
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.core.text.MessageLayout
+import com.wa2port.core.text.TextScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -164,6 +166,14 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             ),
         )
         add(QuickAction(settings.windowMode.label, false, act { vm.updateSettings { it.copy(windowMode = it.windowMode.next()) } }))
+        // Font size: one tap cycles the presets 100 → 115 → 130 → 145 → 85 → 100.
+        add(
+            QuickAction("字号${TextScale.clamp(settings.textScale)}%", false, act {
+                val next = settings.nextTextScale()
+                vm.updateSettings { it.withTextScale(next) }
+                session.toast = "字号 Text size $next%" + (TextScale.presetLabel(next)?.let { " · $it" } ?: "")
+            }),
+        )
         add(QuickAction("HIDE", session.windowHidden, act { session.windowHidden = true }))
         add(QuickAction("MENU", false, act { session.overlay = Overlay.MENU }))
     }
@@ -208,7 +218,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             val novel = settings.windowMode == WindowMode.NOVEL || session.stage.novelMode
             val waiting = session.revealDone && session.engine.isWaitingForClick && session.choices.isEmpty()
             val opacity = settings.windowOpacity / 100f
-            val textScale = settings.textScale / 100f
+            val textScale = settings.textScaleFactor
             if (line != null && !session.windowHidden) {
                 if (novel) {
                     NovelPage(
@@ -230,7 +240,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             if (session.choices.isNotEmpty() && !session.windowHidden) {
                 ChoiceCards(
                     painter, session.choices, settings.lang, stageHpx, textScale, onChoose = { session.choose(it) },
-                    modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else 0.7f),
+                    // Above the ADV window, which grows upwards with large text.
+                    modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale) - 0.015f),
                 )
             }
             // Mode indicators.
@@ -295,7 +306,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             Overlay.BACKLOG -> {
                 val entries = remember { session.backlog() }
                 BacklogOverlay(
-                    painter, entries, session::resolve, settings.lang,
+                    painter, entries, session::resolve, settings.lang, settings.textScaleFactor,
                     onReplay = { ref -> ref.voice?.let { session.audio.replayVoice(it) } },
                     onClose = { session.overlay = Overlay.NONE },
                 )

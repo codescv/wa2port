@@ -112,13 +112,17 @@ fun ChoiceCards(painter: TextPainter, choices: List<ChoiceOption>, lang: Display
     }
 }
 
-/** Scrollable bilingual backlog with ▶ voice replay; opens scrolled to the newest line. */
+/**
+ * Scrollable bilingual backlog with ▶ voice replay; opens scrolled to the newest line. Line and
+ * speaker-name sizes follow the font size setting ([textScale], 1.0 = 100 %).
+ */
 @Composable
 fun BacklogOverlay(
     painter: TextPainter,
     entries: List<LineRef>,
     resolve: (LineRef) -> DialogueLine,
     lang: DisplayLang,
+    textScale: Float,
     onReplay: (LineRef) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -131,9 +135,9 @@ fun BacklogOverlay(
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val textWidthPx = with(density) { (maxWidth - 72.dp).toPx() }
-            val main = with(density) { 17.sp.toPx() }
-            val sub = with(density) { 14.sp.toPx() }
-            val nameSize = with(density) { 13.sp.toPx() }
+            val main = with(density) { 17.sp.toPx() } * textScale
+            val sub = with(density) { 14.sp.toPx() } * textScale
+            val nameSize = with(density) { 13.sp.toPx() } * textScale
             LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
                 itemsIndexed(entries) { _, ref ->
                     val line = remember(ref) { resolve(ref) }
@@ -143,7 +147,7 @@ fun BacklogOverlay(
                                 .filter { !it.rich.isEmpty }
                                 .map { it.copy(color = Wa2Colors.Name.toArgb()) }
                             if (nameParts.isNotEmpty()) BilingualText(painter, nameParts.take(1), textWidthPx, 0f)
-                            BilingualText(painter, parts(line.jp, line.cn, lang, main, sub), textWidthPx, 4f)
+                            BilingualText(painter, parts(line.jp, line.cn, lang, main, sub), textWidthPx, 4f * textScale)
                         }
                         Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
                             if (ref.voice != null) {

@@ -25,22 +25,21 @@ import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.engine.DialogueLine
+import com.wa2port.core.text.MessageLayout
+import com.wa2port.core.text.MessageLayout.MAIN_PX
+import com.wa2port.core.text.MessageLayout.NAME_PX
+import com.wa2port.core.text.MessageLayout.SECONDARY_PX
+import com.wa2port.core.text.MessageLayout.SINGLE_MAX_CHARS
+import com.wa2port.core.text.MessageLayout.TWO_COL_MAX_CHARS
+import com.wa2port.core.text.MessageLayout.TWO_COL_PX
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
 
-/** Text sizes in 1280×720 stage pixels (scaled to the device by the stage scale). */
-private const val MAIN_PX = 30f
-private const val SECONDARY_PX = 22f
-private const val NAME_PX = 25f
-
-/** 双语 two-column layout: CN left, JP right, each at a comfortable size with an 18-char line cap. */
-private const val TWO_COL_PX = 28f
-private const val TWO_COL_MAX_CHARS = 18f
-private const val SINGLE_MAX_CHARS = 34f
-private const val NOVEL_TWO_COL_PX = 26f
+// Text sizes / line caps (1280×720 stage px, scaled by the stage scale × text scale) and the
+// window geometry live in [MessageLayout] so the font-size math is unit-tested in :core.
 
 /** Size steps tried (largest first) when a message does not fit the window; last resort = clip. */
-private val FIT_STEPS = floatArrayOf(1f, 0.93f, 0.86f, 0.8f, 0.75f, 0.71f)
+private val FIT_STEPS = MessageLayout.FIT_STEPS
 
 private val TEXT_COLOR = Wa2Colors.Text.toArgb()
 private val SECONDARY_COLOR = Color(0xFFC9D6EA).toArgb()
@@ -74,12 +73,16 @@ private fun DrawScope.drawBlock(painter: TextPainter, b: Block, x: Float, y: Flo
 private fun measureBlock(painter: TextPainter, b: Block, width: Float): Float =
     painter.measureHeight(b.rich, b.lang, width, b.size, b.maxChars, b.reflow)
 
-/** Which blocks a line produces for the current [DisplayLang] (CN missing → JP shown instead). */
-private fun blocksFor(line: DialogueLine, lang: DisplayLang, scale: Float, visJp: Int, visCn: Int): List<Block> {
+/**
+ * Which blocks a line produces for the current [DisplayLang] (CN missing → JP shown instead).
+ * Single-language lines are capped at [SINGLE_MAX_CHARS] or what [width] holds, whichever is less.
+ */
+private fun blocksFor(line: DialogueLine, lang: DisplayLang, scale: Float, width: Float, visJp: Int, visCn: Int): List<Block> {
     val cn = line.cn?.takeIf { !it.isEmpty }
+    val cap = MessageLayout.lineCap(width, MAIN_PX * scale, SINGLE_MAX_CHARS, stepped = false)
     return when {
-        lang == DisplayLang.JP || cn == null -> listOf(Block(line.jp, TextLang.JP, MAIN_PX * scale, TEXT_COLOR, visJp, SINGLE_MAX_CHARS))
-        lang == DisplayLang.CN -> listOf(Block(cn, TextLang.CN, MAIN_PX * scale, TEXT_COLOR, visCn, SINGLE_MAX_CHARS))
+        lang == DisplayLang.JP || cn == null -> listOf(Block(line.jp, TextLang.JP, MAIN_PX * scale, TEXT_COLOR, visJp, cap))
+        lang == DisplayLang.CN -> listOf(Block(cn, TextLang.CN, MAIN_PX * scale, TEXT_COLOR, visCn, cap))
         else -> listOf(
             Block(cn, TextLang.CN, MAIN_PX * scale, TEXT_COLOR, visCn),
             Block(line.jp, TextLang.JP, SECONDARY_PX * scale, SECONDARY_COLOR, visJp),
@@ -137,6 +140,10 @@ private fun DrawScope.drawWaitMark(x: Float, y: Float, s: Float, alpha: Float) {
  * (CN left, JP right, 28 px, ≤18 full-width chars per line, script `\n` reflowed at sentence ends);
  * single language: one 30 px column (≤34 chars). Steps the size down (widening the line cap) until it fits, clipping as a last resort; speaker name
  * box above the window.
+ *
+ * [textScale] (font size setting): the line cap never exceeds what a column holds at the scaled
+ * size ([MessageLayout.lineCap]), and the window grows upwards ([MessageLayout.advTop]) so three
+ * lines fit at 115 %–150 % without the fit loop shrinking them back.
  */
 @Composable
 fun AdvWindow(
@@ -154,11 +161,11 @@ fun AdvWindow(
     Canvas(modifier) {
         val scale = size.height / 720f * textScale
         val stageScale = size.height / 720f
-        val left = size.width * 0.05f
-        val right = size.width * 0.95f
-        val top = size.height * 0.715f
-        val bottom = size.height * 0.975f
-        val pad = 22f * stageScale
+        val left = size.width * MessageLayout.ADV_LEFT
+        val right = size.width * MessageLayout.ADV_RIGHT
+        val top = size.height * MessageLayout.advTop(textScale)
+        val bottom = size.height * MessageLayout.ADV_BOTTOM
+        val pad = MessageLayout.ADV_PAD * stageScale
         drawRoundRect(
             Color(0xFF0A1428).copy(alpha = opacity), Offset(left, top), Size(right - left, bottom - top),
             CornerRadius(14f * stageScale),
@@ -193,13 +200,14 @@ fun AdvWindow(
         if (cols != null) {
             // 双语: CN left column | JP right column, separated by a subtle divider. Long messages
             // step the size down and widen the per-line cap to what the column holds at that size
-            // (28 px/18 chars → … → 20 px/26 chars) until the taller column fits.
-            val colGap = 30f * stageScale
+            // (28 px/18 chars → … → 20 px/26 chars) until the taller column fits. At the nominal size
+            // the cap is min(18, what the column holds) so large text never double-wraps.
+            val colGap = MessageLayout.advColumnGap(textScale) * stageScale
             val colW = (width - colGap) / 2f
             var (cn, jp) = cols
             for (f in FIT_STEPS) {
                 val size = cols.first.size * f
-                val cap = if (f >= 1f) TWO_COL_MAX_CHARS else maxOf(TWO_COL_MAX_CHARS, kotlin.math.floor(colW / size))
+                val cap = MessageLayout.lineCap(colW, size, TWO_COL_MAX_CHARS, stepped = f < 1f)
                 cn = cols.first.copy(size = size, maxChars = cap)
                 jp = cols.second.copy(size = size, maxChars = cap)
                 if (maxOf(measureBlock(painter, cn, colW), measureBlock(painter, jp, colW)) <= avail) break
@@ -214,12 +222,12 @@ fun AdvWindow(
                 drawBlock(painter, jp, divX + colGap / 2f, textTop, colW)
             }
         } else {
-            val base = blocksFor(line, lang, scale, visibleJp, visibleCn)
+            val base = blocksFor(line, lang, scale, width, visibleJp, visibleCn)
             var blocks = base
             for (f in FIT_STEPS) {
                 blocks = base.map {
                     val size = it.size * f
-                    it.copy(size = size, maxChars = if (f >= 1f) it.maxChars else maxOf(it.maxChars, kotlin.math.floor(width / size)))
+                    it.copy(size = size, maxChars = if (f >= 1f || it.maxChars <= 0f) it.maxChars else MessageLayout.lineCap(width, size, it.maxChars, stepped = true))
                 }
                 if (measureBlocks(painter, blocks, width, gap) <= avail) break
             }
@@ -251,8 +259,8 @@ fun NovelPage(
     val blink = rememberBlink()
     val stageScale = heightPx / 720f
     val scale = stageScale * textScale
-    val left = widthPx * 0.08f
-    val width = widthPx * 0.84f
+    val left = widthPx * MessageLayout.NOVEL_LEFT
+    val width = widthPx * MessageLayout.NOVEL_WIDTH
     val top = heightPx * 0.07f
     val avail = heightPx * 0.86f
     val gap = 6f * stageScale
@@ -289,33 +297,34 @@ fun NovelPage(
             val vCn = if (last) visibleCn else Int.MAX_VALUE
             val cols = novelColumns(l, lang, scale, width, vJp, vCn)
             y += if (cols != null) {
-                val colGap = 36f * scale
-                val colW = (width - colGap) / 2f
+                val colW = MessageLayout.novelColumnWidth(width, scale)
+                val colGap = width - colW * 2f
                 val hCn = drawBlock(painter, cols.first, left, y, colW)
                 val hJp = drawBlock(painter, cols.second, left + colW + colGap, y, colW)
                 maxOf(hCn, hJp) + paraGap
             } else {
-                drawBlocks(painter, blocksFor(l, lang, scale, vJp, vCn), left, y, width, gap) + paraGap
+                drawBlocks(painter, blocksFor(l, lang, scale, width, vJp, vCn), left, y, width, gap) + paraGap
             }
         }
         if (waiting) drawWaitMark(left + width, (y - paraGap * 0.5f).coerceAtMost(size.height - 20f * stageScale), 9f * stageScale, blink)
     }
 }
 
-/** 双语 columns for NOVEL mode (line cap derived from the column width). */
+/**
+ * 双语 columns for NOVEL mode. The line cap is whatever the column holds at the scaled size (no
+ * upper cap, so 70 %–150 % all fill the column cleanly; see [MessageLayout.novelLineCap]).
+ */
 private fun novelColumns(l: DialogueLine, lang: DisplayLang, scale: Float, width: Float, visJp: Int, visCn: Int): Pair<Block, Block>? {
-    val size = NOVEL_TWO_COL_PX * scale
-    val colW = (width - 36f * (scale.coerceAtLeast(0.01f))) / 2f
-    val maxChars = kotlin.math.floor(colW / size).coerceIn(8f, TWO_COL_MAX_CHARS + 4f)
-    return twoColumns(l, lang, size, maxChars, visJp, visCn)
+    val size = MessageLayout.NOVEL_TWO_COL_PX * scale
+    return twoColumns(l, lang, size, MessageLayout.novelLineCap(width, scale), visJp, visCn)
 }
 
 /** Height of one NOVEL paragraph (two columns side by side, or stacked single-language blocks). */
 private fun paragraphHeight(painter: TextPainter, l: DialogueLine, lang: DisplayLang, scale: Float, visJp: Int, visCn: Int, width: Float, gap: Float): Float {
     val cols = novelColumns(l, lang, scale, width, visJp, visCn)
     if (cols != null) {
-        val colW = (width - 36f * scale) / 2f
+        val colW = MessageLayout.novelColumnWidth(width, scale)
         return maxOf(measureBlock(painter, cols.first, colW), measureBlock(painter, cols.second, colW))
     }
-    return measureBlocks(painter, blocksFor(l, lang, scale, visJp, visCn), width, gap)
+    return measureBlocks(painter, blocksFor(l, lang, scale, width, visJp, visCn), width, gap)
 }

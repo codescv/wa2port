@@ -1,5 +1,6 @@
 package com.wa2port.android.data
 
+import com.wa2port.core.text.TextScale
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -43,14 +44,26 @@ data class Settings(
     val windowMode: WindowMode = WindowMode.ADV,
     /** Message window background opacity, percent. */
     val windowOpacity: Int = 70,
-    /** Text scale, percent of the default size. */
-    val textScale: Int = 100,
+    /**
+     * Font size, percent of the default size ([TextScale.MIN]..[TextScale.MAX]; presets 85/100/
+     * 115/130/145). Scales the message window, NOVEL page, choices and backlog.
+     */
+    val textScale: Int = TextScale.DEFAULT,
     /** Explicit asset root chosen by the user (null = auto-detect). */
     val assetPath: String? = null,
     /** Last SAF tree used for import (to offer "resume import"). */
     val importTreeUri: String? = null,
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
+
+    /** [textScale] as a clamped factor (1.0 = 100 %), safe against hand-edited settings files. */
+    val textScaleFactor: Float get() = TextScale.factor(textScale)
+
+    /** Clamped copy — every writer (slider, ±, presets, quick bar) goes through this. */
+    fun withTextScale(percent: Int): Settings = copy(textScale = TextScale.clamp(percent))
+
+    /** Next quick-bar font size: 100 → 115 → 130 → 145 → 85 → 100 (off-preset → next preset up). */
+    fun nextTextScale(): Int = TextScale.nextPreset(textScale)
 
     companion object {
         const val TEXT_SPEED_INSTANT = 120

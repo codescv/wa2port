@@ -3,6 +3,7 @@ package com.wa2port.android.game
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,10 +62,10 @@ fun QuickColumn(actions: List<QuickAction>, width: Dp, modifier: Modifier = Modi
     }
 }
 
-/** Horizontal row of quick buttons (top letterbox or overlay on the stage). */
+/** Horizontal row of quick buttons (top letterbox or overlay on the stage); scrolls when it overflows. */
 @Composable
 fun QuickRow(actions: List<QuickAction>, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         actions.forEach { QuickButton(it, 52.dp) }
     }
 }
