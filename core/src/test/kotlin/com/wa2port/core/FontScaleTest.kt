@@ -81,8 +81,31 @@ class FontScaleTest {
     fun windowHoldsThreeLinesAtEveryScale() {
         for (t in allScales) {
             val avail = MessageLayout.advTextAvail(MessageLayout.advTop(t))
-            assertTrue(avail + 1e-3f >= 3 * LINE_PITCH * MAIN_PX * t, "single t=$t avail=$avail")
-            assertTrue(avail + 1e-3f >= 3 * LINE_PITCH * TWO_COL_PX * t, "two-col t=$t avail=$avail")
+            assertTrue(avail >= 3 * LINE_PITCH * MAIN_PX * t, "single t=$t avail=$avail")
+            assertTrue(avail >= 3 * LINE_PITCH * TWO_COL_PX * t, "two-col t=$t avail=$avail")
+        }
+    }
+
+    /**
+     * Same check in float32 with `AdvWindow`'s exact operation order on real device stage heights,
+     * so rounding can never tip a 3-line message into the fit loop (no tolerance).
+     */
+    @Test
+    fun windowHoldsThreeLinesOnDeviceHeights() {
+        val heights = listOf(540f, 607.5f, 720f, 810f, 900f, 1012.5f, 1080f, 1170f, 1206f, 1350f, 1440f, 1600f)
+        for (h in heights) for (p in TextScale.MIN..TextScale.MAX) {
+            val t = p / 100f
+            val scale = h / 720f * t
+            val stageScale = h / 720f
+            val top = h * MessageLayout.advTop(t)
+            val bottom = h * MessageLayout.ADV_BOTTOM
+            val pad = MessageLayout.ADV_PAD * stageScale
+            val textTop = top + pad * 1.25f
+            val avail = bottom - pad * 0.6f - textTop
+            val single = 3 * ((MAIN_PX * scale * 1f) * LINE_PITCH)
+            val two = 3 * ((TWO_COL_PX * scale * 1f) * LINE_PITCH)
+            assertTrue(single <= avail, "single h=$h p=$p need=$single avail=$avail")
+            assertTrue(two <= avail, "two-col h=$h p=$p need=$two avail=$avail")
         }
     }
 

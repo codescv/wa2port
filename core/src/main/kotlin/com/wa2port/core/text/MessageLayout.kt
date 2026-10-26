@@ -43,6 +43,12 @@ object MessageLayout {
     /** Lines of single-language main text the ADV window always holds without shrinking. */
     const val ADV_MIN_LINES = 3
 
+    /**
+     * Extra stage px of text area beyond the exact 3-line need, so float rounding at any device
+     * height cannot tip `measure <= avail` and make the fit loop step down.
+     */
+    const val ADV_FIT_MARGIN = 1f
+
     /** NOVEL page box as fractions of the stage, and the column gap at 100 % (stage px). */
     const val NOVEL_LEFT = 0.08f
     const val NOVEL_WIDTH = 0.84f
@@ -72,8 +78,9 @@ object MessageLayout {
      * about `even = ceil(chars / L)` characters. One character of slack absorbs unsplittable units
      * (ASCII words, ruby groups), but only while the last line stays at least `max(4, even / 2)`
      * long; otherwise `L − 1` slack-filled lines leave a 1–3 character stub (e.g. 51 chars at
-     * cap 12: `12/12/12/12/3` → `11/11/11/11/7`). Identical to the old `min(maxChars, even + 1)`
-     * for paragraphs of up to 5 lines at the 100 % caps (18 / 19 / 34).
+     * cap 12: `12/12/12/12/3` → `11/11/11/11/7`). Same as the old `min(maxChars, even + 1)` for
+     * full-width paragraphs of up to 5 lines at the 100 % caps (18 / 19 / 34); it may differ for
+     * longer paragraphs or half-width counts, always towards a better-balanced last line.
      */
     fun balancedCap(chars: Float, maxChars: Float): Float {
         if (maxChars <= 0f || chars <= maxChars) return maxChars
@@ -94,12 +101,12 @@ object MessageLayout {
 
     /**
      * ADV window top (fraction of the stage height) for [textScale] (1.0 = 100 %). The default
-     * window holds [ADV_MIN_LINES] lines of 30 px text; above ~108 % it grows upwards just enough
+     * window holds [ADV_MIN_LINES] lines of 30 px text; above ~107 % it grows upwards just enough (plus [ADV_FIT_MARGIN])
      * that those lines still fit at the requested size instead of the fit loop shrinking them back.
      * Never lower than [ADV_TOP] (small text keeps the classic window) nor above [ADV_TOP_MIN].
      */
     fun advTop(textScale: Float): Float {
-        val need = ADV_MIN_LINES * LINE_PITCH * MAIN_PX * textScale
+        val need = ADV_MIN_LINES * LINE_PITCH * MAIN_PX * textScale + ADV_FIT_MARGIN
         // Solve advTextAvail(top) == need for top.
         val top = (ADV_BOTTOM * STAGE_H - ADV_PAD * 0.6f - ADV_PAD * 1.25f - need) / STAGE_H
         return top.coerceIn(ADV_TOP_MIN, ADV_TOP)

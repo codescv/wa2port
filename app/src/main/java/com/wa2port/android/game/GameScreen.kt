@@ -169,8 +169,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         // Font size: one tap cycles the presets 100 → 115 → 130 → 145 → 85 → 100.
         add(
             QuickAction("字号${TextScale.clamp(settings.textScale)}%", false, act {
-                val next = settings.nextTextScale()
-                vm.updateSettings { it.withTextScale(next) }
+                vm.updateSettings { it.withTextScale(it.nextTextScale()) }
+                val next = vm.settings.textScale
                 session.toast = "字号 Text size $next%" + (TextScale.presetLabel(next)?.let { " · $it" } ?: "")
             }),
         )
