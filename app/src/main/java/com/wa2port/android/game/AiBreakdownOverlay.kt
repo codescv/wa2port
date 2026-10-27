@@ -132,7 +132,6 @@ fun AiBreakdownOverlay(
     ) {
         Column(
             Modifier.align(Alignment.Center).widthIn(max = 1100.dp).fillMaxSize()
-                .imePadding() // keep the follow-up input above the soft keyboard
                 .padding(horizontal = 16.dp, vertical = 6.dp),
         ) {
             HeaderRow(state, ai, persona, onPersona, onClose)
