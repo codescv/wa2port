@@ -45,4 +45,18 @@ class AiSampleExplanationTest {
         assertEquals("寒い", e.vocab.first { it.surface == "寒く" }.lemma)
         assertEquals("寒い", e.vocab.first { it.surface == "寒く" }.lemmaRuby.joinToString("") { it.base })
     }
+
+    @Test
+    fun offlineFallbackSplitsPhrasesAndKeepsScriptRuby() {
+        val s = "「本気で、言ってる？」"
+        val e = OfflineExplainer.build(ExplainRequest(s, officialCnTranslation = "你是认真的？", scriptRuby = listOf(ScriptRuby(CharSpan(1, 3), "マジ"))))
+        assertEquals(listOf("本気で", "言ってる"), e.chunks.map { it.surface })
+        e.chunks.forEach { assertEquals(it.surface, s.substring(it.span.start, it.span.end)) }
+        assertEquals(s, e.ruby.joinToString("") { it.base })
+        assertEquals("マジ", e.ruby.first { it.base == "本気" }.ruby)
+        assertEquals("マジで", e.chunks[0].reading)
+        assertEquals("你是认真的？", e.translation)
+        assertEquals(OfflineExplainer.MODEL, e.model)
+        assertTrue(OfflineExplainer.build(ExplainRequest("……")).chunks.isEmpty())
+    }
 }

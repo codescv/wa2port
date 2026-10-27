@@ -125,6 +125,7 @@ fun BacklogOverlay(
     textScale: Float,
     onReplay: (LineRef) -> Unit,
     onClose: () -> Unit,
+    onAi: ((LineRef) -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val state = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size - 1).coerceAtLeast(0))
@@ -149,12 +150,19 @@ fun BacklogOverlay(
                             if (nameParts.isNotEmpty()) BilingualText(painter, nameParts.take(1), textWidthPx, 0f)
                             BilingualText(painter, parts(line.jp, line.cn, lang, main, sub), textWidthPx, 4f * textScale)
                         }
-                        Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                        // ▶ voice replay and ✨ AI breakdown of this line.
+                        Column(Modifier.width(56.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (ref.voice != null) {
                                 Box(
                                     Modifier.size(48.dp).clip(CircleShape).background(Color(0x553060A0)).clickable { onReplay(ref) },
                                     contentAlignment = Alignment.Center,
                                 ) { Text("▶", color = Wa2Colors.Accent, fontSize = 18.sp) }
+                            }
+                            if (onAi != null && !line.jp.isEmpty) {
+                                Box(
+                                    Modifier.size(48.dp).clip(CircleShape).background(Color(0x55A06030)).clickable { onAi(ref) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("✨", fontSize = 16.sp) }
                             }
                         }
                     }

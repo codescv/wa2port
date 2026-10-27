@@ -133,10 +133,43 @@ private fun DrawScope.drawWaitMark(x: Float, y: Float, s: Float, alpha: Float) {
 }
 
 /**
+ * Geometry of the Japanese text block last drawn by [AdvWindow] (stage-box px), captured during draw
+ * for tap-to-analyze. Reset at the start of every draw; null when no JP block is visible (中文 mode).
+ * Pure geometry: writing it never triggers recomposition.
+ */
+class AdvHitBox {
+    class JpBox(
+        val rich: RichText,
+        val x: Float,
+        val y: Float,
+        val width: Float,
+        val sizePx: Float,
+        val maxChars: Float,
+        val reflow: Boolean,
+        val visibleGlyphs: Int,
+        val clipBottom: Float,
+    )
+
+    @Volatile
+    var jp: JpBox? = null
+
+    /** Glyph index ([RichText.baseCodes] order) of the JP glyph under [p] (stage-box px), or −1. */
+    fun glyphAt(painter: TextPainter, p: Offset): Int {
+        val b = jp ?: return -1
+        val tol = b.sizePx * 0.35f
+        if (p.x < b.x - tol || p.x > b.x + b.width + tol || p.y < b.y || p.y > b.clipBottom) return -1
+        return painter.glyphIndexAt(b.rich, TextLang.JP, b.width, b.sizePx, b.maxChars, b.reflow, p.x - b.x, p.y - b.y, b.visibleGlyphs)
+    }
+}
+
+/**
  * ADV message window drawn over the stage (fills the stage box). 双语: two side-by-side columns
  * (CN left, JP right, 28 px, ≤18 full-width chars per line, script `\n` reflowed at sentence ends);
  * single language: one 30 px column (≤34 chars). Steps the size down (widening the line cap) until it fits, clipping as a last resort; speaker name
  * box above the window.
+ *
+ * [hitBox] (optional) receives the final JP block geometry for tap-to-analyze (ADV only; NOVEL
+ * pages use the Quick Bar / backlog `✨ AI` entry points instead).
  *
  * [textScale] (font size setting): the line cap never exceeds what a column holds at the scaled
  * size ([MessageLayout.lineCap]), and the window grows upwards ([MessageLayout.advTop]) so three
@@ -153,9 +186,11 @@ fun AdvWindow(
     opacity: Float,
     textScale: Float,
     modifier: Modifier,
+    hitBox: AdvHitBox? = null,
 ) {
     val blink = rememberBlink()
     Canvas(modifier) {
+        hitBox?.jp = null
         val scale = size.height / 720f * textScale
         val stageScale = size.height / 720f
         val left = size.width * MessageLayout.ADV_LEFT
@@ -224,6 +259,7 @@ fun AdvWindow(
                 drawBlock(painter, cn, left + pad, textTop, colW)
                 drawBlock(painter, jp, divX + colGap / 2f, textTop, colW)
             }
+            hitBox?.jp = AdvHitBox.JpBox(jp.rich, divX + colGap / 2f, textTop, colW, jp.size, jp.maxChars, jp.reflow, jp.visible, clipBottom)
         } else {
             val base = blocksFor(line, lang, scale, width, visibleJp, visibleCn)
             var blocks = base
@@ -235,6 +271,17 @@ fun AdvWindow(
                 if (measureBlocks(painter, blocks, width, gap) <= avail) break
             }
             clipRect(left, top, right, clipBottom) { drawBlocks(painter, blocks, left + pad, textTop, width, gap) }
+            if (hitBox != null) {
+                // Record the JP block's own origin (blocks stack with [gap] between them).
+                var y = textTop
+                blocks.forEachIndexed { i, b ->
+                    if (i > 0) y += gap
+                    if (b.lang == TextLang.JP) {
+                        hitBox.jp = AdvHitBox.JpBox(b.rich, left + pad, y, width, b.size, b.maxChars, b.reflow, b.visible, clipBottom)
+                    }
+                    y += measureBlock(painter, b, width)
+                }
+            }
         }
         if (waiting) drawWaitMark(right - pad, bottom - pad * 0.9f, 9f * stageScale, blink)
     }

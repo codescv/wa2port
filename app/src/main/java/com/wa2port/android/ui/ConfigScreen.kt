@@ -34,23 +34,50 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wa2port.android.ai.AiLearningController
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.data.Settings
 import com.wa2port.android.data.WindowMode
+import com.wa2port.android.game.AiBreakdownOverlay
+import com.wa2port.android.game.GameSession
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
 
-/** Full-screen config (title) — same panel as the in-game overlay. */
+/**
+ * Full-screen config (title) — same panel as the in-game overlay. Without a game session the AI
+ * sample preview (示例预览) is hosted here.
+ */
 @Composable
-fun ConfigScreen(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, onClose: () -> Unit) {
+fun ConfigScreen(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, onClose: () -> Unit, ai: AiLearningController? = null) {
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-        ConfigPanel(settings, onChange, onClose)
+        ConfigPanel(settings, onChange, onClose, ai)
+        ai?.breakdown?.let { st ->
+            AiBreakdownOverlay(
+                state = st,
+                ai = ai,
+                persona = ai.persona,
+                onPersona = { id -> onChange { it.copy(aiPersonaId = id) } },
+                onReplayVoice = null,
+                onOpenSettings = { ai.close(null) },
+                onClose = { ai.close(null) },
+            )
+        }
     }
 }
 
-/** Text speed, auto speed, volumes, skip mode, display language, window mode, opacity, text size. */
+/**
+ * Text speed, auto speed, volumes, skip mode, display language, window mode, opacity, text size and
+ * (when [ai] is given) the AI learning settings. [session] is the running game, if any (previews
+ * open above the in-game config).
+ */
 @Composable
-fun ConfigPanel(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, onClose: () -> Unit) {
+fun ConfigPanel(
+    settings: Settings,
+    onChange: ((Settings) -> Settings) -> Unit,
+    onClose: () -> Unit,
+    ai: AiLearningController? = null,
+    session: GameSession? = null,
+) {
     Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("设置 Config  コンフィグ", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
@@ -92,6 +119,8 @@ fun ConfigPanel(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, 
             LabeledSlider("音乐 BGM", settings.bgmVolume, 0..100, "${settings.bgmVolume}") { v -> onChange { it.copy(bgmVolume = v) } }
             LabeledSlider("音效 SE", settings.seVolume, 0..100, "${settings.seVolume}") { v -> onChange { it.copy(seVolume = v) } }
             LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
+
+            if (ai != null) AiSettingsSection(settings, onChange, ai, session)
         }
     }
 }
@@ -213,7 +242,7 @@ private const val PREVIEW_CN = "「……啊，下雪了呢。今年的冬天，
 private const val PREVIEW_JP = "「……あ、雪だね。今年の冬も、きっと寒くなるね」"
 
 @Composable
-private fun OptionRow(label: String, content: @Composable () -> Unit) {
+internal fun OptionRow(label: String, content: @Composable () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.widthIn(min = 150.dp).padding(end = 12.dp))
         content()

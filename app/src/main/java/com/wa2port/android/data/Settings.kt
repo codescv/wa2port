@@ -1,5 +1,7 @@
 package com.wa2port.android.data
 
+import com.wa2port.core.ai.AiPersonaSettings
+import com.wa2port.core.ai.AiProviderSettings
 import com.wa2port.core.text.TextScale
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -53,6 +55,12 @@ data class Settings(
     val assetPath: String? = null,
     /** Last SAF tree used for import (to offer "resume import"). */
     val importTreeUri: String? = null,
+    /** AI learning provider (Gemini API / Vertex AI, custom base URL, model …). Secrets stay in app-private storage. */
+    val ai: AiProviderSettings = AiProviderSettings(),
+    /** Follow-up tutor persona ([AiPersonaSettings.PRESETS] id). */
+    val aiPersonaId: String = AiPersonaSettings.KOTORI.id,
+    /** ADV: tapping a Japanese glyph opens the AI breakdown instead of advancing (off by default). */
+    val aiTapToAnalyze: Boolean = false,
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 

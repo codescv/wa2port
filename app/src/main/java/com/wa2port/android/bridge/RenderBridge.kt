@@ -41,6 +41,23 @@ interface TextPainter {
         maxChars: Float = 0f,
         reflow: Boolean = false,
     ): Float
+
+    /**
+     * Index (in [RichText.baseCodes] order) of the glyph under ([localX], [localY]) relative to the
+     * text box top-left, laid out with the same arguments as [draw]; −1 when none (or unsupported).
+     * Glyphs with index ≥ [visibleGlyphs] never hit. See `com.wa2port.core.ai.GlyphHit`.
+     */
+    fun glyphIndexAt(
+        rich: RichText,
+        lang: TextLang,
+        maxWidth: Float,
+        sizePx: Float,
+        maxChars: Float,
+        reflow: Boolean,
+        localX: Float,
+        localY: Float,
+        visibleGlyphs: Int = Int.MAX_VALUE,
+    ): Int = -1
 }
 
 /** Engine audio output. */

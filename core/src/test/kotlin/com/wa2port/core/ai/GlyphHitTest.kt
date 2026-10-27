@@ -39,7 +39,7 @@ class GlyphHitTest {
 
     @Test
     fun unrevealedGlyphsNeverHit() {
-        assertEquals(-1, hit(25f, 15f, visible = 1))
+        assertEquals(-1, hit(35f, 15f, visible = 1)) // glyph 1 is not revealed (beyond the edge tolerance of glyph 0)
         assertEquals(0, hit(5f, 15f, visible = 1))
         assertEquals(-1, hit(5f, 45f, visible = 3))
     }

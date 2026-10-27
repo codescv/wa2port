@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.wa2port.android.ai.AiLearningController
 import com.wa2port.android.bridge.RenderBackend
 import com.wa2port.android.bridge.RenderBackends
 import com.wa2port.android.data.AssetCandidate
@@ -69,6 +70,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var backend: RenderBackend? = null
     var session by mutableStateOf<GameSession?>(null)
         private set
+
+    /** AI learning (Kotori-style breakdown); survives sessions, cache in `filesDir/ai_cache`. */
+    val ai = AiLearningController(File(app.filesDir, "ai_cache"), { settings }, viewModelScope)
 
     init {
         rescanAssets()
@@ -173,6 +177,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             error = "未找到游戏资源 Assets not found"
             return null
         }
+        ai.close(session)
         session?.dispose()
         val s = GameSession(e, backend!!, saves, systemFile) { settings }
         s.audio.setVolumes(settings.bgmVolume / 100f, settings.seVolume / 100f, settings.voiceVolume / 100f)
@@ -241,6 +246,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun exitToTitle() {
+        ai.close(session)
         val wasReplay = session?.inReplayMode == true
         session?.dispose()
         session = null
@@ -267,6 +273,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun closeEngine() {
+        ai.close(session)
         session?.dispose()
         session = null
         backend?.release()

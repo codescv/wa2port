@@ -22,6 +22,11 @@ The APK ships **engine only** (Bring Your Own Assets); players supply their own 
   - **CG Gallery (`CG 鉴赏模式`)**: Backed by `WA2.exe` `.data 0x4c01b0` (`149` cards / `272` variations across `IC` and `CC/Coda`), chapter filters, `Show All` toggle, and full-screen pinch-to-zoom (`1×..4×`) variation viewer.
   - **BGM Gallery (`音乐鉴赏模式`)**: All `63` tracks in `.data 0x4c1dd0` display order with titles & singer/composer credits, `A→B` gapless intro+loop playback, `#25` Campus Fes `BGM_021`/`035` switching, `#31` Full Version auto-unlock, and transport bar.
   - **Scene Replay (`场景回想模式`)**: All `24` replay slots from `.data 0x4c1bf0` (`1` IC, `13` CC, `10` Coda) with pre-baked `tv%06d.tga` thumbnails, bilingual titles, `9999.bnr` + `GetReplayMode()` (`op 222`) script dispatch, and automatic return to the replay gallery on completion.
+- **✨ AI Japanese Learning (Kotori-style breakdown)**:
+  - `✨ AI` in the Quick Bar (current line) and next to every Backlog entry; optional **点词解析 tap-to-analyze** on the ADV window's Japanese column (off by default).
+  - Breakdown sheet: interactive furigana sentence (tap a character → its chunk, 0 ms), `▶ 原声` voice replay, register/tone badges, AI / literal / official CK-GAL translation with 对照说明, **📘 课本标准 vs 🔥 口语演变** chunk cards with a formality bar, vocabulary (JLPT, pitch accent, conjugation) and grammar cards, and multi-turn follow-up Q&A with tutor personas (小鳥 / 冬马和纱 / 小木曾雪菜).
+  - Providers: **Gemini API key** or **Vertex AI** (service account JSON / access token / Express key), plus **自定义服务器地址** (custom base URL / reverse proxy, with `x-goog-api-key` / Bearer / `?key=` auth styles and extra headers). Explanations are cached (SHA-256 keyed) in app-private storage; `示例预览` and an offline phrase split work without any key.
+  - Privacy: API keys and the explained lines are sent only to the endpoint you configure; settings (including secrets) live in the app-private `settings.json`.
 - **Mobile Touch Controls & Save System**:
   - Tap to reveal/advance, long-press (`≥350 ms`) to fast-skip, swipe-up for bilingual Backlog with `▶` voice replay, two-finger tap to hide window, 24 save slots + Quick Save/Load with stage thumbnails, and persistent `既読` bitsets + 1024-entry `GFLAG` system data.
 

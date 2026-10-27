@@ -79,7 +79,7 @@ fun Wa2App(vm: AppViewModel) {
                 val s = vm.session
                 if (s != null) GameScreen(vm, s) else LaunchedEffect(Unit) { vm.exitToTitle() }
             }
-            Screen.Config -> ConfigScreen(vm.settings, onChange = vm::updateSettings, onClose = { vm.back() })
+            Screen.Config -> ConfigScreen(vm.settings, onChange = vm::updateSettings, onClose = { vm.back() }, ai = vm.ai)
             Screen.Assets -> AssetSetupScreen(vm)
             Screen.Load -> SaveLoadScreen(
                 mode = SaveLoadMode.LOAD,
@@ -92,7 +92,9 @@ fun Wa2App(vm: AppViewModel) {
             Screen.BgmGallery -> BgmGalleryScreen(vm = vm, onClose = { vm.back() })
             Screen.SceneReplay -> SceneReplayScreen(vm = vm, onClose = { vm.back() })
         }
-        if (vm.screen != Screen.Title && vm.screen != Screen.Game) BackHandler { vm.back() }
+        if (vm.screen != Screen.Title && vm.screen != Screen.Game) {
+            BackHandler { if (vm.screen == Screen.Config && vm.ai.breakdown != null) vm.ai.close(null) else vm.back() }
+        }
 
         vm.busy?.let {
             Box(Modifier.fillMaxSize().background(Color(0xAA000000)), contentAlignment = Alignment.Center) {

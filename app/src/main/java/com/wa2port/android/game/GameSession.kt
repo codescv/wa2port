@@ -22,8 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** Overlays drawn above the game (the engine is paused while one is open). */
-enum class Overlay { NONE, MENU, BACKLOG, SAVE, LOAD, CONFIG }
+/** Overlays drawn above the game (the engine is paused while one is open). AI = the AI breakdown sheet. */
+enum class Overlay { NONE, MENU, BACKLOG, SAVE, LOAD, CONFIG, AI }
 
 /**
  * Drives one play session: runs [Wa2Engine] from the frame loop ([tick]), owns typewriter/novel-page
@@ -259,6 +259,7 @@ class GameSession(
     /** Tap on the stage interior: restore window / stop skip / finish reveal / next segment / advance. */
     fun onTap() {
         when {
+            overlay != Overlay.NONE -> {} // taps never advance the script under an overlay
             windowHidden -> windowHidden = false
             skipToggle -> skipToggle = false
             autoMode -> autoMode = false
@@ -319,6 +320,17 @@ class GameSession(
     fun backlog(): List<LineRef> = engine.backlog.toList()
 
     fun resolve(ref: LineRef): DialogueLine = engine.resolve(ref)
+
+    /**
+     * Up to [n] backlog lines before [line] (oldest first), for AI context. The current line is the
+     * last backlog entry, so lines opened from the backlog get their own preceding lines.
+     */
+    fun contextBefore(line: DialogueLine, n: Int = 3): List<DialogueLine> {
+        val bl = engine.backlog
+        val idx = bl.lastIndexOf(line.ref)
+        val end = if (idx >= 0) idx else bl.size
+        return bl.subList(maxOf(0, end - n), end).map(::resolve)
+    }
 
     // ------------------------------------------------------------------------- save / load
 

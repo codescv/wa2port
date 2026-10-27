@@ -13,6 +13,7 @@ import com.wa2port.android.render.MoviePlayer
 import com.wa2port.android.render.StageCanvas
 import com.wa2port.android.render.StageController
 import com.wa2port.android.render.rememberStageController
+import com.wa2port.core.ai.GlyphHit
 import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.VoiceRef
@@ -52,6 +53,15 @@ class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
         glyphs.drawLayout(canvas, l, lang, x, y, color, visibleGlyphs)
         return l.height
+    }
+
+    override fun glyphIndexAt(
+        rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Boolean,
+        localX: Float, localY: Float, visibleGlyphs: Int,
+    ): Int {
+        val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
+        val boxes = l.glyphs.map { GlyphHit.Box(it.index, it.x, it.top, it.advance) }
+        return GlyphHit.glyphIndexAt(boxes, sizePx * glyphs.lineSpacing, sizePx, localX, localY, visibleGlyphs)
     }
 }
 

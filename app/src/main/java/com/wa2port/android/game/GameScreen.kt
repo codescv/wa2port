@@ -49,6 +49,7 @@ import com.wa2port.android.ui.ConfigPanel
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadPanel
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.core.ai.JpSentence
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
 import kotlinx.coroutines.delay
@@ -127,6 +128,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     BackHandler {
         when {
             session.movie != null -> session.movieFinished()
+            vm.ai.breakdown != null -> vm.ai.close(session)
             session.overlay != Overlay.NONE -> session.overlay = Overlay.NONE
             session.windowHidden -> session.windowHidden = false
             else -> session.overlay = Overlay.MENU
@@ -149,6 +151,13 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         add(QuickAction("AUTO", session.autoMode, act { session.toggleAuto() }))
         add(QuickAction("SKIP", session.skipToggle, act { session.toggleSkip() }))
         add(QuickAction("LOG", false, act { session.overlay = Overlay.BACKLOG }))
+        // AI breakdown of the current line (stacks above whatever overlay is open).
+        add(
+            QuickAction("✨ AI", vm.ai.breakdown != null, act {
+                val l = session.line
+                if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
+            }),
+        )
         if (!session.inReplayMode) {
             add(QuickAction("Q.SAVE", false, act { scope.launch { session.quickSave() } }))
             add(QuickAction("Q.LOAD", false, act { scope.launch { session.quickLoad() } }))
@@ -201,9 +210,11 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val handle = session.backend.rememberStageHandle()
         SideEffect { session.stageHandle = handle }
 
+        // Geometry of the JP block drawn by AdvWindow, for tap-to-analyze.
+        val advHit = remember(session) { AdvHitBox() }
         val gestureHandler = remember(session) {
             StageGestureHandler(
-                onTap = { session.onTap() },
+                onTap = { p -> if (!tryAiTap(vm, session, advHit, p)) session.onTap() },
                 onLongPressStart = { if (!session.windowHidden && session.choices.isEmpty()) session.holdSkip(true) },
                 onLongPressEnd = { session.holdSkip(false) },
                 onSwipeUp = { session.overlay = Overlay.BACKLOG },
@@ -226,7 +237,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                         waiting, opacity, textScale, stageWpx, stageHpx, onOverflow = { session.trimPage() }, modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    AdvWindow(painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale, Modifier.fillMaxSize())
+                    AdvWindow(painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale, Modifier.fillMaxSize(), advHit)
                 }
             }
             // Gesture layer above text, below interactive controls.
@@ -244,10 +255,14 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale) - 0.015f),
                 )
             }
-            // Mode indicators.
-            if (session.skipping || session.autoMode) {
+            // Mode indicators (+ ✨ 点词 while tap-to-analyze changes the meaning of taps on JP text).
+            val modes = listOfNotNull(
+                if (session.skipping) "SKIP ▶▶" else if (session.autoMode) "AUTO ▶" else null,
+                if (settings.aiTapToAnalyze && !novel) "✨ 点词" else null,
+            )
+            if (modes.isNotEmpty()) {
                 Text(
-                    if (session.skipping) "SKIP ▶▶" else "AUTO ▶",
+                    modes.joinToString("  "),
                     color = Wa2Colors.Accent, fontSize = 13.sp,
                     modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
                         .background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
@@ -282,17 +297,9 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             BarPlacement.OVERLAY -> {}
         }
 
-        session.toast?.let {
-            Text(
-                it, color = Wa2Colors.Text, fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp)
-                    .background(Color(0xCC101A30), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-        }
-
         // ---------------------------------------------------------------- overlays
         when (session.overlay) {
-            Overlay.NONE -> {}
+            Overlay.NONE, Overlay.AI -> {}
             Overlay.MENU -> GameMenu(
                 scene = session.engine.scene,
                 inReplayMode = session.inReplayMode,
@@ -309,6 +316,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     painter, entries, session::resolve, settings.lang, settings.textScaleFactor,
                     onReplay = { ref -> ref.voice?.let { session.audio.replayVoice(it) } },
                     onClose = { session.overlay = Overlay.NONE },
+                    onAi = { ref -> vm.ai.open(session, session.resolve(ref), null, Overlay.BACKLOG) },
                 )
             }
             Overlay.SAVE -> {
@@ -325,12 +333,59 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 }, onClose = { session.overlay = Overlay.NONE })
             }
             Overlay.CONFIG -> Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-                ConfigPanel(settings, vm::updateSettings) { session.overlay = Overlay.NONE }
+                ConfigPanel(settings, vm::updateSettings, onClose = { session.overlay = Overlay.NONE }, ai = vm.ai, session = session)
             }
+        }
+
+        // AI breakdown sheet: above the game and any overlay (BACKLOG / MENU / CONFIG), full screen
+        // incl. the letterbox quick bar; it consumes all input underneath.
+        vm.ai.breakdown?.let { st ->
+            AiBreakdownOverlay(
+                state = st,
+                ai = vm.ai,
+                persona = vm.ai.persona,
+                onPersona = { id ->
+                    vm.updateSettings { it.copy(aiPersonaId = id) }
+                    session.toast = "人设已切换，后续追问生效 Persona switched"
+                },
+                onReplayVoice = st.voice?.let { v -> { session.audio.replayVoice(v) } },
+                onOpenSettings = {
+                    vm.ai.close(session)
+                    session.overlay = Overlay.CONFIG
+                },
+                onClose = { vm.ai.close(session) },
+            )
+        }
+
+        // Toasts stay visible above overlays and the AI sheet (e.g. "Saved", persona switched).
+        session.toast?.let {
+            Text(
+                it, color = Wa2Colors.Text, fontSize = 14.sp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp)
+                    .background(Color(0xCC101A30), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
+            )
         }
 
         session.movie?.let { stem ->
             session.backend.Movie(stem, onFinished = { session.movieFinished() }, modifier = Modifier.fillMaxSize())
         }
     }
+}
+
+/**
+ * Tap-to-analyze (ADV, opt-in): when the tap lands on a revealed Japanese glyph, opens the AI
+ * breakdown focused on that character and returns true; otherwise the tap keeps its normal meaning.
+ * Reads settings at call time (the gesture handler outlives recompositions).
+ */
+private fun tryAiTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, p: Offset): Boolean {
+    val s = vm.settings
+    val line = session.line ?: return false
+    val novel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
+    if (!s.aiTapToAnalyze || novel || session.windowHidden || session.choices.isNotEmpty() || !session.revealDone) return false
+    if (session.skipToggle || session.autoMode || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
+    val g = advHit.glyphAt(session.backend.text, p)
+    if (g < 0) return false
+    val charIndex = JpSentence.fromRich(line.jp, session.engine.decoder).charIndexOfGlyph(g)
+    vm.ai.open(session, line, charIndex, Overlay.NONE)
+    return true
 }

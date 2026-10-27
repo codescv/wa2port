@@ -10,9 +10,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
-/** Callbacks for the stage gesture layer. */
+/** Callbacks for the stage gesture layer. [onTap] receives the down position (gesture-node px). */
 class StageGestureHandler(
-    val onTap: () -> Unit,
+    val onTap: (Offset) -> Unit,
     val onLongPressStart: () -> Unit,
     val onLongPressEnd: () -> Unit,
     val onSwipeUp: () -> Unit,
@@ -68,7 +68,7 @@ fun Modifier.stageGestures(handler: StageGestureHandler, isNearEdge: (Offset) ->
                 longPress -> handler.onLongPressEnd()
                 swiped -> {}
                 maxPointers >= 2 && duration < TWO_FINGER_TAP_MS -> handler.onTwoFingerTap()
-                maxPointers == 1 && !moved -> handler.onTap()
+                maxPointers == 1 && !moved -> handler.onTap(start)
             }
         }
     }
