@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -129,7 +130,13 @@ fun BacklogOverlay(
 ) {
     val density = LocalDensity.current
     val state = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size - 1).coerceAtLeast(0))
-    Column(Modifier.fillMaxSize().background(Color(0xF0060B18)).padding(horizontal = 24.dp, vertical = 8.dp)) {
+    Column(
+        Modifier.fillMaxSize().background(Color(0xF0060B18))
+            // Taps on empty margins must not fall through to the stage (no MOVE consumption, so the
+            // list still scrolls).
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+    ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("回想 Backlog  バックログ", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
             CloseButton(onClose)

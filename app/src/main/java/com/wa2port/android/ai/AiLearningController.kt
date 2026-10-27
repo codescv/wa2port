@@ -319,11 +319,15 @@ class AiLearningController(
         st.focusFromSentence++
     }
 
-    /** Tap on a chunk chip / card. */
-    fun selectChunk(chunk: SemanticChunk) {
+    /**
+     * Tap on a chunk chip / card. [scrollToCard] (chunk strip in the summary) also asks the detail
+     * pane to scroll the matching card into view; tapping the card itself leaves the list alone.
+     */
+    fun selectChunk(chunk: SemanticChunk, scrollToCard: Boolean = false) {
         val st = breakdown ?: return
         st.selectedChunkId = chunk.id
         st.focusCharIndex = if (chunk.span.isEmpty) null else chunk.span.start
+        if (scrollToCard) st.focusFromSentence++
     }
 
     // ------------------------------------------------------------------------------- follow-up

@@ -4,15 +4,15 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -52,7 +52,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -102,8 +101,9 @@ private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换�
  * a left pane (interactive furigana sentence, ▶ 原声, badges, AI / literal / CK-GAL translations,
  * chunk strip) and a right pane (📘 课本标准 vs 🔥 口语演变 chunk cards with formality bar, vocab &
  * grammar, follow-up Q&A). Narrow screens stack everything with the sentence pinned on top.
- * Character ↔ chunk selection is local state (0 ms, no network). The root consumes all pointer
- * input so nothing leaks to the stage / backlog underneath.
+ * Character ↔ chunk selection is local state (0 ms, no network). The root is an indication-less
+ * click target so taps never leak to the stage / backlog underneath, while drags still reach the
+ * scrollable panes.
  */
 @Composable
 fun AiBreakdownOverlay(
@@ -119,16 +119,10 @@ fun AiBreakdownOverlay(
         Modifier
             .fillMaxSize()
             .background(SCRIM)
-            // Swallow every pointer event that children did not use (taps, swipes) — B2.
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    do {
-                        val e = awaitPointerEvent()
-                        e.changes.forEach { it.consume() }
-                    } while (e.changes.any { it.pressed })
-                }
-            },
+            // Block taps from reaching the stage / backlog underneath (B2) without consuming MOVE
+            // events: a root that consumed every change on the Main pass made the children's
+            // scrollables abort during touch-slop detection, so scrolling only worked on fast flicks.
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
     ) {
         Column(
             Modifier.align(Alignment.Center).widthIn(max = 1100.dp).fillMaxSize()
@@ -302,7 +296,8 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val active = state.activeChunk
                 expl.chunks.forEach { c ->
-                    Chip(c.surface, selected = active?.id == c.id, color = if (c.isEvolved) EVOLVED else Wa2Colors.Accent) { ai.selectChunk(c) }
+                    // From the chunk strip: also scroll the matching card into view in the detail pane.
+                    Chip(c.surface, selected = active?.id == c.id, color = if (c.isEvolved) EVOLVED else Wa2Colors.Accent) { ai.selectChunk(c, scrollToCard = true) }
                 }
             }
         }
@@ -369,7 +364,11 @@ private fun ErrorCard(state: AiBreakdownState, err: AiStatus.Error, ai: AiLearni
 
 // ------------------------------------------------------------------------------------- detail pane
 
-/** Chunk cards + vocab + grammar + follow-up, with the follow-up input pinned at the bottom. */
+/**
+ * Chunk cards + vocab + grammar + follow-up Q&A, ending with the follow-up input. Everything lives
+ * in one full-height [LazyColumn] so the whole pane scrolls (a pinned input footer used to eat about
+ * a third of a landscape phone's pane height, where swipes did nothing).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DetailPane(
@@ -384,37 +383,47 @@ private fun DetailPane(
     val scope = rememberCoroutineScope()
     val expl = state.explanation
     val headerCount = if (header != null) 1 else 0
-    // Scroll the active card into view when the focus changes from the sentence header.
+    // Hoisted out of the lazy item so a draft survives the input scrolling out of composition.
+    var input by remember(state) { mutableStateOf("") }
+    // Scroll the active card into view when the focus changes from the sentence header / chunk strip.
     LaunchedEffect(state.focusFromSentence) {
         if (state.focusFromSentence == 0) return@LaunchedEffect
         val e = state.explanation ?: return@LaunchedEffect
         val active = state.activeChunk ?: return@LaunchedEffect
         val idx = e.chunks.indexOfFirst { it.id == active.id }
-        if (idx >= 0 && header == null) listState.animateScrollToItem(headerCount + 1 + idx)
+        // Items before the cards: [header], [error], "chunks-title".
+        val errorCount = if (state.status is AiStatus.Error) 1 else 0
+        if (idx >= 0 && header == null) listState.animateScrollToItem(headerCount + errorCount + 1 + idx)
     }
-    Column(modifier) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
-            (state.status as? AiStatus.Error)?.let { err -> item(key = "error") { ErrorCard(state, err, ai, onOpenSettings) } }
-            if (expl != null) {
-                item(key = "chunks-title") { SectionHeader("逐块解析 · 📘 课本标准 vs 🔥 口语演变") }
-                val active = state.activeChunk
-                expl.chunks.forEachIndexed { i, c ->
-                    item(key = "chunk-${c.id}") { ChunkCard(i, c, expl, active?.id == c.id) { ai.selectChunk(c) } }
-                }
-                if (expl.vocab.isNotEmpty()) {
-                    item(key = "vocab-title") { SectionHeader("词汇 Vocab (${expl.vocab.size})") }
-                    expl.vocab.forEach { v -> item(key = "vocab-${v.id}") { VocabCard(v) } }
-                }
-                if (expl.grammar.isNotEmpty()) {
-                    item(key = "grammar-title") { SectionHeader("语法 Grammar (${expl.grammar.size})") }
-                    expl.grammar.forEach { g -> item(key = "grammar-${g.id}") { GrammarCard(g, expl) } }
-                }
-                followUpItems(state, persona)
-            }
-        }
+    LazyColumn(
+        modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
+        (state.status as? AiStatus.Error)?.let { err -> item(key = "error") { ErrorCard(state, err, ai, onOpenSettings) } }
         if (expl != null) {
-            FollowUpInput(state, ai) { scope.launch { listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) } }
+            item(key = "chunks-title") { SectionHeader("逐块解析 · 📘 课本标准 vs 🔥 口语演变") }
+            val active = state.activeChunk
+            expl.chunks.forEachIndexed { i, c ->
+                item(key = "chunk-${c.id}") { ChunkCard(i, c, expl, active?.id == c.id) { ai.selectChunk(c) } }
+            }
+            if (expl.vocab.isNotEmpty()) {
+                item(key = "vocab-title") { SectionHeader("词汇 Vocab (${expl.vocab.size})") }
+                expl.vocab.forEach { v -> item(key = "vocab-${v.id}") { VocabCard(v) } }
+            }
+            if (expl.grammar.isNotEmpty()) {
+                item(key = "grammar-title") { SectionHeader("语法 Grammar (${expl.grammar.size})") }
+                expl.grammar.forEach { g -> item(key = "grammar-${g.id}") { GrammarCard(g, expl) } }
+            }
+            followUpItems(state, persona)
+            item(key = "followup-input") {
+                FollowUpInput(state, ai, input, onInput = { input = it }) {
+                    // Scrolling to the last item clamps at the end of the list: newest Q&A + input.
+                    scope.launch { listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+                }
+            }
         }
     }
 }
@@ -609,18 +618,18 @@ private fun markdownLight(text: String): AnnotatedString = buildAnnotatedString 
     }
 }
 
+/** Quick-question chips + text field; the draft [input] is owned by [DetailPane]. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FollowUpInput(state: AiBreakdownState, ai: AiLearningController, onSent: () -> Unit) {
-    var input by remember(state) { mutableStateOf("") }
+private fun FollowUpInput(state: AiBreakdownState, ai: AiLearningController, input: String, onInput: (String) -> Unit, onSent: () -> Unit) {
     LaunchedEffect(state.failedQuestion) {
         val f = state.failedQuestion
-        if (f != null && input.isBlank()) input = f
+        if (f != null && input.isBlank()) onInput(f)
     }
     fun send(q: String) {
         if (q.isBlank() || state.followUpPending) return
         ai.askFollowUp(q)
-        if (state.pendingQuestion != null) input = ""
+        if (state.pendingQuestion != null) onInput("")
         onSent()
     }
     Column(Modifier.fillMaxWidth().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -630,7 +639,7 @@ private fun FollowUpInput(state: AiBreakdownState, ai: AiLearningController, onS
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = input,
-                onValueChange = { input = it },
+                onValueChange = onInput,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 placeholder = { Text("向${ai.persona.shortName}追问… Ask a follow-up", fontSize = 13.sp) },

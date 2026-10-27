@@ -8,6 +8,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
 
 /** Callbacks for the stage gesture layer. [onTap] receives the down position (gesture-node px). */
@@ -36,32 +37,38 @@ fun Modifier.stageGestures(handler: StageGestureHandler, isNearEdge: (Offset) ->
             var moved = false
             var longPress = false
             var swiped = false
-            while (true) {
-                val waitingForLongPress = !longPress && !moved && maxPointers == 1
-                val event: PointerEvent? = if (waitingForLongPress) {
-                    val remaining = LONG_PRESS_MS - (SystemClock.uptimeMillis() - t0)
-                    if (remaining <= 0) null else withTimeoutOrNull(remaining) { awaitPointerEvent() }
-                } else {
-                    awaitPointerEvent()
-                }
-                if (event == null) {
-                    longPress = true
-                    handler.onLongPressStart()
-                    continue
-                }
-                val pressed = event.changes.count { it.pressed }
-                if (pressed > maxPointers) maxPointers = pressed
-                val primary = event.changes.firstOrNull { it.id == down.id }
-                if (primary != null && primary.pressed) {
-                    val d = primary.position - start
-                    if (d.getDistance() > viewConfiguration.touchSlop) moved = true
-                    if (!edge && !longPress && !swiped && maxPointers == 1 && -d.y > swipeDistance && abs(d.y) > abs(d.x) * 1.5f) {
-                        swiped = true
-                        handler.onSwipeUp()
+            try {
+                while (true) {
+                    val waitingForLongPress = !longPress && !moved && maxPointers == 1
+                    val event: PointerEvent? = if (waitingForLongPress) {
+                        val remaining = LONG_PRESS_MS - (SystemClock.uptimeMillis() - t0)
+                        if (remaining <= 0) null else withTimeoutOrNull(remaining) { awaitPointerEvent() }
+                    } else {
+                        awaitPointerEvent()
                     }
+                    if (event == null) {
+                        longPress = true
+                        handler.onLongPressStart()
+                        continue
+                    }
+                    val pressed = event.changes.count { it.pressed }
+                    if (pressed > maxPointers) maxPointers = pressed
+                    val primary = event.changes.firstOrNull { it.id == down.id }
+                    if (primary != null && primary.pressed) {
+                        val d = primary.position - start
+                        if (d.getDistance() > viewConfiguration.touchSlop) moved = true
+                        if (!edge && !longPress && !swiped && maxPointers == 1 && -d.y > swipeDistance && abs(d.y) > abs(d.x) * 1.5f) {
+                            swiped = true
+                            handler.onSwipeUp()
+                        }
+                    }
+                    event.changes.forEach { it.consume() }
+                    if (pressed == 0) break
                 }
-                event.changes.forEach { it.consume() }
-                if (pressed == 0) break
+            } catch (e: CancellationException) {
+                // The layer is detached mid-gesture (e.g. an overlay opened): never leave fast skip on.
+                if (longPress) handler.onLongPressEnd()
+                throw e
             }
             val duration = SystemClock.uptimeMillis() - t0
             when {

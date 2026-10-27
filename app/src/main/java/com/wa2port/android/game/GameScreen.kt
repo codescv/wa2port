@@ -240,13 +240,21 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     AdvWindow(painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale, Modifier.fillMaxSize(), advHit)
                 }
             }
-            // Gesture layer above text, below interactive controls.
+            // Gesture layer above text, below interactive controls. Inert while any overlay or the AI
+            // breakdown is open, so nothing drawn above it can leak taps / swipes into the stage.
+            val stageInteractive = session.overlay == Overlay.NONE && vm.ai.breakdown == null
             Box(
-                Modifier.fillMaxSize().stageGestures(gestureHandler) { p ->
-                    val x = p.x + stageOrigin.x
-                    val y = p.y + stageOrigin.y
-                    x < edgeSide || x > screenWpx - edgeSide || y < edgeTop || y > screenHpx - edgeBottom
-                },
+                Modifier.fillMaxSize().then(
+                    if (stageInteractive) {
+                        Modifier.stageGestures(gestureHandler) { p ->
+                            val x = p.x + stageOrigin.x
+                            val y = p.y + stageOrigin.y
+                            x < edgeSide || x > screenWpx - edgeSide || y < edgeTop || y > screenHpx - edgeBottom
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
             )
             if (session.choices.isNotEmpty() && !session.windowHidden) {
                 ChoiceCards(
