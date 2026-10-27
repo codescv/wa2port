@@ -129,8 +129,22 @@ class AppUpdaterTest {
     }
 
     @Test
+    fun parsesReleaseList() {
+        val list = """[
+            {"tag_name":"v2.0.0","draft":true},
+            {"tag_name":"v1.4.0-beta.1","prerelease":true},
+            {"tag_name":"v1.3.0","assets":[{"name":"wa2port-1.3.0-release.apk","browser_download_url":"https://h/a.apk","size":9}]},
+            {"tag_name":"v1.2.0"}
+        ]"""
+        val r = ReleaseJson.parse(list)
+        assertEquals("v1.3.0", r.tagName)
+        assertEquals("wa2port-1.3.0-release.apk", r.apkAsset!!.name)
+        assertEquals("v1.4.0-beta.1", ReleaseJson.parse("""[{"tag_name":"v1.4.0-beta.1","prerelease":true}]""").tagName)
+    }
+
+    @Test
     fun rejectsInvalidPayload() {
-        listOf("", "<html>rate limited</html>", "[]", """{"name":"x"}""", """{"tag_name":"  "}""").forEach {
+        listOf("", "<html>rate limited</html>", "[]", "[1]", "\"v1\"", """[{"tag_name":"v9","draft":true}]""", """{"name":"x"}""", """{"tag_name":"  "}""").forEach {
             val e = assertThrows(UpdateException::class.java) { ReleaseJson.parse(it) }
             assertEquals(UpdateErrorCode.INVALID_RESPONSE, e.code, it)
         }
@@ -211,6 +225,7 @@ class AppUpdaterTest {
             send(ex, 403, "{\"message\":\"API rate limit exceeded\"}".toByteArray())
         }
         a.createContext("/toomany") { ex -> record(seenA, ex); send(ex, 429, ByteArray(0)) }
+        a.createContext("/bigerror") { ex -> record(seenA, ex); send(ex, 500, ("upstream exploded " + "x".repeat(20_000)).toByteArray()) }
         a.createContext("/huge") { ex -> record(seenA, ex); send(ex, 200, ByteArray(3 * 1024 * 1024) { 'a'.code.toByte() }) }
         // 302 (relative) → 302 (absolute, cross-host) → server B.
         a.createContext("/dl/start") { ex -> record(seenA, ex); redirect(ex, 302, "/dl/hop2") }
@@ -369,6 +384,10 @@ class AppUpdaterTest {
         }
         fails("$baseA/ratelimit").let { assertEquals(403, it.httpStatus); assertTrue(it.message!!.contains("限流")) }
         fails("$baseA/toomany").let { assertEquals(429, it.httpStatus); assertTrue(it.message!!.contains("限流")) }
+        fails("$baseA/bigerror").let {
+            assertEquals(500, it.httpStatus)
+            assertTrue(it.message!!.contains("upstream exploded"), it.message) // body prefix kept (N2)
+        }
         assertEquals(UpdateErrorCode.INVALID_RESPONSE, fails("$baseA/huge").code)
         assertEquals(UpdateErrorCode.INVALID_RESPONSE, fails("$baseA/html-type").code)
         assertEquals(UpdateErrorCode.INVALID_ARGUMENT, fails("ftp://127.0.0.1/x").code)

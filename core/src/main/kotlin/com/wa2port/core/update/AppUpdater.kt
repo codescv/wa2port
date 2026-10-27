@@ -288,7 +288,7 @@ class AppUpdater(
 
     /** Builds the [UpdateException] for a non-success [status] (GitHub rate limit / 404 get friendly text). */
     private fun httpError(conn: HttpURLConnection, status: Int, what: String): UpdateException {
-        val body = runCatching { conn.errorStream?.use { readLimited(it, 4096, null) } }.getOrNull().orEmpty()
+        val body = runCatching { conn.errorStream?.use { readPrefix(it, 4096) } }.getOrNull().orEmpty()
         val rateLimited = status == 429 ||
             (status == 403 && (conn.getHeaderField("X-RateLimit-Remaining")?.trim() == "0" || body.contains("rate limit", ignoreCase = true)))
         val msg = when {
@@ -350,6 +350,13 @@ class AppUpdater(
             }
             return out.toString(Charsets.UTF_8.name())
         }
+    }
+
+    /** First [limit] bytes of [input] as UTF-8 (the rest is ignored). */
+    private fun readPrefix(input: InputStream, limit: Int): String {
+        val buf = ByteArray(limit)
+        val n = readFully(input, buf)
+        return String(buf, 0, n, Charsets.UTF_8)
     }
 
     private fun readFully(input: InputStream, buf: ByteArray): Int {

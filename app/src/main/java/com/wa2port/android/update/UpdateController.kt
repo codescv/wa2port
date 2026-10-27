@@ -94,6 +94,9 @@ class UpdateController(
     /** Queries the configured endpoint. No-op while checking / downloading. [silent] = failures → Idle. */
     fun checkForUpdates(silent: Boolean = false) {
         if (busy) return
+        // A ready-to-install APK must survive a failed / cancelled re-check.
+        val prevReady = state as? UpdateState.Downloaded
+        lastReady = prevReady
         val gen = ++generation
         val token = CancelToken().also { cancel = it }
         val endpoint = UpdateEndpointConfig(settings().updateUrl)
@@ -114,7 +117,15 @@ class UpdateController(
                 if (gen == generation) state = next
             } catch (e: UpdateException) {
                 if (gen != generation) return@launch
-                state = if (silent || e.code == UpdateErrorCode.CANCELLED) UpdateState.Idle else UpdateState.Error(e.message ?: e.code.name)
+                val cancelled = e.code == UpdateErrorCode.CANCELLED
+                state = when {
+                    prevReady != null && prevReady.apkFile.isFile -> {
+                        if (!silent && !cancelled) toast("检查更新失败 Check failed: ${e.message ?: e.code.name}")
+                        prevReady
+                    }
+                    silent || cancelled -> UpdateState.Idle
+                    else -> UpdateState.Error(e.message ?: e.code.name)
+                }
             }
         }
     }
@@ -152,7 +163,7 @@ class UpdateController(
         }
     }
 
-    /** Cancels a running check (→ Idle) or download (→ Available). */
+    /** Cancels a running check (→ Idle, or back to a ready download) or download (→ Available). */
     fun cancelDownload() {
         val s = state
         generation++
@@ -160,7 +171,7 @@ class UpdateController(
         job?.cancel()
         state = when (s) {
             is UpdateState.Downloading -> UpdateState.Available(s.latest)
-            UpdateState.Checking -> UpdateState.Idle
+            UpdateState.Checking -> lastReady?.takeIf { it.apkFile.isFile } ?: UpdateState.Idle
             else -> s
         }
     }
@@ -216,6 +227,13 @@ class UpdateController(
     }
 
     // ------------------------------------------------------------------ internals
+
+    /** The Downloaded state a running re-check started from (restored if that check is cancelled). */
+    private var lastReady: UpdateState.Downloaded? = null
+
+    private fun toast(msg: String) {
+        Toast.makeText(app, msg, Toast.LENGTH_LONG).show()
+    }
 
     private fun apkFileFor(release: ReleaseInfo): File =
         File(updatesDir, "wa2port-${release.version.replace(UNSAFE_CHARS, "_")}.apk")
