@@ -63,7 +63,7 @@ fun AiSettingsSection(
     fun set(f: (AiProviderSettings) -> AiProviderSettings) = onChange { it.copy(ai = f(it.ai)) }
     LaunchedEffect(Unit) { ai.refreshCacheStats() }
 
-    SectionTitle("AI 学习 AI Learning · ことり")
+    SectionTitle("AI 学习 AI Learning")
     OptionRow("服务 Provider") {
         Segmented(
             listOf(AiProviderSettings.PROVIDER_GEMINI_API to "Gemini API Key", AiProviderSettings.PROVIDER_VERTEX_AI to "Vertex AI"),
@@ -152,13 +152,26 @@ fun AiSettingsSection(
     }
     AiTextField("自定义模型 Custom model", p.model, { v -> set { it.copy(model = v.trim()) } }, placeholder = AiProviderSettings.DEFAULT_MODEL)
 
+    val persona = ai.persona
     OptionRow("家教人设 Persona") {
         Segmented(
-            AiPersonaSettings.PRESETS.map { it.id to it.shortName },
-            AiPersonaSettings.byId(settings.aiPersonaId).id, { v -> onChange { it.copy(aiPersonaId = v) } },
+            ai.personas.map { p -> p.id to (if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName) },
+            persona.id, { v -> onChange { it.copy(aiPersonaId = v) } },
         )
     }
-    Text(AiPersonaSettings.byId(settings.aiPersonaId).soul.substringBefore('。') + "。", color = Wa2Colors.TextDim, fontSize = 12.sp)
+    if (persona.id == AiPersonaSettings.ID_CUSTOM) {
+        // User-defined tutor: name + soul (blank → defaults, see AiPersonaSettings.custom).
+        AiTextField(
+            "自定义名称 Custom name", settings.aiCustomPersonaName, { v -> onChange { it.copy(aiCustomPersonaName = v) } },
+            placeholder = AiPersonaSettings.DEFAULT_CUSTOM_NAME,
+        )
+        DraftField(
+            "自定义 Soul / 人设 Custom soul", settings.aiCustomPersonaSoul, AiPersonaSettings.DEFAULT_CUSTOM_SOUL,
+            { v -> onChange { it.copy(aiCustomPersonaSoul = v) } },
+        )
+    } else {
+        Text(persona.soul, color = Wa2Colors.TextDim, fontSize = 12.sp)
+    }
 
     OptionRow("点词解析 Tap-to-analyze") {
         Segmented(listOf(false to "关 Off", true to "开 On（ADV 日文列）"), settings.aiTapToAnalyze, { v -> onChange { it.copy(aiTapToAnalyze = v) } })

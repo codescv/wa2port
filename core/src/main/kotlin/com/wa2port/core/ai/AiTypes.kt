@@ -172,10 +172,17 @@ data class AiPersonaSettings(val id: String, val name: String, val soul: String)
         /** Appended to every soul by the prompt builder. */
         const val ACCURACY_CLAUSE = "无论何种人设，日语语法与词汇解释必须准确；用简体中文回答；日文原文逐字引用。"
 
-        val KOTORI = AiPersonaSettings(
-            "kotori", "小鳥（ことり）",
-            "温柔耐心的日语家教小鸟。语气亲切、鼓励学习者，常用「〜ですね」「一緒に見てみましょう」这类表达。解释先给结论再给例句，简洁。",
-        )
+        /** Id of the user-customisable persona (name + soul edited in settings). */
+        const val ID_CUSTOM = "custom"
+        const val DEFAULT_CUSTOM_NAME = "小鳥"
+        const val DEFAULT_CUSTOM_SOUL =
+            "温柔耐心的日语家教。语气亲切、鼓励学习者，常用「〜ですね」「一緒に見てみましょう」这类表达。解释先给结论再给例句，简洁。"
+
+        /** The custom persona with its default name/soul. */
+        val CUSTOM = AiPersonaSettings(ID_CUSTOM, DEFAULT_CUSTOM_NAME, DEFAULT_CUSTOM_SOUL)
+
+        /** Legacy alias: the former hardcoded Kotori preset is now the default custom persona. */
+        val KOTORI = CUSTOM
         val KAZUSA = AiPersonaSettings(
             "kazusa", "冬马和纱",
             "冬马和纱。口吻直率、略带傲娇、话少，偶尔用钢琴/音乐作比喻，会说「…別に」「ちゃんと聞いてる？」。讲解虽冷淡但一针见血、准确。",
@@ -184,9 +191,26 @@ data class AiPersonaSettings(val id: String, val name: String, val soul: String)
             "setsuna", "小木曾雪菜",
             "小木曾雪菜。开朗体贴、爱笑，会鼓励人、偶尔提到唱歌和社团；用词温和，像学姐在旁边陪着学习。",
         )
-        val PRESETS = listOf(KOTORI, KAZUSA, SETSUNA)
+        val PRESETS = listOf(KAZUSA, SETSUNA, CUSTOM)
 
-        fun byId(id: String?): AiPersonaSettings = PRESETS.firstOrNull { it.id == id } ?: KOTORI
+        /** Custom persona with [name]/[soul]; blank values fall back to the defaults. */
+        fun custom(name: String, soul: String): AiPersonaSettings = AiPersonaSettings(
+            ID_CUSTOM,
+            name.trim().ifEmpty { DEFAULT_CUSTOM_NAME },
+            soul.trim().ifEmpty { DEFAULT_CUSTOM_SOUL },
+        )
+
+        /**
+         * Persona for a stored [id]: the built-in characters by id; `custom`, legacy `kotori`,
+         * unknown or null ids all resolve to the user's custom persona.
+         */
+        fun resolve(id: String?, customName: String = "", customSoul: String = ""): AiPersonaSettings = when (id) {
+            KAZUSA.id -> KAZUSA
+            SETSUNA.id -> SETSUNA
+            else -> custom(customName, customSoul)
+        }
+
+        fun byId(id: String?): AiPersonaSettings = resolve(id)
     }
 }
 

@@ -57,12 +57,14 @@ data class Settings(
     val importTreeUri: String? = null,
     /** AI learning provider (Gemini API / Vertex AI, custom base URL, model …). Secrets stay in app-private storage. */
     val ai: AiProviderSettings = AiProviderSettings(),
-    /** Follow-up tutor persona ([AiPersonaSettings.PRESETS] id). */
-    val aiPersonaId: String = AiPersonaSettings.KOTORI.id,
+    /** Follow-up tutor persona id: `kazusa` / `setsuna` / `custom` (legacy / unknown ids → custom). */
+    val aiPersonaId: String = AiPersonaSettings.CUSTOM.id,
+    /** Display name of the user-defined persona (blank → [AiPersonaSettings.DEFAULT_CUSTOM_NAME]). */
+    val aiCustomPersonaName: String = AiPersonaSettings.DEFAULT_CUSTOM_NAME,
+    /** Soul (character / tone prompt) of the user-defined persona (blank → [AiPersonaSettings.DEFAULT_CUSTOM_SOUL]). */
+    val aiCustomPersonaSoul: String = AiPersonaSettings.DEFAULT_CUSTOM_SOUL,
     /** ADV: tapping a Japanese glyph opens the AI breakdown instead of advancing (off by default). */
     val aiTapToAnalyze: Boolean = false,
-    /** Update source: "" = GitHub; ends with "/" = proxy prefix; else full release-JSON URL. */
-    val updateUrl: String = "",
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 

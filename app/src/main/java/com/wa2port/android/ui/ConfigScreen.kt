@@ -130,7 +130,7 @@ fun ConfigPanel(
             LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
 
             if (ai != null) AiSettingsSection(settings, onChange, ai, session)
-            if (update != null) UpdateSettingsSection(settings, onChange, update)
+            if (update != null) UpdateSettingsSection(update)
         }
     }
 }

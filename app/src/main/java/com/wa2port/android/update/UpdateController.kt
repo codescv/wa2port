@@ -13,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
-import com.wa2port.android.data.Settings
 import com.wa2port.core.ai.CancelToken
 import com.wa2port.core.update.AppUpdater
 import com.wa2port.core.update.ReleaseInfo
@@ -51,7 +50,6 @@ sealed interface UpdateState {
  */
 class UpdateController(
     private val app: Application,
-    private val settings: () -> Settings,
     private val scope: CoroutineScope,
     private val updater: AppUpdater = AppUpdater(),
 ) {
@@ -91,7 +89,7 @@ class UpdateController(
         job = scope.launch { restoreDownloaded() }
     }
 
-    /** Queries the configured endpoint. No-op while checking / downloading. [silent] = failures → Idle. */
+    /** Queries the GitHub releases API. No-op while checking / downloading. [silent] = failures → Idle. */
     fun checkForUpdates(silent: Boolean = false) {
         if (busy) return
         // A ready-to-install APK must survive a failed / cancelled re-check.
@@ -99,7 +97,7 @@ class UpdateController(
         lastReady = prevReady
         val gen = ++generation
         val token = CancelToken().also { cancel = it }
-        val endpoint = UpdateEndpointConfig(settings().updateUrl)
+        val endpoint = UpdateEndpointConfig()
         state = UpdateState.Checking
         val prev = job
         job = scope.launch {
@@ -174,11 +172,6 @@ class UpdateController(
             UpdateState.Checking -> lastReady?.takeIf { it.apkFile.isFile } ?: UpdateState.Idle
             else -> s
         }
-    }
-
-    /** The update source changed: a stale "up to date" / error no longer applies. */
-    fun onEndpointChanged() {
-        if (state is UpdateState.UpToDate || state is UpdateState.Error) state = UpdateState.Idle
     }
 
     /**

@@ -76,7 +76,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val ai = AiLearningController(File(app.filesDir, "ai_cache"), { settings }, viewModelScope)
 
     /** In-app update check / APK download (manual only); APKs live in `cacheDir/updates`. */
-    val update = UpdateController(app, { settings }, viewModelScope)
+    val update = UpdateController(app, viewModelScope)
 
     init {
         rescanAssets()

@@ -125,7 +125,14 @@ class AiLearningController(
 
     var breakdown by mutableStateOf<AiBreakdownState?>(null)
         private set
-    val persona: AiPersonaSettings get() = AiPersonaSettings.byId(settings().aiPersonaId)
+    val persona: AiPersonaSettings
+        get() = settings().let { AiPersonaSettings.resolve(it.aiPersonaId, it.aiCustomPersonaName, it.aiCustomPersonaSoul) }
+
+    /** Selectable personas: the two built-in characters plus the user's custom persona. */
+    val personas: List<AiPersonaSettings>
+        get() = settings().let {
+            listOf(AiPersonaSettings.KAZUSA, AiPersonaSettings.SETSUNA, AiPersonaSettings.custom(it.aiCustomPersonaName, it.aiCustomPersonaSoul))
+        }
     val isConfigured: Boolean get() = settings().ai.isConfigured
 
     var testing by mutableStateOf(false)

@@ -75,6 +75,29 @@ class Wa2ExplainPromptsTest {
     }
 
     @Test
+    fun customPersonaResolution() {
+        val c = AiPersonaSettings.resolve("custom", "千冬", "毒舌但靠谱的青梅竹马日语老师")
+        assertEquals(AiPersonaSettings.ID_CUSTOM, c.id)
+        assertEquals("千冬", c.name)
+        assertEquals("毒舌但靠谱的青梅竹马日语老师", c.soul)
+        // Legacy "kotori" / unknown / null ids resolve to the user's custom persona.
+        assertEquals(c, AiPersonaSettings.resolve("kotori", " 千冬 ", "毒舌但靠谱的青梅竹马日语老师"))
+        assertEquals(c, AiPersonaSettings.resolve(null, "千冬", "毒舌但靠谱的青梅竹马日语老师"))
+        // Blank custom fields fall back to the defaults.
+        assertEquals(AiPersonaSettings.CUSTOM, AiPersonaSettings.resolve("kotori", "  ", ""))
+        assertEquals(AiPersonaSettings.CUSTOM, AiPersonaSettings.KOTORI)
+        // Built-in characters are unaffected by custom fields.
+        assertEquals(AiPersonaSettings.KAZUSA, AiPersonaSettings.resolve("kazusa", "千冬", "x"))
+        assertEquals(AiPersonaSettings.SETSUNA, AiPersonaSettings.resolve("setsuna", "千冬", "x"))
+        assertEquals(listOf("kazusa", "setsuna", "custom"), AiPersonaSettings.PRESETS.map { it.id })
+
+        val p = buildFollowUpPrompt(AiSampleExplanation.build(), emptyList(), "Q", c)
+        assertTrue(p.systemInstruction.contains("千冬"))
+        assertTrue(p.systemInstruction.contains("毒舌但靠谱的青梅竹马日语老师"))
+        assertTrue(p.systemInstruction.contains(AiPersonaSettings.ACCURACY_CLAUSE))
+    }
+
+    @Test
     fun summaryIsCompactJson() {
         val s = summariseExplanation(AiSampleExplanation.build())
         val o = AiJson.parseToJsonElement(s)

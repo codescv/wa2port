@@ -97,7 +97,7 @@ private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换�
 /**
  * Kotori-style AI breakdown sheet (✨ AI 解说), drawn above the game and any overlay.
  *
- * Layout: header (persona chips 小鳥 / 冬马和纱 / 小木曾雪菜, ↻ regenerate, ✕); then, on wide screens,
+ * Layout: header (persona chips 冬马和纱 / 小木曾雪菜 / 自定义, ↻ regenerate, ✕); then, on wide screens,
  * a left pane (interactive furigana sentence, ▶ 原声, badges, AI / literal / CK-GAL translations,
  * chunk strip) and a right pane (📘 课本标准 vs 🔥 口语演变 chunk cards with formality bar, vocab &
  * grammar, follow-up Q&A). Narrow screens stack everything with the sentence pinned on top.
@@ -160,8 +160,9 @@ private fun HeaderRow(state: AiBreakdownState, ai: AiLearningController, persona
         Text("✨ AI 解说 · ${persona.shortName}", color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.width(12.dp))
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            AiPersonaSettings.PRESETS.forEach { p ->
-                Chip(p.shortName, selected = p.id == persona.id) { onPersona(p.id) }
+            ai.personas.forEach { p ->
+                val label = if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName
+                Chip(label, selected = p.id == persona.id) { onPersona(p.id) }
             }
             Spacer(Modifier.width(6.dp))
             val loading = state.status is AiStatus.Loading

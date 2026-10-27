@@ -17,11 +17,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -31,14 +28,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.wa2port.android.data.Settings
 import com.wa2port.android.update.UpdateController
 import com.wa2port.android.update.UpdateState
 import com.wa2port.core.update.ReleaseInfo
-import com.wa2port.core.update.UpdateEndpointConfig
 import java.util.Locale
 
 private val UPDATE_ERR = Color(0xFFFFB0A0)
@@ -198,12 +192,9 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
     }
 }
 
-/**
- * 设置 → 版本与更新: current version + 检查更新, the shared status block and the update source /
- * GitHub proxy field (saved on every edit, validated inline).
- */
+/** 设置 → 版本与更新: current version + 检查更新 and the shared status block (GitHub releases only). */
 @Composable
-fun UpdateSettingsSection(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, update: UpdateController) {
+fun UpdateSettingsSection(update: UpdateController) {
     SectionTitle("版本与更新 App Update")
     OptionRow("当前版本 Version") {
         Text("v${update.currentVersion}", color = Wa2Colors.Text, fontSize = 15.sp, modifier = Modifier.padding(end = 12.dp))
@@ -212,36 +203,6 @@ fun UpdateSettingsSection(settings: Settings, onChange: ((Settings) -> Settings)
         }
     }
     UpdateStatusBlock(update, compact = true)
-    val endpoint = UpdateEndpointConfig(settings.updateUrl)
-    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        OutlinedTextField(
-            value = settings.updateUrl,
-            onValueChange = { v ->
-                onChange { it.copy(updateUrl = v) }
-                update.onEndpointChanged()
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("更新源 / GitHub 代理地址 Update source / proxy", fontSize = 12.sp) },
-            placeholder = { Text("https://ghproxy.net/", fontSize = 13.sp, color = Wa2Colors.TextDim) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            isError = endpoint.validationError() != null,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Wa2Colors.Text, unfocusedTextColor = Wa2Colors.Text,
-                focusedBorderColor = Wa2Colors.Accent, unfocusedBorderColor = Wa2Colors.AccentDim,
-                focusedLabelColor = Wa2Colors.Accent, unfocusedLabelColor = Wa2Colors.TextDim,
-                cursorColor = Wa2Colors.Accent,
-            ),
-        )
-        endpoint.validationError()?.let { Text("⚠ $it", color = UPDATE_ERR, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp, top = 2.dp)) }
-        Text(
-            "留空 = GitHub 官方。以 / 结尾 = 代理前缀，如 https://ghproxy.net/ ；否则 = 返回 Release JSON 的完整地址（测试: http://127.0.0.1:8765/releases/latest）",
-            color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, top = 2.dp),
-        )
-        if (endpoint.validationError() == null) {
-            Text("检查地址 Endpoint: ${endpoint.apiUrl()}", color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
-        }
-    }
 }
 
 @Composable
