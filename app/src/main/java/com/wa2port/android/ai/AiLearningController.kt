@@ -209,6 +209,7 @@ class AiLearningController(
     fun showOffline() {
         val st = breakdown ?: return
         cancelRequests()
+        st.followUpError = null
         st.status = AiStatus.Ready(OfflineExplainer.build(st.request(persona, force = false), now()))
     }
 
@@ -225,10 +226,21 @@ class AiLearningController(
         explainJob?.cancel()
         explainToken = null
         explainJob = null
+        cancelFollowUp()
+    }
+
+    /** Cancels an in-flight follow-up; the question goes back into the input (never stuck pending). */
+    private fun cancelFollowUp() {
         followToken?.cancel()
         followJob?.cancel()
         followToken = null
         followJob = null
+        breakdown?.let { st ->
+            st.pendingQuestion?.let { q ->
+                st.failedQuestion = q
+                st.pendingQuestion = null
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------- explain
@@ -242,6 +254,8 @@ class AiLearningController(
         }
         explainToken?.cancel()
         explainJob?.cancel()
+        // A follow-up about the old breakdown must not land on the new one.
+        if (force) cancelFollowUp()
         val ai = settings().ai
         if (!ai.isConfigured) {
             st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, ai.validationError() ?: "尚未配置 AI 服务")
@@ -252,8 +266,9 @@ class AiLearningController(
         val token = CancelToken()
         explainToken = token
         val req = st.request(persona, force)
-        // readTimeout is per read, not a total deadline: a watchdog cancels the whole call.
-        val deadlineMs = ai.timeoutMs.toLong() + 5_000L
+        // readTimeout is per read, not a total deadline: a watchdog cancels the whole call. One
+        // explain may do a token exchange + the call + one nudge retry, hence 2 × timeout + slack.
+        val deadlineMs = 2L * ai.timeoutMs + 10_000L
         explainJob = scope.launch {
             var timedOut = false
             val watchdog = launch {
@@ -372,18 +387,19 @@ class AiLearningController(
 
     // ------------------------------------------------------------------------------- settings helpers
 
-    /** Round-trips a test prompt with [draft] (unsaved edits allowed). */
-    fun testConnection(draft: AiProviderSettings) {
+    /** Round-trips a test prompt with [draft] (unsaved edits allowed), or the current settings when null. */
+    fun testConnection(draft: AiProviderSettings? = null) {
+        val target = draft ?: settings().ai
         if (testing) return
         testing = true
         testResult = null
         scope.launch {
             val r = try {
-                withContext(io) { testClientFactory { draft }.testConnection() }
+                withContext(io) { testClientFactory { target }.testConnection() }
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                AiConnectionTestResult(false, draft.model, 0, "${t.javaClass.simpleName}: ${t.message}")
+                AiConnectionTestResult(false, target.model, 0, "${t.javaClass.simpleName}: ${t.message}")
             }
             testResult = r
             testing = false

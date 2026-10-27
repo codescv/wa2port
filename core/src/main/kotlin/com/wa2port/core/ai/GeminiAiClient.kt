@@ -2,6 +2,7 @@ package com.wa2port.core.ai
 
 import kotlinx.serialization.SerializationException
 import java.io.IOException
+import java.net.HttpRetryException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
@@ -75,6 +76,10 @@ class HttpUrlConnectionTransport : HttpTransport {
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
             return HttpTransport.Response(status, text)
+        } catch (e: HttpRetryException) {
+            // Streaming mode cannot replay the body for an auth challenge (401 + WWW-Authenticate) or a
+            // redirect: report the status so it maps to AUTH / etc. instead of NETWORK.
+            return HttpTransport.Response(e.responseCode(), e.reason ?: "")
         } finally {
             cancel?.detach()
             conn.disconnect()
@@ -153,7 +158,7 @@ class GeminiAiClient(
     }
 
     /** Cache id of [req] under the current model. */
-    fun cacheKey(req: ExplainRequest): String = ExplainCache.key(req.sentence, req.speakerJp, settings().model)
+    fun cacheKey(req: ExplainRequest): String = ExplainCache.key(req, settings().model)
 
     /**
      * Sentence breakdown: cache lookup (unless `force` / cache disabled) → structured-output call
@@ -165,7 +170,7 @@ class GeminiAiClient(
         val s = settings()
         s.validationError()?.let { throw AiException(AiErrorCode.NOT_CONFIGURED, it) }
         if (req.sentence.isBlank()) throw AiException(AiErrorCode.INVALID_ARGUMENT, "这一行没有日文 No Japanese text")
-        val id = ExplainCache.key(req.sentence, req.speakerJp, s.model)
+        val id = ExplainCache.key(req, s.model)
         val useCache = cache != null && s.cacheEnabled
         if (useCache && !req.force) {
             runCatching { cache!!.get(id) }.getOrNull()?.let { return it }

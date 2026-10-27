@@ -15,15 +15,18 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -56,6 +59,7 @@ fun AiSettingsSection(
     session: GameSession?,
 ) {
     val p = settings.ai
+    val focus = LocalFocusManager.current
     fun set(f: (AiProviderSettings) -> AiProviderSettings) = onChange { it.copy(ai = f(it.ai)) }
     LaunchedEffect(Unit) { ai.refreshCacheStats() }
 
@@ -178,10 +182,17 @@ fun AiSettingsSection(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
-        MenuButton(if (ai.testing) "测试中… Testing" else "测试连接 Test", enabled = !ai.testing) { ai.testConnection(p) }
+        // Clearing focus first commits any open multi-line draft (SA JSON / headers) into settings.
+        MenuButton(if (ai.testing) "测试中… Testing" else "测试连接 Test", enabled = !ai.testing) {
+            focus.clearFocus()
+            ai.testConnection()
+        }
         val stats = ai.cacheStats
         MenuButton("清除缓存 Clear cache", subtitle = stats?.let { "${it.entries} 条 · ${(it.bytes + 1023) / 1024} KB" }) { confirmClear = true }
-        MenuButton("示例预览 Preview") { ai.openSample(session) }
+        MenuButton("示例预览 Preview") {
+            focus.clearFocus()
+            ai.openSample(session)
+        }
     }
     ai.testResult?.let { r ->
         Text(
@@ -236,6 +247,13 @@ private fun AiTextField(
 @Composable
 private fun DraftField(label: String, value: String, placeholder: String, onCommit: (String) -> Unit, footer: @Composable (String) -> Unit = {}) {
     var draft by remember(value) { mutableStateOf(value) }
+    // Commit a pending draft when the field leaves composition (Config closed while editing).
+    val latestDraft = rememberUpdatedState(draft)
+    val latestValue = rememberUpdatedState(value)
+    val latestCommit = rememberUpdatedState(onCommit)
+    DisposableEffect(Unit) {
+        onDispose { if (latestDraft.value != latestValue.value) latestCommit.value(latestDraft.value) }
+    }
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         OutlinedTextField(
             value = draft,

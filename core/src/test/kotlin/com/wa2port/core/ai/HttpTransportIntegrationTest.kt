@@ -37,6 +37,13 @@ class HttpTransportIntegrationTest {
             if (bytes.isEmpty()) ex.sendResponseHeaders(status, -1) else ex.sendResponseHeaders(status, bytes.size.toLong())
             ex.responseBody.use { if (bytes.isNotEmpty()) it.write(bytes) }
         }
+        // Auth challenge: makes the JVM's streaming HttpURLConnection throw HttpRetryException.
+        server.createContext("/challenge/") { ex ->
+            ex.requestBody.readBytes()
+            ex.responseHeaders.add("WWW-Authenticate", "Bearer realm=\"proxy\"")
+            ex.sendResponseHeaders(401, -1)
+            ex.close()
+        }
         server.executor = java.util.concurrent.Executors.newCachedThreadPool()
         server.start()
     }
@@ -85,6 +92,14 @@ class HttpTransportIntegrationTest {
         assertEquals("HTTP 401", auth.message)
         assertTrue(seen[0].first.endsWith(":generateContent?key=K"))
         assertFalse(seen[0].second.containsKey("x-goog-api-key"))
+    }
+
+    @Test
+    fun authChallengeMapsToAuthNotNetwork() {
+        val c = GeminiAiClient({ AiProviderSettings(geminiApiKey = "K", customBaseUrl = "http://127.0.0.1:${server.address.port}/challenge") })
+        val e = assertThrows(AiException::class.java) { c.generate(GeminiRequest("m", null, listOf(GeminiContent("user", "x")))) }
+        assertEquals(AiErrorCode.AUTH, e.code)
+        assertEquals(401, e.httpStatus)
     }
 
     @Test

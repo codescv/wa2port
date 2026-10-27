@@ -55,6 +55,11 @@ class SpanAlignTest {
         assertEquals(FUZZY, r.alignment[0])
         assertEquals(CharSpan(5, 6), r.spans[1])
         assertEquals("がっこう", JapaneseText.normalise("ｶﾞｯｺｳ"))
+        // Never composes across dropped whitespace.
+        val n = JapaneseText.normaliseWithMap("ｶ ﾞ")
+        assertEquals("か\u3099", n.text)
+        assertEquals(listOf(0, 2, 3), n.map.toList())
+        assertEquals("ば", JapaneseText.normalise("ﾊﾞ"))
     }
 
     @Test

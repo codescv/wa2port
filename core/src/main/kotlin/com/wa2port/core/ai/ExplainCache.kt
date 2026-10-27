@@ -94,11 +94,30 @@ class ExplainCache(private val dir: File) {
     companion object {
         const val MEMORY_ENTRIES = 32
 
-        /** `ex_` + sha256 of the canonical JSON array `[promptVersion, model, "zh-CN", speakerJp ?: "", sentence]`. */
-        fun key(sentence: String, speakerJp: String?, model: String, promptVersion: String = PROMPT_VERSION): String {
-            val canonical = JsonArray(listOf(promptVersion, model, TARGET_LANGUAGE, speakerJp ?: "", sentence).map { JsonPrimitive(it) }).toString()
+        /**
+         * `ex_` + sha256 of the canonical JSON array
+         * `[promptVersion, model, "zh-CN", speakerJp, sentence, officialCn, scriptRuby]`. The CK-GAL line
+         * and script furigana are part of the key: WA2 repeats short lines (うん / …… / え？) with
+         * different official translations, and `<R本気|マジ>` vs plain 本気 share the same plain text.
+         */
+        fun key(
+            sentence: String,
+            speakerJp: String?,
+            model: String,
+            promptVersion: String = PROMPT_VERSION,
+            officialCn: String? = null,
+            scriptRuby: List<ScriptRuby> = emptyList(),
+        ): String {
+            val ruby = scriptRuby.joinToString("|") { "${it.span.start}-${it.span.end}=${it.reading}" }
+            val canonical = JsonArray(
+                listOf(promptVersion, model, TARGET_LANGUAGE, speakerJp?.trim().orEmpty(), sentence, officialCn?.trim().orEmpty(), ruby).map { JsonPrimitive(it) },
+            ).toString()
             return "ex_" + sha256Hex(canonical)
         }
+
+        /** Cache key of [req] under [model] (see the other overload). */
+        fun key(req: ExplainRequest, model: String): String =
+            key(req.sentence, req.speakerJp, model, PROMPT_VERSION, req.officialCnTranslation, req.scriptRuby)
 
         fun sha256Hex(s: String): String =
             MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }

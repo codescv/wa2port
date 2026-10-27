@@ -109,7 +109,8 @@ class GeminiAiClientTest {
         assertFalse(e.fromCache)
         assertEquals("gemini-3.8-flash-001", e.model)
         assertEquals(AiSampleExplanation.SENTENCE, e.sentence)
-        assertEquals(ExplainCache.key(req.sentence, req.speakerJp, s.model), e.id)
+        assertEquals(ExplainCache.key(req, s.model), e.id)
+        assertEquals(c.cacheKey(req), e.id)
         assertEquals(AiSampleExplanation.OFFICIAL_CN, e.officialCnTranslation)
         assertTrue(e.chunks.all { it.alignment == SpanAlignment.EXACT })
         // Request body: schema + prompt (focus char, speaker, CK-GAL).

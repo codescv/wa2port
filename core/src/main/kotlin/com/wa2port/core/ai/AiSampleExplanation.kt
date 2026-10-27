@@ -87,6 +87,6 @@ object AiSampleExplanation {
     fun build(now: Long = 0L): SentenceExplanation = ExplainJsonCodec.toSentenceExplanation(
         RAW,
         request(),
-        ExplanationMeta(id = ExplainCache.key(SENTENCE, SPEAKER_JP, MODEL), model = MODEL, now = now),
+        ExplanationMeta(id = ExplainCache.key(request(), MODEL), model = MODEL, now = now),
     )
 }

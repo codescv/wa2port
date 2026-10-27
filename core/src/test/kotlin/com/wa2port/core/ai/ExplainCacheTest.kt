@@ -15,8 +15,8 @@ class ExplainCacheTest {
 
     @Test
     fun keyIsStableSha256() {
-        // sha256 of `["wa2-v1","m","zh-CN","雪菜","雪だね"]`, pinned so prompt/key changes are deliberate.
-        val canonical = "[\"wa2-v1\",\"m\",\"zh-CN\",\"雪菜\",\"雪だね\"]"
+        // sha256 of `["wa2-v1","m","zh-CN","雪菜","雪だね","",""]`, pinned so prompt/key changes are deliberate.
+        val canonical = "[\"wa2-v1\",\"m\",\"zh-CN\",\"雪菜\",\"雪だね\",\"\",\"\"]"
         assertEquals("ex_" + ExplainCache.sha256Hex(canonical), ExplainCache.key("雪だね", "雪菜", "m"))
         assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", ExplainCache.sha256Hex("abc"))
         val k = ExplainCache.key("雪だね", "雪菜", "m")
@@ -26,6 +26,15 @@ class ExplainCacheTest {
         assertNotEquals(k, ExplainCache.key("雪だね", "雪菜", "m2")) // model matters
         assertNotEquals(k, ExplainCache.key("雪だね", "雪菜", "m", "wa2-v2")) // prompt version matters
         assertEquals(ExplainCache.key("雪だね", null, "m"), ExplainCache.key("雪だね", "", "m"))
+        // Same sentence + speaker, different CK-GAL line or script ruby → different entries.
+        assertNotEquals(ExplainCache.key("うん", "雪菜", "m", officialCn = "嗯"), ExplainCache.key("うん", "雪菜", "m", officialCn = "好的"))
+        assertNotEquals(ExplainCache.key("うん", "雪菜", "m"), ExplainCache.key("うん", "雪菜", "m", officialCn = "嗯"))
+        assertNotEquals(
+            ExplainCache.key("本気だ", null, "m"),
+            ExplainCache.key("本気だ", null, "m", scriptRuby = listOf(ScriptRuby(CharSpan(0, 2), "マジ"))),
+        )
+        val req = ExplainRequest("うん", speakerJp = "雪菜", officialCnTranslation = " 嗯 ")
+        assertEquals(ExplainCache.key("うん", "雪菜", "m", officialCn = "嗯"), ExplainCache.key(req, "m"))
     }
 
     @Test

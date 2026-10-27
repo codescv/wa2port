@@ -383,6 +383,8 @@ private fun tryAiTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, 
     val novel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
     if (!s.aiTapToAnalyze || novel || session.windowHidden || session.choices.isNotEmpty() || !session.revealDone) return false
     if (session.skipToggle || session.autoMode || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
+    // The hit box must belong to this very line (never map a stale box onto a new line).
+    if (advHit.jp?.rich !== line.jp) return false
     val g = advHit.glyphAt(session.backend.text, p)
     if (g < 0) return false
     val charIndex = JpSentence.fromRich(line.jp, session.engine.decoder).charIndexOfGlyph(g)

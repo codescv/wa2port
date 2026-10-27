@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -78,7 +79,8 @@ fun ConfigPanel(
     ai: AiLearningController? = null,
     session: GameSession? = null,
 ) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 12.dp)) {
+    // imePadding: the activity draws edge-to-edge, so text fields must stay above the soft keyboard.
+    Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 32.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("设置 Config  コンフィグ", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
             CloseButton(onClose)

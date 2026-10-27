@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -89,6 +90,9 @@ private val EVOLVED = Color(0xFFFFA36B)
 private val ERROR = Color(0xFFFF8A80)
 private val OK = Color(0xFF8FD3A8)
 
+/** Characters that must not begin a line (kinsoku shori). */
+private const val NO_LINE_START = "、。，．,.!！?？…‥」』）)】〕〉》ー～ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々"
+
 private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换成敬体怎么说？", "再举一个例句")
 
 /**
@@ -128,6 +132,7 @@ fun AiBreakdownOverlay(
     ) {
         Column(
             Modifier.align(Alignment.Center).widthIn(max = 1100.dp).fillMaxSize()
+                .imePadding() // keep the follow-up input above the soft keyboard
                 .padding(horizontal = 16.dp, vertical = 6.dp),
         ) {
             HeaderRow(state, ai, persona, onPersona, onClose)
@@ -141,10 +146,10 @@ fun AiBreakdownOverlay(
                             SentenceHeader(state, ai, onReplayVoice)
                             SummaryBlock(state, ai, onOpenSettings)
                         }
-                        DetailPane(state, ai, persona, Modifier.weight(0.58f).fillMaxHeight(), header = null)
+                        DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(0.58f).fillMaxHeight(), header = null)
                     }
                 } else {
-                    DetailPane(state, ai, persona, Modifier.fillMaxSize()) {
+                    DetailPane(state, ai, persona, onOpenSettings, Modifier.fillMaxSize()) {
                         SentenceHeader(state, ai, onReplayVoice)
                         SummaryBlock(state, ai, onOpenSettings)
                     }
@@ -221,16 +226,33 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                 Chip("▶ 原声", onClick = onReplayVoice)
             }
         }
+        // Ruby-bearing tokens stay grouped (reading centred over the base); every other character is
+        // its own flow item so long kana runs wrap inside narrow panes.
+        val groups: List<Pair<String?, List<Int>>> = remember(tokens, text) {
+            tokens.flatMap { t ->
+                val starts = ArrayList<Int>()
+                var i = t.span.start
+                while (i < t.span.end && i < text.length) {
+                    starts += i
+                    i += Character.charCount(text.codePointAt(i))
+                }
+                if (t.ruby != null) listOf(t.ruby to starts) else starts.map { null to listOf(it) }
+            }.fold(ArrayList<Pair<String?, List<Int>>>()) { acc, g ->
+                // Kinsoku: a closing punctuation mark never starts a line — glue it to a preceding
+                // ruby-less group.
+                val prev = acc.lastOrNull()
+                val single = g.first == null && g.second.size == 1 && text[g.second[0]] in NO_LINE_START
+                if (single && prev != null && prev.first == null) acc[acc.size - 1] = null to (prev.second + g.second) else acc += g
+                acc
+            }
+        }
         FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            tokens.forEach { t ->
+            groups.forEach { (ruby, starts) ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(t.ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 11.sp, maxLines = 1)
+                    Text(ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 11.sp, maxLines = 1)
                     Row {
-                        var i = t.span.start
-                        while (i < t.span.end && i < text.length) {
-                            val cp = text.codePointAt(i)
-                            val idx = i
-                            val ch = String(Character.toChars(cp))
+                        starts.forEach { idx ->
+                            val ch = String(Character.toChars(text.codePointAt(idx)))
                             val inChunk = active != null && !active.span.isEmpty && idx in active.span
                             val isFocus = idx == focus
                             Text(
@@ -246,7 +268,6 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                                     .clickable { ai.selectChar(idx) }
                                     .padding(horizontal = 1.dp),
                             )
-                            i += Character.charCount(cp)
                         }
                     }
                 }
@@ -277,10 +298,6 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
             }
         }
         TranslationCard(state, expl)
-        when (val st = state.status) {
-            is AiStatus.Error -> ErrorCard(state, st, ai, onOpenSettings)
-            else -> {}
-        }
         if (expl != null && expl.chunks.isNotEmpty()) {
             Text("意群 Chunks", color = Wa2Colors.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -360,6 +377,7 @@ private fun DetailPane(
     state: AiBreakdownState,
     ai: AiLearningController,
     persona: AiPersonaSettings,
+    onOpenSettings: (() -> Unit)?,
     modifier: Modifier,
     header: (@Composable () -> Unit)?,
 ) {
@@ -378,6 +396,7 @@ private fun DetailPane(
     Column(modifier) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
+            (state.status as? AiStatus.Error)?.let { err -> item(key = "error") { ErrorCard(state, err, ai, onOpenSettings) } }
             if (expl != null) {
                 item(key = "chunks-title") { SectionHeader("逐块解析 · 📘 课本标准 vs 🔥 口语演变") }
                 val active = state.activeChunk

@@ -86,7 +86,8 @@ object JapaneseText {
                 val folded = foldCodePoint(c)
                 // Half-width dakuten (ｶﾞ → カ + U+3099): compose with the preceding kana so it
                 // matches the precomposed form; the composed unit's end covers both source chars.
-                if ((c == 0x3099 || c == 0x309A) && sb.isNotEmpty()) {
+                // Only with the immediately preceding source char (never across dropped whitespace).
+                if ((c == 0x3099 || c == 0x309A) && sb.isNotEmpty() && endMap.last() == start) {
                     val composed = Normalizer.normalize("${sb[sb.length - 1]}${folded}", Normalizer.Form.NFC)
                     if (composed.length == 1) {
                         sb.setCharAt(sb.length - 1, composed[0])
