@@ -38,7 +38,7 @@ fun TitleScreen(vm: AppViewModel) {
         Row(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("WHITE ALBUM 2", color = Wa2Colors.Text, fontSize = 40.sp, fontWeight = FontWeight.Light, letterSpacing = 6.sp)
-                Text("白色相簿2  ·  ホワイトアルバム2", color = Wa2Colors.Accent, fontSize = 18.sp)
+                Text("白色相簿2  ·  ホワイトアルバム2  ·  v1.1.0", color = Wa2Colors.Accent, fontSize = 18.sp)
                 Spacer(Modifier.height(16.dp))
                 Text(
                     if (ready) "资源 Assets: ${vm.assetRoot?.absolutePath}" else "未找到游戏资源 — 请先设置资源文件夹\nGame assets not found — open Asset Folder Setup",
