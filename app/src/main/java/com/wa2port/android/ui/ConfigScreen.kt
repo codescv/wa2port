@@ -41,6 +41,7 @@ import com.wa2port.android.data.Settings
 import com.wa2port.android.data.WindowMode
 import com.wa2port.android.game.AiBreakdownOverlay
 import com.wa2port.android.game.GameSession
+import com.wa2port.android.update.UpdateController
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
 
@@ -49,9 +50,15 @@ import com.wa2port.core.text.TextScale
  * sample preview (示例预览) is hosted here.
  */
 @Composable
-fun ConfigScreen(settings: Settings, onChange: ((Settings) -> Settings) -> Unit, onClose: () -> Unit, ai: AiLearningController? = null) {
+fun ConfigScreen(
+    settings: Settings,
+    onChange: ((Settings) -> Settings) -> Unit,
+    onClose: () -> Unit,
+    ai: AiLearningController? = null,
+    update: UpdateController? = null,
+) {
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-        ConfigPanel(settings, onChange, onClose, ai)
+        ConfigPanel(settings, onChange, onClose, ai, update = update)
         ai?.breakdown?.let { st ->
             AiBreakdownOverlay(
                 state = st,
@@ -69,7 +76,7 @@ fun ConfigScreen(settings: Settings, onChange: ((Settings) -> Settings) -> Unit,
 /**
  * Text speed, auto speed, volumes, skip mode, display language, window mode, opacity, text size and
  * (when [ai] is given) the AI learning settings. [session] is the running game, if any (previews
- * open above the in-game config).
+ * open above the in-game config). [update] (title config only) adds 版本与更新 App Update.
  */
 @Composable
 fun ConfigPanel(
@@ -78,6 +85,7 @@ fun ConfigPanel(
     onClose: () -> Unit,
     ai: AiLearningController? = null,
     session: GameSession? = null,
+    update: UpdateController? = null,
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -122,6 +130,7 @@ fun ConfigPanel(
             LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
 
             if (ai != null) AiSettingsSection(settings, onChange, ai, session)
+            if (update != null) UpdateSettingsSection(settings, onChange, update)
         }
     }
 }

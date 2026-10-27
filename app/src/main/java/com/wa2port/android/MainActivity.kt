@@ -79,7 +79,7 @@ fun Wa2App(vm: AppViewModel) {
                 val s = vm.session
                 if (s != null) GameScreen(vm, s) else LaunchedEffect(Unit) { vm.exitToTitle() }
             }
-            Screen.Config -> ConfigScreen(vm.settings, onChange = vm::updateSettings, onClose = { vm.back() }, ai = vm.ai)
+            Screen.Config -> ConfigScreen(vm.settings, onChange = vm::updateSettings, onClose = { vm.back() }, ai = vm.ai, update = vm.update)
             Screen.Assets -> AssetSetupScreen(vm)
             Screen.Load -> SaveLoadScreen(
                 mode = SaveLoadMode.LOAD,

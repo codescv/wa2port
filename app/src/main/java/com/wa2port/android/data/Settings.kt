@@ -61,6 +61,8 @@ data class Settings(
     val aiPersonaId: String = AiPersonaSettings.KOTORI.id,
     /** ADV: tapping a Japanese glyph opens the AI breakdown instead of advancing (off by default). */
     val aiTapToAnalyze: Boolean = false,
+    /** Update source: "" = GitHub; ends with "/" = proxy prefix; else full release-JSON URL. */
+    val updateUrl: String = "",
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 

@@ -20,6 +20,7 @@ import com.wa2port.android.data.SaveStore
 import com.wa2port.android.data.Settings
 import com.wa2port.android.data.SettingsStore
 import com.wa2port.android.game.GameSession
+import com.wa2port.android.update.UpdateController
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.SystemData
 import com.wa2port.core.engine.Wa2Engine
@@ -73,6 +74,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** AI learning (Kotori-style breakdown); survives sessions, cache in `filesDir/ai_cache`. */
     val ai = AiLearningController(File(app.filesDir, "ai_cache"), { settings }, viewModelScope)
+
+    /** In-app update check / APK download (manual only); APKs live in `cacheDir/updates`. */
+    val update = UpdateController(app, { settings }, viewModelScope)
 
     init {
         rescanAssets()
@@ -283,6 +287,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        update.cancelDownload()
         closeEngine()
         super.onCleared()
     }
