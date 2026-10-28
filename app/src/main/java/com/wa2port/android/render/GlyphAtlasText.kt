@@ -74,10 +74,10 @@ class GlyphAtlasText(
 
     private val atlases = arrayOfNulls<Atlas>(2)
     private val tried = BooleanArray(2)
-    private val glyphPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-    private val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.DEFAULT_BOLD }
-    private val src = Rect()
-    private val dst = RectF()
+    private val glyphPaint by lazy { Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG) }
+    private val fallbackPaint by lazy { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.DEFAULT_BOLD } }
+    private val src by lazy { Rect() }
+    private val dst by lazy { RectF() }
 
     /** One positioned base glyph (box-relative; [top] is the glyph box top, [size] its edge length). */
     class PlacedGlyph(val code: Int, val x: Float, val top: Float, val size: Float, val advance: Float, val index: Int)
@@ -277,22 +277,63 @@ class GlyphAtlasText(
             }
         }
 
+        fun nextContentUnit(from: Int): Int {
+            var k = from
+            while (k < units.size) {
+                val cand = units[k]
+                if (cand.hardBreak) {
+                    if (keptBreak[k]) return -1
+                } else if (cand.codes.isNotEmpty()) {
+                    return k
+                }
+                k++
+            }
+            return -1
+        }
+
+        // True when placing u on the current line would leave the next wrapped line starting with a
+        // NO_LINE_START glyph that HANGING cannot absorb (1-unit backoff, JIS X 4051 行頭禁則).
+        fun needsKinsokuBackoff(ui: Int, afterPenX: Float, afterChars: Float, cap: Float, afterHung: Boolean): Boolean {
+            val n1 = nextContentUnit(ui + 1)
+            if (n1 < 0) return false
+            val u1 = units[n1]
+            val u1Chars = charsOf(u1)
+            val u1Over = afterPenX + u1.width > maxWidth || (cap > 0f && afterChars + u1Chars > cap + 0.01f)
+            if (!u1Over) return false
+            val u1Hang = u1.codes.size == 1 && u1.codes[0] in HANGING && !afterHung
+            if (!u1Hang) return u1.codes[0] in NO_LINE_START
+            // u1 hangs at the right edge (consuming the single hang slot); if the next unit in the
+            // same paragraph is also NO_LINE_START, it cannot hang and would start the next line.
+            val n2 = nextContentUnit(n1 + 1)
+            return n2 >= 0 && units[n2].codes[0] in NO_LINE_START
+        }
+
         var lineChars = 0f
         var hungOnLine = false
+        var backoffCarry = 0f
         for ((ui, u) in units.withIndex()) {
             if (u.pageBreak) pageBreaks += index
             if (u.hardBreak) {
                 if (!keptBreak[ui]) continue // soft join: let the column width / maxChars wrap instead
-                line++; penX = 0f; lineChars = 0f; hungOnLine = false; continue
+                line++; penX = 0f; lineChars = 0f; hungOnLine = false; backoffCarry = 0f; continue
             }
             val uChars = charsOf(u)
             val overWidth = penX + u.width > maxWidth
-            val cap = segCap[ui]
+            val rawCap = segCap[ui]
+            val cap = if (rawCap > 0f) minOf(maxChars, rawCap + backoffCarry) else 0f
             val overChars = cap > 0f && lineChars + uChars > cap + 0.01f
             // At most one closing punctuation glyph may hang past the edge per line.
             val hang = u.codes.size == 1 && u.codes[0] in HANGING && !hungOnLine
             if (penX > 0f && (overWidth || overChars)) {
-                if (hang) hungOnLine = true else { line++; penX = 0f; lineChars = 0f; hungOnLine = false }
+                if (hang) {
+                    hungOnLine = true
+                } else {
+                    line++; penX = 0f; lineChars = 0f; hungOnLine = false; backoffCarry = 0f
+                }
+            } else if (penX > 0f && u.codes.isNotEmpty() && u.codes[0] !in NO_LINE_START &&
+                needsKinsokuBackoff(ui, penX + u.width, lineChars + uChars, cap, hungOnLine)
+            ) {
+                line++; penX = 0f; lineChars = 0f; hungOnLine = false; backoffCarry = uChars
             }
             lineChars += uChars
             val top = line * pitch + band
@@ -402,12 +443,24 @@ class GlyphAtlasText(
         private const val CELL_ORIGIN = 0.1f
 
         /** Closing punctuation allowed to hang past the right edge (SJIS codes shared by JP/CN atlases). */
-        private val HANGING: Set<Int> = setOf(
+        internal val HANGING: Set<Int> = setOf(
             0x8141, 0x8142, 0x8143, 0x8144, 0x8145, 0x8146, 0x8147, 0x8148, 0x8149, // 、。，．・：；？！
             0x8163, 0x8164, // … ‥
             0x8166, 0x8168, 0x816A, 0x816C, 0x816E, 0x8170, 0x8172, 0x8174, 0x8176, 0x8178, 0x817A, // closers
             0x815B, 0x8160, // ー ～
             0x2C, 0x2E, 0x21, 0x3F,
+        )
+
+        /**
+         * SJIS codes forbidden at the start of a wrapped line (行頭禁則, JIS X 4051):
+         * closing punctuation/brackets ([HANGING]), small hiragana (`ぁぃぅぇぉっゃゅょゎ`),
+         * small katakana (`ァィゥェォッャュョヮヵヶ`), prolonged sound / wave (`ー～`), and
+         * iteration marks (`ヽヾゝゞ〃々仝`).
+         */
+        internal val NO_LINE_START: Set<Int> = HANGING + setOf(
+            0x829F, 0x82A1, 0x82A3, 0x82A5, 0x82A7, 0x82C1, 0x82E1, 0x82E3, 0x82E5, 0x82EC, // ぁぃぅぇぉっゃゅょゎ
+            0x8340, 0x8342, 0x8344, 0x8346, 0x8348, 0x8362, 0x8383, 0x8385, 0x8387, 0x838E, 0x8395, 0x8396, // ァィゥェォッャュョヮヵヶ
+            0x8152, 0x8153, 0x8154, 0x8155, 0x8156, 0x8158, 0x8159, // ヽヾゝゞ〃々仝
         )
 
         /** Sentence-ending codes after which a script `\n` is kept when reflowing. */

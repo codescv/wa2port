@@ -62,22 +62,38 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
     var metas by remember { mutableStateOf<Map<Int, SlotMeta>>(emptyMap()) }
     var reload by remember { mutableIntStateOf(0) }
     var confirmSlot by remember { mutableStateOf<Int?>(null) }
+    var deleteConfirmSlot by remember { mutableStateOf<Int?>(null) }
+    var lastSavedSlot by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(reload) { metas = store.listMeta() }
 
     fun pick(slot: Int) {
         scope.launch {
             onPick(slot)
+            if (mode == SaveLoadMode.SAVE && !store.isLocked(slot)) lastSavedSlot = slot
             reload++
         }
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Text(
                 if (mode == SaveLoadMode.SAVE) "保存进度 Save  セーブ" else "读取进度 Load  ロード",
                 color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f),
             )
+            Box(
+                Modifier.clip(RoundedCornerShape(8.dp))
+                    .background(Color(0x66203050))
+                    .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(8.dp))
+                    .clickable(onClick = onClose)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            ) {
+                Text("返回游戏 Back", color = Wa2Colors.Text, fontSize = 13.sp)
+            }
             CloseButton(onClose)
         }
         LazyVerticalGrid(
@@ -89,9 +105,28 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
             val slots = if (mode == SaveLoadMode.LOAD) SaveStore.CONTINUABLE_SLOTS else SaveStore.CONTINUABLE_SLOTS - SaveStore.AUTO_SLOT
             items(slots, key = { it }) { slot ->
                 val meta = metas[slot]
-                SlotCard(slot, meta, lang, enabled = mode == SaveLoadMode.SAVE || meta != null) {
-                    if (mode == SaveLoadMode.SAVE && meta != null) confirmSlot = slot else pick(slot)
-                }
+                val locked = meta?.locked == true
+                val enabled = if (mode == SaveLoadMode.SAVE) !locked else meta != null
+                SlotCard(
+                    slot = slot,
+                    meta = meta,
+                    lang = lang,
+                    mode = mode,
+                    justSaved = mode == SaveLoadMode.SAVE && slot == lastSavedSlot,
+                    enabled = enabled,
+                    onToggleLock = if (meta != null && slot >= 0) {
+                        {
+                            store.setLocked(slot, !locked)
+                            reload++
+                        }
+                    } else null,
+                    onDelete = if (meta != null && slot >= 0 && !locked) {
+                        { deleteConfirmSlot = slot }
+                    } else null,
+                    onClick = {
+                        if (mode == SaveLoadMode.SAVE && meta != null) confirmSlot = slot else pick(slot)
+                    },
+                )
             }
         }
     }
@@ -101,6 +136,26 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
             confirmButton = { TextButton(onClick = { confirmSlot = null; pick(slot) }) { Text("覆盖 Overwrite") } },
             dismissButton = { TextButton(onClick = { confirmSlot = null }) { Text("取消 Cancel") } },
             text = { Text("覆盖存档 ${slotName(slot)}？ / 上書きしますか？") },
+        )
+    }
+    deleteConfirmSlot?.let { slot ->
+        AlertDialog(
+            onDismissRequest = { deleteConfirmSlot = null },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val target = slot
+                        deleteConfirmSlot = null
+                        scope.launch {
+                            store.delete(target)
+                            if (lastSavedSlot == target) lastSavedSlot = null
+                            reload++
+                        }
+                    },
+                ) { Text("删除 Delete", color = Color(0xFFFF8A80)) }
+            },
+            dismissButton = { TextButton(onClick = { deleteConfirmSlot = null }) { Text("取消 Cancel") } },
+            text = { Text("确定删除存档 ${slotName(slot)}？此操作不可撤销。\nセーブデータ ${slotName(slot)} を削除しますか？") },
         )
     }
 }
@@ -135,13 +190,31 @@ fun sceneLabel(scene: String): String = when (scene.firstOrNull()) {
 }
 
 @Composable
-private fun SlotCard(slot: Int, meta: SlotMeta?, lang: DisplayLang, enabled: Boolean, onClick: () -> Unit) {
+private fun SlotCard(
+    slot: Int,
+    meta: SlotMeta?,
+    lang: DisplayLang,
+    mode: SaveLoadMode,
+    justSaved: Boolean,
+    enabled: Boolean,
+    onToggleLock: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(8.dp)
+    val locked = meta?.locked == true
+    val borderWidth = if (justSaved) 2.dp else 1.dp
+    val borderColor = when {
+        justSaved -> Wa2Colors.Accent
+        locked -> Color(0xFFFFCA64)
+        slot == SaveStore.QUICK_SLOT || slot == SaveStore.AUTO_SLOT -> Wa2Colors.Accent
+        else -> Wa2Colors.AccentDim
+    }
     Column(
         Modifier
             .clip(shape)
-            .background(Color(0x55203050))
-            .border(1.dp, if (slot == SaveStore.QUICK_SLOT || slot == SaveStore.AUTO_SLOT) Wa2Colors.Accent else Wa2Colors.AccentDim, shape)
+            .background(if (justSaved) Color(0x77284570) else Color(0x55203050))
+            .border(borderWidth, borderColor, shape)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(6.dp),
     ) {
@@ -154,14 +227,55 @@ private fun SlotCard(slot: Int, meta: SlotMeta?, lang: DisplayLang, enabled: Boo
                     else -> "No.${slotName(slot)}"
                 },
                 color = Color.White, fontSize = 11.sp,
-                modifier = Modifier.background(Color(0x99000000)).padding(horizontal = 6.dp, vertical = 2.dp),
+                modifier = Modifier.align(Alignment.TopStart).background(Color(0x99000000)).padding(horizontal = 6.dp, vertical = 2.dp),
             )
+            if (onToggleLock != null) {
+                Row(
+                    Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xB3081020))
+                            .clickable(onClick = onToggleLock)
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(if (locked) "🔒" else "🔓", fontSize = 12.sp)
+                    }
+                    if (onDelete != null) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xB3281018))
+                                .clickable(onClick = onDelete)
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("🗑", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+            if (locked && mode == SaveLoadMode.SAVE) {
+                Text(
+                    "🔒 已锁定 Locked",
+                    color = Color(0xFFFFCA64), fontSize = 11.sp,
+                    modifier = Modifier.align(Alignment.BottomStart).background(Color(0xCC081020)).padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            } else if (justSaved) {
+                Text(
+                    "✓ 刚刚保存 Saved",
+                    color = Wa2Colors.Accent, fontSize = 11.sp,
+                    modifier = Modifier.align(Alignment.BottomStart).background(Color(0xCC081020)).padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
         }
         if (meta == null) {
             Text("— 空 Empty —", color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             Text(" ", fontSize = 11.sp)
         } else {
-            Text("${dateFormat.format(Date(meta.timestamp))}  ${sceneLabel(meta.scene)}", color = Wa2Colors.Accent, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+            val statusSuffix = if (locked) " · 🔒 已锁定" else ""
+            Text("${dateFormat.format(Date(meta.timestamp))}  ${sceneLabel(meta.scene)}$statusSuffix", color = Wa2Colors.Accent, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
             val preview = when (lang) {
                 DisplayLang.JP -> meta.previewJp
                 DisplayLang.CN -> meta.previewCn.ifBlank { meta.previewJp }

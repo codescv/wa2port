@@ -28,6 +28,7 @@ import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.engine.DialogueLine
+import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.MessageLayout.MAIN_PX
 import com.wa2port.core.text.MessageLayout.NAME_PX
@@ -45,8 +46,10 @@ private val TEXT_COLOR = Wa2Colors.Text.toArgb()
 private val SECONDARY_COLOR = Color(0xFFC9D6EA).toArgb()
 private val NAME_COLOR = Wa2Colors.Name.toArgb()
 
+private val NAME_DECODER by lazy { BilingualTextDecoder() }
+
 /** One language block to draw: text, language, size, colour, visible glyph limit. */
-private data class Block(
+internal data class Block(
     val rich: RichText,
     val lang: TextLang,
     val size: Float,
@@ -90,17 +93,22 @@ private fun blocksFor(line: DialogueLine, lang: DisplayLang, scale: Float, width
     }
 }
 
-/** Speaker name parts (CN first in 双 mode). */
-private fun nameBlocks(line: DialogueLine, lang: DisplayLang, scale: Float): List<Block> {
+/** Speaker name parts (CN first in 双 mode; deduplicated when CN and JP plain strings are identical, e.g. `武也`). */
+internal fun nameBlocks(line: DialogueLine, lang: DisplayLang, scale: Float, decoder: BilingualTextDecoder = NAME_DECODER): List<Block> {
     val jp = line.speakerJp?.takeIf { !it.isEmpty }
     val cn = line.speakerCn?.takeIf { !it.isEmpty }
     return when (lang) {
         DisplayLang.JP -> listOfNotNull(jp?.let { Block(it, TextLang.JP, NAME_PX * scale, NAME_COLOR, Int.MAX_VALUE) })
         DisplayLang.CN -> listOfNotNull((cn ?: jp)?.let { Block(it, if (cn != null) TextLang.CN else TextLang.JP, NAME_PX * scale, NAME_COLOR, Int.MAX_VALUE) })
-        DisplayLang.BOTH -> listOfNotNull(
-            cn?.let { Block(it, TextLang.CN, NAME_PX * scale, NAME_COLOR, Int.MAX_VALUE) },
-            jp?.let { Block(it, TextLang.JP, NAME_PX * 0.75f * scale, SECONDARY_COLOR, Int.MAX_VALUE) },
-        )
+        DisplayLang.BOTH -> {
+            val sameName = cn != null && jp != null &&
+                (cn.baseCodes().contentEquals(jp.baseCodes()) ||
+                    decoder.toPlain(cn, TextLang.CN).trim() == decoder.toPlain(jp, TextLang.JP).trim())
+            listOfNotNull(
+                cn?.let { Block(it, TextLang.CN, NAME_PX * scale, NAME_COLOR, Int.MAX_VALUE) },
+                jp?.takeUnless { sameName }?.let { Block(it, TextLang.JP, NAME_PX * 0.75f * scale, SECONDARY_COLOR, Int.MAX_VALUE) },
+            )
+        }
     }
 }
 
@@ -309,9 +317,11 @@ fun AdvWindow(
     }
 }
 
-private val VOICE_LABEL_PAINT = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-    color = Wa2Colors.Text.toArgb()
-    textAlign = android.graphics.Paint.Align.LEFT
+private val VOICE_LABEL_PAINT by lazy {
+    android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = Wa2Colors.Text.toArgb()
+        textAlign = android.graphics.Paint.Align.LEFT
+    }
 }
 
 /**
