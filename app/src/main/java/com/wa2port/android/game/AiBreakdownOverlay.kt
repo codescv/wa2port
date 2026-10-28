@@ -61,13 +61,17 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ai.AiBreakdownState
@@ -99,6 +103,8 @@ private val TEXTBOOK = Color(0xFF8FD3A8)
 private val EVOLVED = Color(0xFFFFA36B)
 private val ERROR = Color(0xFFFF8A80)
 private val OK = Color(0xFF8FD3A8)
+
+private val TIGHT_TEXT_STYLE = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
 
 /** Characters that must not begin a line (kinsoku shori). */
 private const val NO_LINE_START = "、。，．,.!！?？…‥」』）)】〕〉》ー～ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々"
@@ -140,33 +146,26 @@ fun AiBreakdownOverlay(
                 .padding(horizontal = 16.dp, vertical = 6.dp),
         ) {
             HeaderRow(state, ai, persona, onPersona, onClose)
-            BoxWithConstraints(Modifier.fillMaxSize()) {
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 if (maxWidth >= 640.dp) {
+                    val leftListState = rememberLazyListState()
+                    LaunchedEffect(state) { leftListState.scrollToItem(0) }
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Column(
+                        LazyColumn(
                             Modifier.weight(0.42f).fillMaxHeight(),
+                            state = leftListState,
+                            contentPadding = PaddingValues(bottom = 32.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            SentenceHeader(state, ai, onReplayVoice)
-                            LazyColumn(
-                                Modifier.weight(1f).fillMaxWidth(),
-                                contentPadding = PaddingValues(bottom = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                item(key = "summary") { SummaryBlock(state, ai, onOpenSettings) }
-                            }
+                            item(key = "sentence") { SentenceHeader(state, ai, onReplayVoice) }
+                            item(key = "summary") { SummaryBlock(state, ai, onOpenSettings) }
                         }
                         DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(0.58f).fillMaxHeight(), header = null)
                     }
                 } else {
-                    Column(
-                        Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
+                    DetailPane(state, ai, persona, onOpenSettings, Modifier.fillMaxSize()) {
                         SentenceHeader(state, ai, onReplayVoice)
-                        DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(1f).fillMaxWidth()) {
-                            SummaryBlock(state, ai, onOpenSettings)
-                        }
+                        SummaryBlock(state, ai, onOpenSettings)
                     }
                 }
             }
@@ -286,6 +285,9 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
             }
         }
         val hasAnyRuby = remember(tokens) { tokens.any { !it.ruby.isNullOrBlank() } }
+        val density = LocalDensity.current
+        val rubyBoxH = with(density) { 13.sp.toDp() }
+        val baseBoxH = with(density) { 30.sp.toDp() }
         FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             groups.forEach { (ruby, starts) ->
                 Column(
@@ -293,16 +295,27 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                     verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
                     if (hasAnyRuby) {
-                        Text(ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1)
+                        Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
+                            if (!ruby.isNullOrBlank()) {
+                                Text(
+                                    ruby,
+                                    color = Wa2Colors.TextDim,
+                                    fontSize = 9.sp,
+                                    lineHeight = 10.sp,
+                                    maxLines = 1,
+                                    style = TIGHT_TEXT_STYLE,
+                                )
+                            }
+                        }
                     }
-                    Row {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         starts.forEach { idx ->
                             val ch = String(Character.toChars(text.codePointAt(idx)))
                             val inChunk = active != null && !active.span.isEmpty && idx in active.span
                             val isFocus = idx == focus
-                            Text(
-                                ch, color = Wa2Colors.Text, fontSize = 24.sp,
+                            Box(
                                 modifier = Modifier
+                                    .height(baseBoxH)
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(if (inChunk) Wa2Colors.Accent.copy(alpha = 0.22f) else Color.Transparent)
                                     .drawBehind {
@@ -312,7 +325,16 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                                     }
                                     .clickable { ai.selectChar(idx) }
                                     .padding(horizontal = 1.dp),
-                            )
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    ch,
+                                    color = Wa2Colors.Text,
+                                    fontSize = 24.sp,
+                                    lineHeight = 26.sp,
+                                    style = TIGHT_TEXT_STYLE,
+                                )
+                            }
                         }
                     }
                 }
@@ -348,7 +370,7 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
         if (!state.isSkeleton) TranslationCard(state, expl)
         if (expl != null && expl.chunks.isNotEmpty()) {
             Text("意群 Chunks", color = Wa2Colors.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val active = state.activeChunk
                 expl.chunks.forEach { c ->
                     // From the chunk strip: also scroll the matching card into view in the detail pane.
@@ -377,16 +399,17 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
             val speaker = listOfNotNull(state.speakerJp, state.speakerCn?.takeIf { it != state.speakerJp }).joinToString(" · ")
             Text(speaker.ifEmpty { "（旁白 / 内心独白）" }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 13.sp)
             if (showSentence && expl != null) {
+                val hasAnyRuby = expl.ruby.any { !it.ruby.isNullOrBlank() }
                 FlowRow(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     expl.ruby.forEach { t ->
                         if (t.ruby != null) {
-                            RubyCell(t.ruby, t.base)
+                            RubyCell(t.ruby, t.base, showRuby = hasAnyRuby)
                         } else {
                             // Ruby-less runs break per character so long kana runs wrap.
                             var i = 0
                             while (i < t.base.length) {
                                 val n = Character.charCount(t.base.codePointAt(i))
-                                RubyCell(null, t.base.substring(i, i + n))
+                                RubyCell(null, t.base.substring(i, i + n), showRuby = hasAnyRuby)
                                 i += n
                             }
                         }
@@ -421,10 +444,37 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
 
 /** One furigana cell (reading over base) of the skeleton card's sentence. */
 @Composable
-private fun RubyCell(ruby: String?, base: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, maxLines = 1)
-        Text(base, color = Wa2Colors.Text, fontSize = 16.sp)
+private fun RubyCell(ruby: String?, base: String, showRuby: Boolean = true) {
+    val density = LocalDensity.current
+    val rubyBoxH = with(density) { 13.sp.toDp() }
+    val baseBoxH = with(density) { 22.sp.toDp() }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        if (showRuby) {
+            Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
+                if (!ruby.isNullOrBlank()) {
+                    Text(
+                        ruby,
+                        color = Wa2Colors.TextDim,
+                        fontSize = 9.sp,
+                        lineHeight = 10.sp,
+                        maxLines = 1,
+                        style = TIGHT_TEXT_STYLE,
+                    )
+                }
+            }
+        }
+        Box(Modifier.height(baseBoxH), contentAlignment = Alignment.Center) {
+            Text(
+                base,
+                color = Wa2Colors.Text,
+                fontSize = 16.sp,
+                lineHeight = 18.sp,
+                style = TIGHT_TEXT_STYLE,
+            )
+        }
     }
 }
 
@@ -501,7 +551,7 @@ private fun DetailPane(
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = skeletonListState,
-                contentPadding = PaddingValues(bottom = 12.dp),
+                contentPadding = PaddingValues(bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
@@ -533,7 +583,7 @@ private fun FullDetailList(
     LazyColumn(
         Modifier.fillMaxSize(),
         state = listState,
-        contentPadding = PaddingValues(bottom = 12.dp),
+        contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
@@ -731,16 +781,42 @@ private fun FormalityBar(level: Int) {
 
 /** Inline furigana line (non-interactive). */
 @Composable
-private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: androidx.compose.ui.unit.TextUnit) {
+private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit) {
+    val density = LocalDensity.current
+    val rubyBoxH = with(density) { 13.sp.toDp() }
+    val baseBoxH = with(density) { (size.value + 6f).sp.toDp() }
+    val lineH = (size.value + 2f).sp
     if (tokens.none { !it.ruby.isNullOrBlank() }) {
-        Text(fallback, color = Wa2Colors.Text, fontSize = size)
+        Box(Modifier.height(baseBoxH), contentAlignment = Alignment.Center) {
+            Text(fallback, color = Wa2Colors.Text, fontSize = size, lineHeight = lineH, style = TIGHT_TEXT_STYLE)
+        }
         return
     }
-    Row(verticalAlignment = Alignment.Bottom) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         tokens.forEach { t ->
+            val r = t.ruby
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                Text(t.ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1)
-                Text(t.base, color = Wa2Colors.Text, fontSize = size)
+                Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
+                    if (!r.isNullOrBlank()) {
+                        Text(
+                            r,
+                            color = Wa2Colors.TextDim,
+                            fontSize = 9.sp,
+                            lineHeight = 10.sp,
+                            maxLines = 1,
+                            style = TIGHT_TEXT_STYLE,
+                        )
+                    }
+                }
+                Box(Modifier.height(baseBoxH), contentAlignment = Alignment.Center) {
+                    Text(
+                        t.base,
+                        color = Wa2Colors.Text,
+                        fontSize = size,
+                        lineHeight = lineH,
+                        style = TIGHT_TEXT_STYLE,
+                    )
+                }
             }
         }
     }
