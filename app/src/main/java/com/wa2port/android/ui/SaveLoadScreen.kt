@@ -53,7 +53,10 @@ fun SaveLoadScreen(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPi
     }
 }
 
-/** Grid of the quick slot + 24 slots with thumbnail, timestamp, scene and preview text. */
+/**
+ * Grid of the quick slot + 24 slots with thumbnail, timestamp, scene and preview text. LOAD also
+ * shows the autosave (`自动 AUTO`) first; SAVE never offers it (autosave is automatic).
+ */
 @Composable
 fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPick: suspend (Int) -> Unit, onClose: () -> Unit) {
     var metas by remember { mutableStateOf<Map<Int, SlotMeta>>(emptyMap()) }
@@ -83,7 +86,8 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(listOf(SaveStore.QUICK_SLOT) + (1..SaveStore.SLOT_COUNT).toList(), key = { it }) { slot ->
+            val slots = if (mode == SaveLoadMode.LOAD) SaveStore.CONTINUABLE_SLOTS else SaveStore.CONTINUABLE_SLOTS - SaveStore.AUTO_SLOT
+            items(slots, key = { it }) { slot ->
                 val meta = metas[slot]
                 SlotCard(slot, meta, lang, enabled = mode == SaveLoadMode.SAVE || meta != null) {
                     if (mode == SaveLoadMode.SAVE && meta != null) confirmSlot = slot else pick(slot)
@@ -103,7 +107,24 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
 
 private val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
 
-private fun slotName(slot: Int) = if (slot == SaveStore.QUICK_SLOT) "Q" else "%02d".format(Locale.ROOT, slot)
+private fun slotName(slot: Int) = when (slot) {
+    SaveStore.QUICK_SLOT -> "Q"
+    SaveStore.AUTO_SLOT -> "AUTO"
+    else -> "%02d".format(Locale.ROOT, slot)
+}
+
+/** Short relative age of a save for the title 「继续」 subtitle (e.g. `3 分钟前`), falling back to the date. */
+fun relativeTimeText(timestamp: Long, now: Long = System.currentTimeMillis()): String {
+    val diff = (now - timestamp).coerceAtLeast(0L)
+    val min = diff / 60_000L
+    return when {
+        min < 1 -> "刚刚 just now"
+        min < 60 -> "$min 分钟前"
+        min < 24 * 60 -> "${min / 60} 小时前"
+        min < 7 * 24 * 60 -> "${min / (24 * 60)} 天前"
+        else -> dateFormat.format(Date(timestamp))
+    }
+}
 
 /** Human label for a scene id (`1xxx` = IC, `2xxx` = CC, `3xxx` = coda). */
 fun sceneLabel(scene: String): String = when (scene.firstOrNull()) {
@@ -120,14 +141,18 @@ private fun SlotCard(slot: Int, meta: SlotMeta?, lang: DisplayLang, enabled: Boo
         Modifier
             .clip(shape)
             .background(Color(0x55203050))
-            .border(1.dp, if (slot == SaveStore.QUICK_SLOT) Wa2Colors.Accent else Wa2Colors.AccentDim, shape)
+            .border(1.dp, if (slot == SaveStore.QUICK_SLOT || slot == SaveStore.AUTO_SLOT) Wa2Colors.Accent else Wa2Colors.AccentDim, shape)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(6.dp),
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(Color(0xFF0A0E18))) {
             meta?.thumbnail?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             Text(
-                if (slot == SaveStore.QUICK_SLOT) "QUICK" else "No.${slotName(slot)}",
+                when (slot) {
+                    SaveStore.QUICK_SLOT -> "快速 QUICK"
+                    SaveStore.AUTO_SLOT -> "自动 AUTO"
+                    else -> "No.${slotName(slot)}"
+                },
                 color = Color.White, fontSize = 11.sp,
                 modifier = Modifier.background(Color(0x99000000)).padding(horizontal = 6.dp, vertical = 2.dp),
             )

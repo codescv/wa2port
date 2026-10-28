@@ -18,6 +18,7 @@ import com.wa2port.android.data.ImportProgress
 import com.wa2port.android.data.SafImporter
 import com.wa2port.android.data.SaveStore
 import com.wa2port.android.data.Settings
+import com.wa2port.android.data.SlotMeta
 import com.wa2port.android.data.SettingsStore
 import com.wa2port.android.game.GameSession
 import com.wa2port.android.update.UpdateController
@@ -78,8 +79,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** In-app update check / APK download (manual only); APKs live in `cacheDir/updates`. */
     val update = UpdateController(app, viewModelScope)
 
+    /** Newest resumable save (auto / quick / 1..24, never undo) for the title 「继续 Continue」. */
+    var latestContinuable by mutableStateOf<SlotMeta?>(null)
+        private set
+
     init {
         rescanAssets()
+        refreshContinuable()
+    }
+
+    /** Re-reads [latestContinuable], after [after] (e.g. a pending autosave write) has finished. */
+    fun refreshContinuable(after: Job? = null) {
+        viewModelScope.launch {
+            after?.join()
+            latestContinuable = runCatching { saves.latestContinuable() }.getOrNull()
+        }
+    }
+
+    /** Title 「继续」: loads the newest save. */
+    fun continueLatest() {
+        latestContinuable?.let { loadGame(it.slot) }
     }
 
     // ------------------------------------------------------------------ navigation
@@ -183,7 +202,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         ai.close(session)
         session?.dispose()
-        val s = GameSession(e, backend!!, saves, systemFile) { settings }
+        val s = GameSession(e, backend!!, saves, systemFile, viewModelScope) { settings }
         s.audio.setVolumes(settings.bgmVolume / 100f, settings.seVolume / 100f, settings.voiceVolume / 100f)
         session = s
         return s
@@ -249,8 +268,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun exitToTitle() {
+    /**
+     * Leaves the game. [autoSave] = true (menu 「返回标题」 only — never the engine-failure path)
+     * first writes `auto.json` so 「继续」 resumes exactly here.
+     */
+    fun exitToTitle(autoSave: Boolean = false) {
         ai.close(session)
+        val saveJob = if (autoSave) session?.autoSave(captureThumb = true) else null
         val wasReplay = session?.inReplayMode == true
         session?.dispose()
         session = null
@@ -261,6 +285,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             resetTo(Screen.Title)
         }
+        refreshContinuable(saveJob)
     }
 
     /** Memory pressure: drop decoded bitmaps. */

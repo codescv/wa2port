@@ -8,16 +8,24 @@ import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -28,6 +36,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import java.io.File
@@ -91,16 +101,83 @@ private class MovieClock {
 }
 
 /**
+ * "Tap again to skip" guard for movies seen for the first time. While [isFirstView], the first skip
+ * request (tap / Back) only shows the hint pill ([MovieSkipPill]) for [HINT_MS]; a second request
+ * while the pill is visible skips. Already-watched movies skip on the first request.
+ */
+@Stable
+class MovieSkipGate(val isFirstView: Boolean) {
+    /** Non-zero while the hint pill is shown; bumped on every hint so its timer restarts. */
+    var hintToken by mutableLongStateOf(0L)
+        private set
+
+    val hintVisible: Boolean get() = hintToken != 0L
+
+    private var seq = 0L
+
+    /** True = skip now; false = the hint was shown instead (first view, first request). */
+    fun requestSkip(): Boolean {
+        if (!isFirstView || hintVisible) return true
+        hintToken = ++seq
+        return false
+    }
+
+    /** Hides the hint pill [token] (no-op if a newer hint replaced it). */
+    fun expireHint(token: Long) {
+        if (hintToken == token) hintToken = 0L
+    }
+
+    companion object {
+        const val HINT_MS = 2200L
+    }
+}
+
+/** Skip gate of the movie being played (provided by the game screen; null = tap skips at once). */
+val LocalMovieSkipGate = staticCompositionLocalOf<MovieSkipGate?> { null }
+
+/** Bottom-right 「再点一次跳过影片 ▶▶ / Tap again to skip」 pill while [gate]'s hint is visible. */
+@Composable
+fun MovieSkipPill(gate: MovieSkipGate, modifier: Modifier = Modifier) {
+    val token = gate.hintToken
+    if (token == 0L) return
+    LaunchedEffect(token) {
+        delay(MovieSkipGate.HINT_MS)
+        gate.expireHint(token)
+    }
+    Box(modifier.fillMaxSize()) {
+        Text(
+            "再点一次跳过影片 ▶▶ / Tap again to skip",
+            color = Color.White, fontSize = 14.sp,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
+                .background(Color(0xCC101A30), RoundedCornerShape(50))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+    }
+}
+
+/**
  * Full-screen player for an original WA2 movie ([file] = `mvNN0.pak`, raw ASF) using
  * [NativeMovieDecoder]: audio through [AudioTrack], video paced by the audio clock, letterboxed to
  * the movie's display aspect on black, tap to skip, paused while the host lifecycle is paused.
+ * [isFirstView] (default: from [LocalMovieSkipGate]): the first tap only shows the "tap again to
+ * skip" pill, a second tap within [MovieSkipGate.HINT_MS] skips.
  *
  * [onFinished] is invoked exactly once, on the main thread: at the end of the movie, on tap, or
  * immediately when the file cannot be opened. Check [NativeMovieDecoder.isAvailable] first if a
  * fallback is wanted.
  */
 @Composable
-fun AsfMoviePlayer(file: File, onFinished: () -> Unit, modifier: Modifier = Modifier) {
+fun AsfMoviePlayer(
+    file: File,
+    onFinished: () -> Unit,
+    modifier: Modifier = Modifier,
+    isFirstView: Boolean = LocalMovieSkipGate.current?.isFirstView ?: false,
+) {
+    val provided = LocalMovieSkipGate.current
+    // Share the host's gate (so Back and taps count together); own one otherwise.
+    val gate = remember(file, provided, isFirstView) {
+        provided?.takeIf { it.isFirstView == isFirstView } ?: MovieSkipGate(isFirstView)
+    }
     val finish = rememberUpdatedState(onFinished)
     val done = remember(file) { BooleanArray(1) }
     val complete: () -> Unit = {
@@ -158,26 +235,30 @@ fun AsfMoviePlayer(file: File, onFinished: () -> Unit, modifier: Modifier = Modi
         }
     }
 
-    Canvas(
-        modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(file) { detectTapGestures(onTap = { complete() }) },
-    ) {
-        // Reading frameNo subscribes the draw to every new frame (the bitmaps are reused).
-        if (frameNo < 0 || size == Size.Zero) return@Canvas
-        val img = frame ?: return@Canvas
-        // Letterbox / pillarbox to the display aspect.
-        val (dw, dh) = if (size.width / size.height > aspect) Pair(size.height * aspect, size.height)
-        else Pair(size.width, size.width / aspect)
-        drawImage(
-            image = img,
-            srcOffset = IntOffset.Zero,
-            srcSize = IntSize(img.width, img.height),
-            dstOffset = IntOffset(((size.width - dw) / 2).roundToInt(), ((size.height - dh) / 2).roundToInt()),
-            dstSize = IntSize(dw.roundToInt(), dh.roundToInt()),
-            filterQuality = FilterQuality.Low,
-        )
+    Box(modifier.fillMaxSize()) {
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .pointerInput(file, gate) { detectTapGestures(onTap = { if (gate.requestSkip()) complete() }) },
+        ) {
+            // Reading frameNo subscribes the draw to every new frame (the bitmaps are reused).
+            if (frameNo < 0 || size == Size.Zero) return@Canvas
+            val img = frame ?: return@Canvas
+            // Letterbox / pillarbox to the display aspect.
+            val (dw, dh) = if (size.width / size.height > aspect) Pair(size.height * aspect, size.height)
+            else Pair(size.width, size.width / aspect)
+            drawImage(
+                image = img,
+                srcOffset = IntOffset.Zero,
+                srcSize = IntSize(img.width, img.height),
+                dstOffset = IntOffset(((size.width - dw) / 2).roundToInt(), ((size.height - dh) / 2).roundToInt()),
+                dstSize = IntSize(dw.roundToInt(), dh.roundToInt()),
+                filterQuality = FilterQuality.Low,
+            )
+        }
+        // The host draws the pill for a shared gate (it also covers non-ASF players).
+        if (gate !== provided) MovieSkipPill(gate)
     }
 }
 

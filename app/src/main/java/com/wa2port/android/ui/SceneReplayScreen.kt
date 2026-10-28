@@ -109,9 +109,12 @@ fun SceneReplayScreen(
         lang = vm.settings.lang,
         onLaunchReplay = { entry -> vm.startReplay(entry.slotNumber, entry.scriptName) },
         onClose = onClose,
+        showAll = vm.settings.galleryShowAll,
+        onShowAllChange = { on -> vm.updateSettings { it.copy(galleryShowAll = on) } },
     )
 }
 
+/** [showAll] = `解锁全部 Show All` (persisted as `Settings.galleryShowAll`, off by default). */
 @Composable
 private fun SceneReplayContent(
     assets: Wa2Assets,
@@ -120,9 +123,10 @@ private fun SceneReplayContent(
     lang: DisplayLang,
     onLaunchReplay: (SceneReplayEntry) -> Unit,
     onClose: () -> Unit,
+    showAll: Boolean,
+    onShowAllChange: (Boolean) -> Unit,
 ) {
     var filter by rememberSaveable { mutableStateOf(ReplayFilter.ALL) }
-    var showAll by rememberSaveable { mutableStateOf(true) }
 
     val thumbCache = remember(assets) {
         object : LruCache<String, ImageBitmap>(64) {}
@@ -185,7 +189,7 @@ private fun SceneReplayContent(
                     .clip(toggleShape)
                     .background(if (showAll) Wa2Colors.ButtonActive else Wa2Colors.Button)
                     .border(BorderStroke(1.dp, if (showAll) Wa2Colors.Accent else Wa2Colors.Border), toggleShape)
-                    .clickable { showAll = !showAll }
+                    .clickable { onShowAllChange(!showAll) }
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {

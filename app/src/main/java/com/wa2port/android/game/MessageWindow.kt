@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -20,7 +21,9 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
 import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.ui.Wa2Colors
@@ -134,7 +137,8 @@ private fun DrawScope.drawWaitMark(x: Float, y: Float, s: Float, alpha: Float) {
 
 /**
  * Geometry of the Japanese text block last drawn by [AdvWindow] (stage-box px), captured during draw
- * for tap-to-analyze. Reset at the start of every draw; null when no JP block is visible (中文 mode).
+ * for tap-to-analyze, plus the `🔊 重听` button's touch target ([voiceRect], null when the line has no
+ * voice). Reset at the start of every draw; [jp] is null when no JP block is visible (中文 mode).
  * Pure geometry: writing it never triggers recomposition.
  */
 class AdvHitBox {
@@ -153,10 +157,21 @@ class AdvHitBox {
     @Volatile
     var jp: JpBox? = null
 
+    /**
+     * Touch target of the `🔊 重听` pill (stage-box px, ≥ 48 dp square, entirely above the first text
+     * line so it never steals a glyph tap), or null when the current line has no voice.
+     */
+    @Volatile
+    var voiceRect: Rect? = null
+
+    /** Minimum horizontal glyph hit tolerance (px; 12 dp, set during draw). */
+    @Volatile
+    var minTolPx: Float = 0f
+
     /** Glyph index ([RichText.baseCodes] order) of the JP glyph under [p] (stage-box px), or −1. */
     fun glyphAt(painter: TextPainter, p: Offset): Int {
         val b = jp ?: return -1
-        val tol = b.sizePx * 0.35f
+        val tol = maxOf(b.sizePx * 0.35f, minTolPx)
         if (p.x < b.x - tol || p.x > b.x + b.width + tol || p.y < b.y || p.y > b.clipBottom) return -1
         return painter.glyphIndexAt(b.rich, TextLang.JP, b.width, b.sizePx, b.maxChars, b.reflow, p.x - b.x, p.y - b.y, b.visibleGlyphs)
     }
@@ -191,6 +206,8 @@ fun AdvWindow(
     val blink = rememberBlink()
     Canvas(modifier) {
         hitBox?.jp = null
+        hitBox?.voiceRect = null
+        hitBox?.minTolPx = 12.dp.toPx()
         val scale = size.height / 720f * textScale
         val stageScale = size.height / 720f
         val left = size.width * MessageLayout.ADV_LEFT
@@ -224,6 +241,11 @@ fun AdvWindow(
         }
         // Text, stepped down in size (fitSteps) until it fits the window; clipped as a last resort.
         val textTop = top + pad * (if (names.isNotEmpty()) 1.25f else 1f)
+        // 🔊 重听: pill at the right end of the nameplate row; 1 tap replays the voice (no advance).
+        if (line.ref.voice != null) {
+            val r = drawVoicePill(right - pad, top, textTop, stageScale, opacity)
+            hitBox?.voiceRect = r
+        }
         val avail = bottom - pad * 0.6f - textTop
         val width = right - left - pad * 2
         val gap = 8f * stageScale
@@ -285,6 +307,60 @@ fun AdvWindow(
         }
         if (waiting) drawWaitMark(right - pad, bottom - pad * 0.9f, 9f * stageScale, blink)
     }
+}
+
+private val VOICE_LABEL_PAINT = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    color = Wa2Colors.Text.toArgb()
+    textAlign = android.graphics.Paint.Align.LEFT
+}
+
+/**
+ * Draws the `🔊 重听` pill whose right edge is [pillRight], straddling the window top edge [top]
+ * like the name box, and returns its touch target: at least 48 dp × 48 dp, bottom-aligned just
+ * above [textTop] (the first text line) and growing upwards into the stage, so it never covers a
+ * glyph.
+ */
+private fun DrawScope.drawVoicePill(pillRight: Float, top: Float, textTop: Float, stageScale: Float, opacity: Float): Rect {
+    val h = 36f * stageScale
+    val w = 92f * stageScale
+    val l = pillRight - w
+    val t = top - h * 0.55f
+    val shape = CornerRadius(h / 2f)
+    drawRoundRect(Color(0xFF16284A).copy(alpha = 0.45f + 0.5f * opacity), Offset(l, t), Size(w, h), shape)
+    drawRoundRect(Wa2Colors.Accent.copy(alpha = 0.85f), Offset(l, t), Size(w, h), shape, style = Stroke(1.5f * stageScale))
+    // Speaker icon: body + cone + two sound waves.
+    val cy = t + h / 2f
+    val ix = l + 14f * stageScale
+    val u = 5f * stageScale
+    val accent = Wa2Colors.Accent
+    val speaker = Path().apply {
+        moveTo(ix, cy - u * 0.8f); lineTo(ix + u, cy - u * 0.8f); lineTo(ix + u * 2.2f, cy - u * 1.8f)
+        lineTo(ix + u * 2.2f, cy + u * 1.8f); lineTo(ix + u, cy + u * 0.8f); lineTo(ix, cy + u * 0.8f); close()
+    }
+    drawPath(speaker, accent)
+    val waveCx = ix + u * 1.2f
+    for (k in 1..2) {
+        val rr = u * (1.6f + 0.9f * k)
+        drawArc(
+            accent, -45f, 90f, useCenter = false, topLeft = Offset(waveCx - rr, cy - rr), size = Size(rr * 2f, rr * 2f),
+            style = Stroke(1.6f * stageScale),
+        )
+    }
+    // Label (system font: the game glyph atlas has no UI glyphs).
+    val label = "重听"
+    drawIntoCanvas { c ->
+        VOICE_LABEL_PAINT.textSize = 17f * stageScale
+        val fm = VOICE_LABEL_PAINT.fontMetrics
+        c.nativeCanvas.drawText(label, l + 44f * stageScale, cy - (fm.ascent + fm.descent) / 2f, VOICE_LABEL_PAINT)
+    }
+    // Touch target ≥ 48 dp in both directions, never reaching the first text line.
+    val minPx = 48.dp.toPx()
+    val tw = maxOf(w + 16f * stageScale, minPx)
+    val bottom = textTop - 2f * stageScale
+    val th = maxOf(bottom - (t - 8f * stageScale), minPx)
+    val cx = l + w / 2f
+    val rl = (cx - tw / 2f).coerceAtMost(size.width - tw).coerceAtLeast(0f)
+    return Rect(rl, bottom - th, rl + tw, bottom)
 }
 
 /**

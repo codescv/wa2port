@@ -119,11 +119,15 @@ fun CgGalleryScreen(
         system = system,
         imageCache = imageCache,
         onClose = onClose,
+        showAll = vm.settings.galleryShowAll,
+        onShowAllChange = { on -> vm.updateSettings { it.copy(galleryShowAll = on) } },
     )
 }
 
 /**
  * Stateless/injectable overload of [CgGalleryScreen] taking [Wa2Assets], [SystemData], and [AssetImageCache].
+ * [showAll] (`解锁全部 Show All`, persisted as `Settings.galleryShowAll`, off by default) is hoisted:
+ * while off, locked cards render as silhouettes and their CG is never decoded.
  */
 @Composable
 fun CgGalleryScreen(
@@ -131,10 +135,11 @@ fun CgGalleryScreen(
     system: SystemData,
     imageCache: AssetImageCache,
     onClose: () -> Unit,
+    showAll: Boolean = false,
+    onShowAllChange: (Boolean) -> Unit = {},
 ) {
     var gallery by remember(assets) { mutableStateOf<CgGallery?>(null) }
     var filter by rememberSaveable { mutableStateOf(CgFilter.ALL) }
-    var showAll by rememberSaveable { mutableStateOf(true) }
     var viewerGroupId by rememberSaveable { mutableStateOf<String?>(null) }
 
     // Cache of downscaled 320x180 ImageBitmaps so scrolling the grid stays fast even after full-res eviction.
@@ -195,7 +200,7 @@ fun CgGalleryScreen(
 
                 ShowAllToggle(
                     checked = showAll,
-                    onToggle = { showAll = !showAll },
+                    onToggle = { onShowAllChange(!showAll) },
                 )
 
                 CloseButton(onClose)

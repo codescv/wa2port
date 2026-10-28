@@ -118,18 +118,22 @@ fun BgmGalleryScreen(
         system = system,
         audio = audio,
         onClose = onClose,
+        showAll = vm.settings.galleryShowAll,
+        onShowAllChange = { on -> vm.updateSettings { it.copy(galleryShowAll = on) } },
     )
 }
 
+/** [showAll] = `解锁全部 Show All` (persisted as `Settings.galleryShowAll`, off by default). */
 @Composable
 private fun BgmGalleryContent(
     assets: Wa2Assets,
     system: SystemData,
     audio: AudioEngine,
     onClose: () -> Unit,
+    showAll: Boolean,
+    onShowAllChange: (Boolean) -> Unit,
 ) {
     var filter by rememberSaveable { mutableStateOf(BgmFilter.ALL) }
-    var showAll by rememberSaveable { mutableStateOf(true) }
     var currentSlot by rememberSaveable { mutableIntStateOf(0) }
     var isPlaying by rememberSaveable { mutableStateOf(false) }
     var isPaused by rememberSaveable { mutableStateOf(false) }
@@ -243,7 +247,7 @@ private fun BgmGalleryContent(
                     .clip(toggleShape)
                     .background(if (showAll) Wa2Colors.ButtonActive else Wa2Colors.Button)
                     .border(BorderStroke(1.dp, if (showAll) Wa2Colors.Accent else Wa2Colors.Border), toggleShape)
-                    .clickable { showAll = !showAll }
+                    .clickable { onShowAllChange(!showAll) }
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {

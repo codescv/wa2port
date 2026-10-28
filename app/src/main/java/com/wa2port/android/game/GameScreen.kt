@@ -3,20 +3,25 @@ package com.wa2port.android.game
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -33,6 +38,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
@@ -45,6 +51,9 @@ import com.wa2port.android.AppViewModel
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.data.SaveStore
 import com.wa2port.android.data.WindowMode
+import com.wa2port.android.movie.LocalMovieSkipGate
+import com.wa2port.android.movie.MovieSkipGate
+import com.wa2port.android.movie.MovieSkipPill
 import com.wa2port.android.ui.ConfigPanel
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadPanel
@@ -55,6 +64,7 @@ import com.wa2port.core.text.TextScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 private enum class BarPlacement { SIDE, TOP, OVERLAY }
 
@@ -105,6 +115,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     session.holdSkip(false)
                     session.audio.pause()
                     scope.launch { session.persistSystem() }
+                    // Autosave for 「继续」 (no stage capture: the surface may be going away).
+                    session.autoSave(captureThumb = false)
                 }
                 Lifecycle.Event.ON_RESUME -> {
                     session.paused = false
@@ -124,10 +136,27 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             session.toast = null
         }
     }
+    val undoToken = session.undoAction?.token
+    LaunchedEffect(undoToken) {
+        if (undoToken != null) {
+            delay(GameSession.UNDO_WINDOW_MS)
+            if (session.undoAction?.token == undoToken) session.undoAction = null
+        }
+    }
+
+    // Movie: first views need a second tap / Back within 2.2 s to skip ("tap again to skip").
+    val movieStem = session.movie
+    val movieKey = movieStem?.lowercase(Locale.ROOT)
+    val movieGate = remember(movieStem) { movieKey?.let { MovieSkipGate(isFirstView = it !in vm.settings.viewedMovies) } }
+    fun finishMovie() {
+        val key = session.movie?.lowercase(Locale.ROOT) ?: return
+        vm.updateSettings { it.copy(viewedMovies = it.viewedMovies + key) }
+        session.movieFinished()
+    }
 
     BackHandler {
         when {
-            session.movie != null -> session.movieFinished()
+            session.movie != null -> if (movieGate?.requestSkip() != false) finishMovie()
             vm.ai.breakdown != null -> vm.ai.close(session)
             session.overlay != Overlay.NONE -> session.overlay = Overlay.NONE
             session.windowHidden -> session.windowHidden = false
@@ -214,7 +243,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val advHit = remember(session) { AdvHitBox() }
         val gestureHandler = remember(session) {
             StageGestureHandler(
-                onTap = { p -> if (!tryAiTap(vm, session, advHit, p)) session.onTap() },
+                // 🔊 重听 first, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
+                onTap = { p -> if (!tryVoiceTap(vm, session, advHit, p) && !tryAiTap(vm, session, advHit, p)) session.onTap() },
                 onLongPressStart = { if (!session.windowHidden && session.choices.isEmpty()) session.holdSkip(true) },
                 onLongPressEnd = { session.holdSkip(false) },
                 onSwipeUp = { session.overlay = Overlay.BACKLOG },
@@ -263,18 +293,38 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale) - 0.015f),
                 )
             }
-            // Mode indicators (+ ✨ 点词 while tap-to-analyze changes the meaning of taps on JP text).
-            val modes = listOfNotNull(
-                if (session.skipping) "SKIP ▶▶" else if (session.autoMode) "AUTO ▶" else null,
-                if (settings.aiTapToAnalyze && !novel) "✨ 点词" else null,
-            )
-            if (modes.isNotEmpty()) {
-                Text(
-                    modes.joinToString("  "),
-                    color = Wa2Colors.Accent, fontSize = 13.sp,
-                    modifier = Modifier.align(Alignment.TopStart).padding(12.dp)
-                        .background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
-                )
+            // Mode indicators (+ ✨ 点词 while tap-to-analyze changes the meaning of taps on JP text;
+            // the 点词 badge is itself the off switch).
+            val mode = if (session.skipping) "SKIP ▶▶" else if (session.autoMode) "AUTO ▶" else null
+            val tapBadge = settings.aiTapToAnalyze && !novel
+            if (mode != null || tapBadge) {
+                Row(Modifier.align(Alignment.TopStart).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (mode != null) {
+                        Text(
+                            mode, color = Wa2Colors.Accent, fontSize = 13.sp,
+                            modifier = Modifier.padding(4.dp)
+                                .background(Color(0x99000000), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                    if (tapBadge) {
+                        Box(
+                            Modifier.heightIn(min = 36.dp).clip(RoundedCornerShape(18.dp))
+                                .clickable {
+                                    vm.updateSettings { it.copy(aiTapToAnalyze = false) }
+                                    session.toast = "已关闭点词解析 Tap-to-analyze off"
+                                }
+                                .padding(4.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "✨ 点词 ×", color = Wa2Colors.Accent, fontSize = 12.sp,
+                                modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(12.dp))
+                                    .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
             if (placement == BarPlacement.OVERLAY && !session.windowHidden && session.overlay == Overlay.NONE) {
                 Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
@@ -316,7 +366,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 onLoad = { if (!session.inReplayMode) session.overlay = Overlay.LOAD },
                 onLog = { session.overlay = Overlay.BACKLOG },
                 onConfig = { session.overlay = Overlay.CONFIG },
-                onTitle = { vm.exitToTitle() },
+                onTitle = { vm.exitToTitle(autoSave = true) },
             )
             Overlay.BACKLOG -> {
                 val entries = remember { session.backlog() }
@@ -337,7 +387,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             }
             Overlay.LOAD -> Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
                 SaveLoadPanel(SaveLoadMode.LOAD, vm.saves, settings.lang, onPick = { slot ->
-                    if (session.loadFrom(slot)) session.toast = "已读取 Loaded" else session.toast = "读档失败 Load failed"
+                    // Success shows the 「已读取存档 · 撤销 Undo」 pill (plain toast when nothing to undo).
+                    if (!session.loadFrom(slot)) session.toast = "读档失败 Load failed" else if (session.undoAction == null) session.toast = "已读取 Loaded"
                 }, onClose = { session.overlay = Overlay.NONE })
             }
             Overlay.CONFIG -> Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
@@ -365,19 +416,59 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             )
         }
 
+        // 「撤销 Undo」 pill after an in-session load / quick save (expires after UNDO_WINDOW_MS).
+        val undo = session.undoAction
+        if (undo != null) {
+            Row(
+                Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                    .background(Color(0xE6101A30), RoundedCornerShape(24.dp))
+                    .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(24.dp))
+                    .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(undo.message, color = Wa2Colors.Text, fontSize = 14.sp)
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(22.dp))
+                        .clickable { scope.launch { undo.perform() } }
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text("撤销 Undo", color = Wa2Colors.Accent, fontSize = 14.sp) }
+            }
+        }
+
         // Toasts stay visible above overlays and the AI sheet (e.g. "Saved", persona switched).
         session.toast?.let {
             Text(
                 it, color = Wa2Colors.Text, fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp)
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (undo != null) 68.dp else 16.dp)
                     .background(Color(0xCC101A30), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
 
-        session.movie?.let { stem ->
-            session.backend.Movie(stem, onFinished = { session.movieFinished() }, modifier = Modifier.fillMaxSize())
+        if (movieStem != null && movieGate != null) {
+            CompositionLocalProvider(LocalMovieSkipGate provides movieGate) {
+                session.backend.Movie(movieStem, onFinished = { finishMovie() }, modifier = Modifier.fillMaxSize())
+            }
+            // First view: swallow the first tap (any movie backend) and show the hint instead.
+            if (movieGate.isFirstView && !movieGate.hintVisible) {
+                Box(Modifier.fillMaxSize().pointerInput(movieGate) { detectTapGestures(onTap = { movieGate.requestSkip() }) })
+            }
+            MovieSkipPill(movieGate)
         }
     }
+}
+
+/**
+ * ADV `🔊 重听`: a tap inside [AdvHitBox.voiceRect] replays the current line's voice without
+ * advancing and returns true. Checked before tap-to-analyze and the normal advance tap.
+ */
+private fun tryVoiceTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, p: Offset): Boolean {
+    val s = vm.settings
+    val novel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
+    if (novel || session.windowHidden || session.line == null || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
+    if (advHit.voiceRect?.contains(p) != true) return false
+    return session.replayCurrentVoice()
 }
 
 /**

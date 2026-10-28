@@ -65,6 +65,14 @@ data class Settings(
     val aiCustomPersonaSoul: String = AiPersonaSettings.DEFAULT_CUSTOM_SOUL,
     /** ADV: tapping a Japanese glyph opens the AI breakdown instead of advancing (off by default). */
     val aiTapToAnalyze: Boolean = false,
+    /** Galleries (CG / BGM / Scene Replay): show locked entries too. Off by default (spoiler-safe). */
+    val galleryShowAll: Boolean = false,
+    /** Lower-case movie stems watched (or skipped) at least once; first views need a 2nd tap to skip. */
+    val viewedMovies: Set<String> = emptySet(),
+    /** AI: prefetch explanations of upcoming lines in the background (Sprint B; off by default). */
+    val aiPrefetchEnabled: Boolean = false,
+    /** AI: maximum background prefetch requests per day. */
+    val aiPrefetchDailyLimit: Int = 300,
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 
