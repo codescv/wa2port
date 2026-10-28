@@ -202,6 +202,7 @@ fun GameMenu(
     onUpdateSettings: ((Settings) -> Settings) -> Unit = {},
     onQuickLoad: () -> Unit = {},
     onHideWindow: () -> Unit = {},
+    onNotebook: (() -> Unit)? = null,
     onResume: () -> Unit,
     onSave: () -> Unit,
     onLoad: () -> Unit,
@@ -264,13 +265,19 @@ fun GameMenu(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 QuickControlChip(
-                    label = if (settings.aiTapToAnalyze) "✨ 点词解析: 开 ON" else "✨ 点词解析: 关 OFF",
+                    label = if (settings.aiTapToAnalyze) "✨ 点词: 开 ON" else "✨ 点词: 关 OFF",
                     active = settings.aiTapToAnalyze,
                     modifier = Modifier.weight(1f),
                     onClick = { onUpdateSettings { it.copy(aiTapToAnalyze = !it.aiTapToAnalyze) } },
                 )
                 QuickControlChip(
-                    label = "👁 隐藏窗口 HIDE",
+                    label = "📒 学习记录",
+                    active = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onNotebook?.invoke() },
+                )
+                QuickControlChip(
+                    label = "👁 隐藏窗口",
                     active = false,
                     modifier = Modifier.weight(1f),
                     onClick = onHideWindow,
