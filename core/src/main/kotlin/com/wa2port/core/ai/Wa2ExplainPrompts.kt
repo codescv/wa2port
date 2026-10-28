@@ -26,6 +26,41 @@ data class PromptParts(val systemInstruction: String, val contents: List<GeminiC
 const val INVALID_JSON_NUDGE =
     "Your previous answer was not valid JSON for the required schema. Return ONLY one valid JSON object matching the schema, with no prose and no code fences."
 
+/**
+ * Compact JSON shape appended to `systemInstruction` when a proxy or endpoint rejects
+ * `generationConfig.responseSchema` with HTTP 400 and we retry with `responseMimeType = "application/json"` only.
+ */
+const val EXPLAIN_JSON_SCHEMA_HINT = """
+Required JSON object shape (omit optional fields when not applicable; never wrap in markdown fences):
+{
+  "translation": "string (required)",
+  "literalTranslation": "string (optional)",
+  "officialTranslationNote": "string (optional)",
+  "register": "polite|plain|casual|rough|honorific|humble|dialect|literary (optional)",
+  "tone": "string (optional)",
+  "ruby": [{"base": "string", "ruby": "string (hiragana on kanji segments only, optional)"}],
+  "chunks": [{
+    "surface": "string",
+    "reading": "string",
+    "textbookForm": "string",
+    "spokenEvolution": {"kind": "string", "derivation": "string", "formality": 0.0},
+    "role": "string",
+    "meaning": "string",
+    "nuance": "string (optional)",
+    "vocab": [{
+      "surface": "string",
+      "lemma": "string",
+      "lemmaReading": "string",
+      "partOfSpeech": "noun|verb|i-adjective|na-adjective|adverb|particle|auxiliary|conjunction|pronoun|counter|interjection|expression|prefix|suffix|proper-noun|onomatopoeia|other",
+      "meaning": "string",
+      "conjugation": "string (optional)",
+      "jlpt": "N5|N4|N3|N2|N1 (optional)",
+      "notes": "string (optional)"
+    }]
+  }],
+  "grammar": [{"pattern": "string", "chunkSurfaces": ["string"], "explanation": "string", "jlpt": "N5|N4|N3|N2|N1 (optional)"}]
+}"""
+
 /** Round-trip prompt of the connection test. */
 const val TEST_PROMPT = "Reply with the single word: OK"
 

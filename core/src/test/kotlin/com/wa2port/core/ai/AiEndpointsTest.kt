@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class AiEndpointsTest {
-    private val m = "gemini-3.8-flash"
+    private val m = AiProviderSettings.DEFAULT_MODEL
     private val gem = AiProviderSettings(geminiApiKey = "K")
     private val vtx = AiProviderSettings(providerType = PROVIDER_VERTEX_AI, vertexServiceAccountJson = "{}")
 
@@ -19,10 +19,12 @@ class AiEndpointsTest {
 
     @Test
     fun geminiDefault() {
+        assertEquals("gemini-3.5-flash-lite", AiProviderSettings.DEFAULT_MODEL)
+        assertEquals(listOf("gemini-3.5-flash-lite", "gemini-3.8-flash"), AiProviderSettings.MODEL_PRESETS)
         assertEquals("https://generativelanguage.googleapis.com/v1beta/models/$m:generateContent", url(gem))
         val h = AiEndpoints.headers(gem)
         assertEquals("K", h["x-goog-api-key"])
-        assertEquals("application/json; charset=utf-8", h["Content-Type"])
+        assertEquals("application/json", h["Content-Type"])
         assertFalse(h.containsKey("Authorization"))
     }
 
@@ -130,5 +132,41 @@ class AiEndpointsTest {
         assertTrue(AiProviderSettings(customBaseUrl = "http://192.168.1.2:8080").connectionWarning() != null)
         assertEquals("p.example.com", AiEndpoints.hostOf("https://p.example.com:443/v1?key=x"))
         assertEquals("https://h/x?key=***&alt=sse", AiEndpoints.redactUrl("https://h/x?key=abc&alt=sse"))
+    }
+
+    @Test
+    fun unicodeInvisibleCharAndProxySanitization() {
+        val dirtyKey = "\uFEFF\u200BAIzaSy_TEST\u200E\u00A0\u3000\u2060\r\n"
+        assertEquals("AIzaSy_TEST", AiEndpoints.sanitizeValue(dirtyKey))
+
+        val cfProxy = AiProviderSettings(
+            geminiApiKey = dirtyKey,
+            customBaseUrl = " \u200Bhttps://gemini.elecpaoao.workers.dev/\uFEFF ",
+            model = "\u200Bmodels/gemini-3.5-flash-lite\u00A0",
+        )
+        assertEquals(
+            "https://gemini.elecpaoao.workers.dev/v1beta/models/gemini-3.5-flash-lite:generateContent",
+            url(cfProxy),
+        )
+        val h = AiEndpoints.headers(cfProxy)
+        assertEquals("application/json", h["Content-Type"])
+        assertEquals("AIzaSy_TEST", h["x-goog-api-key"])
+
+        val queryProxy = cfProxy.copy(proxyAuthStyle = AUTH_STYLE_QUERY)
+        assertEquals(
+            "https://gemini.elecpaoao.workers.dev/v1beta/models/gemini-3.5-flash-lite:generateContent?key=AIzaSy_TEST",
+            url(queryProxy),
+        )
+
+        val expressDirty = vtx.copy(vertexAuthMode = VERTEX_AUTH_EXPRESS, vertexApiKey = dirtyKey, model = "gemini-3.8-flash\u200B")
+        assertEquals(
+            "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.8-flash:generateContent?key=AIzaSy_TEST",
+            url(expressDirty),
+        )
+
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, AiProviderSettings(model = "gemini-2.5-flash").withNormalizedModel().model)
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, AiProviderSettings(model = "gemini-2.0-flash-exp").withNormalizedModel().model)
+        assertEquals("gemini-3.8-flash", AiProviderSettings(model = "gemini-3.8-flash").withNormalizedModel().model)
+        assertFalse(AiProviderSettings(geminiApiKey = "\u200B\uFEFF").isConfigured)
     }
 }

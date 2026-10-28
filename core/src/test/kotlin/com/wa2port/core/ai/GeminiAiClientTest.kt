@@ -73,8 +73,9 @@ class GeminiAiClientTest {
         assertEquals("因为…", answer.text)
         assertEquals(3, t.calls.size)
         t.calls.forEach {
-            assertEquals("https://proxy.example.com/v1beta/models/gemini-3.8-flash:generateContent", it.url)
+            assertEquals("https://proxy.example.com/v1beta/models/${AiProviderSettings.DEFAULT_MODEL}:generateContent", it.url)
             assertEquals("K", it.headers["x-goog-api-key"])
+            assertEquals("application/json", it.headers["Content-Type"])
         }
     }
 

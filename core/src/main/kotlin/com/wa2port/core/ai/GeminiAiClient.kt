@@ -107,7 +107,7 @@ class GeminiAiClient(
     private fun bearerToken(s: AiProviderSettings, cancel: CancelToken?): String? {
         if (!s.isVertex) return null
         return when (s.vertexAuthMode) {
-            AiProviderSettings.VERTEX_AUTH_ACCESS_TOKEN -> s.vertexAccessToken.trim()
+            AiProviderSettings.VERTEX_AUTH_ACCESS_TOKEN -> AiEndpoints.sanitizeValue(s.vertexAccessToken)
             AiProviderSettings.VERTEX_AUTH_EXPRESS -> null
             else -> serviceAccount(s).token(cancel)
         }
@@ -117,42 +117,50 @@ class GeminiAiClient(
     @Synchronized
     private fun serviceAccount(s: AiProviderSettings): ServiceAccountTokenProvider {
         val fp = ExplainCache.sha256Hex(s.vertexServiceAccountJson.trim()).take(16)
-        val viaProxy = s.customBaseUrl.isNotBlank()
+        val viaProxy = AiEndpoints.normalizeBaseUrl(s.customBaseUrl).isNotEmpty()
         saProvider?.takeIf { it.keyFingerprint == fp }?.let { return it }
         return ServiceAccountTokenProvider(s.vertexServiceAccountJson, transport, now, viaProxy).also { saProvider = it }
     }
 
     /**
-     * Models that rejected an explicit `thinkingConfig` with HTTP 400 (e.g. a model that refuses
-     * `thinkingBudget = 0` or only accepts `thinkingLevel`). Requests for them omit `thinkingConfig`.
-     * In-memory only: a new client (app restart) probes again with a single extra request.
+     * Models that rejected an explicit `thinkingConfig` with HTTP 400 (e.g. a model or reverse
+     * proxy that refuses `thinkingBudget = 0` or only accepts `thinkingLevel`). Requests for them
+     * omit `thinkingConfig`. In-memory only: a new client (app restart) probes again.
      */
     private val thinkingUnsupportedModels: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** True when [model] was memoized as rejecting `thinkingConfig` (see [generate]). */
-    fun isThinkingUnsupported(model: String): Boolean = model in thinkingUnsupportedModels
+    fun isThinkingUnsupported(model: String): Boolean = AiEndpoints.sanitizeModel(model) in thinkingUnsupportedModels
 
     /**
      * One `generateContent` round trip. If the request carries a `thinkingConfig` (budget ≥ 0) and
-     * the server answers HTTP 400 mentioning "thinking", the model is memoized in
-     * [thinkingUnsupportedModels] and the call is retried ONCE without `thinkingConfig`; later
-     * requests for that model drop `thinkingConfig` up front.
+     * the server or reverse proxy answers HTTP 400 (`INVALID_ARGUMENT`), we retry ONCE without
+     * `thinkingConfig`. If the error explicitly mentions `"thinking"`, the model is memoized
+     * immediately; otherwise it is memoized only when the retry without `thinkingConfig` succeeds
+     * (so genuine non-thinking 400s never poison [thinkingUnsupportedModels]).
      */
     fun generate(req: GeminiRequest, cancel: CancelToken? = null): GeminiResponse {
+        val modelKey = AiEndpoints.sanitizeModel(req.model)
         val sendsThinking = (req.thinkingBudget ?: -1) >= 0
-        if (sendsThinking && req.model in thinkingUnsupportedModels) return generateOnce(req.copy(thinkingBudget = null), cancel)
+        if (sendsThinking && modelKey in thinkingUnsupportedModels) {
+            return generateOnce(req.copy(thinkingBudget = null), cancel)
+        }
         return try {
             generateOnce(req, cancel)
         } catch (e: AiException) {
-            if (!sendsThinking || !isThinkingRejection(e) || cancel?.isCancelled == true) throw e
-            thinkingUnsupportedModels += req.model
-            generateOnce(req.copy(thinkingBudget = null), cancel)
+            val explicitThinking = isThinkingRejection(e)
+            val invalidArg400 = e.httpStatus == 400 && e.code == AiErrorCode.INVALID_ARGUMENT
+            if (!sendsThinking || (!explicitThinking && !invalidArg400) || cancel?.isCancelled == true) throw e
+            if (explicitThinking) thinkingUnsupportedModels += modelKey
+            val res = generateOnce(req.copy(thinkingBudget = null), cancel)
+            thinkingUnsupportedModels += modelKey
+            res
         }
     }
 
-    /** HTTP 400 whose error message / body mentions `thinking` (case-insensitive). */
+    /** HTTP 400 `INVALID_ARGUMENT` whose error message / body explicitly mentions `thinking`. */
     private fun isThinkingRejection(e: AiException): Boolean =
-        e.httpStatus == 400 && e.message?.contains("thinking", ignoreCase = true) == true
+        e.httpStatus == 400 && e.code == AiErrorCode.INVALID_ARGUMENT && e.message?.contains("thinking", ignoreCase = true) == true
 
     private fun generateOnce(req: GeminiRequest, cancel: CancelToken?): GeminiResponse {
         val s = settings()
@@ -192,26 +200,28 @@ class GeminiAiClient(
     }
 
     /** Cache id of [req] under the current model. */
-    fun cacheKey(req: ExplainRequest): String = ExplainCache.key(req, settings().model)
+    fun cacheKey(req: ExplainRequest): String = ExplainCache.key(req, AiEndpoints.sanitizeModel(settings().model))
 
     /**
      * Sentence breakdown: cache lookup (unless `force` / cache disabled) → structured-output call
-     * → tolerant parse; an invalid answer is retried ONCE with [INVALID_JSON_NUDGE] (not when the
-     * output was truncated at MAX_TOKENS) → span alignment → cache. `force` also drops the cached
-     * follow-up thread, whose context was the old breakdown.
+     * (with one fallback to schema-less `application/json` + [EXPLAIN_JSON_SCHEMA_HINT] if a proxy
+     * or endpoint rejects `responseSchema` with HTTP 400 `INVALID_ARGUMENT`) → tolerant parse; an
+     * invalid answer is retried ONCE with [INVALID_JSON_NUDGE] (not when the output was truncated
+     * at MAX_TOKENS) → span alignment → cache. `force` also drops the cached follow-up thread.
      */
     fun explainSentence(req: ExplainRequest, cache: ExplainCache?, cancel: CancelToken? = null): SentenceExplanation {
         val s = settings()
         s.validationError()?.let { throw AiException(AiErrorCode.NOT_CONFIGURED, it) }
         if (req.sentence.isBlank()) throw AiException(AiErrorCode.INVALID_ARGUMENT, "这一行没有日文 No Japanese text")
-        val id = ExplainCache.key(req, s.model)
+        val model = AiEndpoints.sanitizeModel(s.model)
+        val id = ExplainCache.key(req, model)
         val useCache = cache != null && s.cacheEnabled
         if (useCache && !req.force) {
             runCatching { cache!!.get(id) }.getOrNull()?.let { return it }
         }
         val prompt = buildExplainPrompt(req)
         val base = GeminiRequest(
-            model = s.model,
+            model = model,
             systemInstruction = prompt.systemInstruction,
             contents = prompt.contents,
             responseMimeType = "application/json",
@@ -221,7 +231,19 @@ class GeminiAiClient(
             thinkingBudget = s.explainThinkingBudget,
             timeoutMs = s.timeoutMs,
         )
-        var res = generate(base, cancel)
+        var activeBase = base
+        var res = try {
+            generate(activeBase, cancel)
+        } catch (e: AiException) {
+            if (activeBase.responseSchema == null || e.httpStatus != 400 || e.code != AiErrorCode.INVALID_ARGUMENT || cancel?.isCancelled == true) {
+                throw e
+            }
+            activeBase = activeBase.copy(
+                responseSchema = null,
+                systemInstruction = listOfNotNull(activeBase.systemInstruction, EXPLAIN_JSON_SCHEMA_HINT).joinToString("\n\n"),
+            )
+            generate(activeBase, cancel)
+        }
         var raw = try {
             ExplainJsonCodec.parseRawExplanation(ExplainJsonCodec.parseModelJson(res.text))
         } catch (e: AiException) {
@@ -232,7 +254,7 @@ class GeminiAiClient(
             null
         }
         if (raw == null) {
-            val retry = base.copy(contents = base.contents + GeminiContent("model", res.text) + GeminiContent("user", INVALID_JSON_NUDGE))
+            val retry = activeBase.copy(contents = activeBase.contents + GeminiContent("model", res.text) + GeminiContent("user", INVALID_JSON_NUDGE))
             res = generate(retry, cancel)
             raw = ExplainJsonCodec.parseRawExplanation(ExplainJsonCodec.parseModelJson(res.text))
         }
@@ -269,7 +291,7 @@ class GeminiAiClient(
         val prompt = buildFollowUpPrompt(expl, history, q, persona)
         val res = generate(
             GeminiRequest(
-                model = s.model,
+                model = AiEndpoints.sanitizeModel(s.model),
                 systemInstruction = prompt.systemInstruction,
                 contents = prompt.contents,
                 temperature = maxOf(s.temperature, 0.4f),
@@ -296,10 +318,11 @@ class GeminiAiClient(
     /** Round-trips [TEST_PROMPT] through the configured provider. Never throws. */
     fun testConnection(): AiConnectionTestResult {
         val started = now()
-        val model = runCatching { settings().model }.getOrDefault("")
+        val model = runCatching { AiEndpoints.sanitizeModel(settings().model) }.getOrDefault("")
         return try {
             val s = settings()
-            val res = generate(GeminiRequest(model = s.model, systemInstruction = null, contents = listOf(GeminiContent("user", TEST_PROMPT)), temperature = 0f, thinkingBudget = s.explainThinkingBudget, timeoutMs = s.timeoutMs))
+            val m = AiEndpoints.sanitizeModel(s.model)
+            val res = generate(GeminiRequest(model = m, systemInstruction = null, contents = listOf(GeminiContent("user", TEST_PROMPT)), temperature = 0f, thinkingBudget = s.explainThinkingBudget, timeoutMs = s.timeoutMs))
             AiConnectionTestResult(true, res.model, now() - started, res.text.trim().ifEmpty { "OK" })
         } catch (e: Exception) {
             val err = e as? AiException ?: mapError(e, null, "", 0)

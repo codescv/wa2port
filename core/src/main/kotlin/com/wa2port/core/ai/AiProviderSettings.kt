@@ -59,24 +59,39 @@ data class AiProviderSettings(
 
     /** Human-readable (zh / en) reason why the settings are incomplete, or null when usable. */
     fun validationError(): String? {
-        if (model.isBlank()) return "未设置模型 Model is empty"
+        if (AiEndpoints.sanitizeModel(model).isEmpty()) return "未设置模型 Model is empty"
         if (!isVertex) {
             // A proxy may inject the key server-side, so a custom base URL alone is enough.
-            return if (geminiApiKey.isBlank() && customBaseUrl.isBlank()) "未填写 Gemini API Key" else null
+            return if (AiEndpoints.sanitizeValue(geminiApiKey).isEmpty() && AiEndpoints.normalizeBaseUrl(customBaseUrl).isEmpty()) {
+                "未填写 Gemini API Key"
+            } else {
+                null
+            }
         }
         return when (vertexAuthMode) {
-            VERTEX_AUTH_EXPRESS -> if (vertexApiKey.isBlank()) "未填写 Vertex Express API Key" else null
+            VERTEX_AUTH_EXPRESS -> if (AiEndpoints.sanitizeValue(vertexApiKey).isEmpty()) "未填写 Vertex Express API Key" else null
             VERTEX_AUTH_ACCESS_TOKEN -> when {
-                vertexProject.isBlank() -> "未填写 Vertex 项目 Project"
-                vertexAccessToken.isBlank() -> "未填写 Access Token"
+                AiEndpoints.sanitizeValue(vertexProject).isEmpty() -> "未填写 Vertex 项目 Project"
+                AiEndpoints.sanitizeValue(vertexAccessToken).isEmpty() -> "未填写 Access Token"
                 else -> null
             }
             else -> when {
-                vertexProject.isBlank() -> "未填写 Vertex 项目 Project"
+                AiEndpoints.sanitizeValue(vertexProject).isEmpty() -> "未填写 Vertex 项目 Project"
                 vertexServiceAccountJson.isBlank() -> "未填写服务账号 JSON Service account JSON"
                 else -> null
             }
         }
+    }
+
+    /**
+     * Normalises [model] on settings load: strips invisible paste characters / `models/` prefix,
+     * and migrates blank or retired Gemini 1.x / 2.0 / 2.5 model IDs (e.g. `gemini-2.5-flash`,
+     * `gemini-2.5-pro`, `gemini-2.0-flash`) to [DEFAULT_MODEL].
+     */
+    fun withNormalizedModel(): AiProviderSettings {
+        val cleaned = AiEndpoints.sanitizeModel(model)
+        val normalized = if (cleaned.isEmpty() || RETIRED_GEMINI_MODEL.matches(cleaned)) DEFAULT_MODEL else cleaned
+        return if (normalized == model) this else copy(model = normalized)
     }
 
     /**
@@ -110,10 +125,12 @@ data class AiProviderSettings(
         const val VERTEX_AUTH_SERVICE_ACCOUNT = "service-account"
         const val VERTEX_AUTH_ACCESS_TOKEN = "access-token"
         const val VERTEX_AUTH_EXPRESS = "express-api-key"
-        const val DEFAULT_MODEL = "gemini-3.8-flash"
-        val MODEL_PRESETS = listOf("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash")
+        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
+        val MODEL_PRESETS = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash")
         val VERTEX_LOCATION_PRESETS = listOf("global", "us-central1", "asia-northeast1", "europe-west1")
         val API_VERSIONS = listOf("v1beta", "v1")
+
+        private val RETIRED_GEMINI_MODEL = Regex("^gemini-(?:1\\.[05]|2\\.[05])(?:$|[-.].*)", RegexOption.IGNORE_CASE)
 
         private fun redact(v: String): String = if (v.isEmpty()) "\"\"" else "***(${v.length})"
     }
@@ -131,9 +148,11 @@ object AiEndpoints {
     private val SCHEME = Regex("^[A-Za-z][A-Za-z0-9+.-]*://")
     private val HEADER_TOKEN = Regex("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
-    /** Cleans paste artefacts: whitespace anywhere, `?query` / `#fragment`, scheme (`https://` added when missing), trailing `/`, pasted endpoint tails. */
+    private val MODEL_PREFIX = Regex("^models/", RegexOption.IGNORE_CASE)
+
+    /** Cleans paste artefacts: whitespace/invisible chars anywhere, `?query` / `#fragment`, scheme (`https://` added when missing), trailing `/`, pasted endpoint tails. */
     private fun cleanBase(raw: String): String {
-        var s = raw.filterNot { it.isWhitespace() }
+        var s = sanitizeValue(raw).filterNot { it.isWhitespace() }
         if (s.isEmpty()) return s
         s = s.substringBefore('#').substringBefore('?')
         s = if (SCHEME.containsMatchIn(s)) {
@@ -179,18 +198,19 @@ object AiEndpoints {
 
     /** Base URL of the Gemini API (official host or the normalised custom base). */
     fun geminiBase(s: AiProviderSettings): String =
-        if (s.customBaseUrl.isBlank()) DEFAULT_GEMINI_BASE else normalizeBaseUrl(s.customBaseUrl)
+        normalizeBaseUrl(s.customBaseUrl).ifEmpty { DEFAULT_GEMINI_BASE }
 
     /** Default Vertex host for the location (`global` → no regional prefix) or the normalised custom base. */
     fun vertexBase(s: AiProviderSettings): String {
-        if (s.customBaseUrl.isNotBlank()) return normalizeBaseUrl(s.customBaseUrl)
-        val loc = s.vertexLocation.trim().ifEmpty { "global" }
+        val custom = normalizeBaseUrl(s.customBaseUrl)
+        if (custom.isNotEmpty()) return custom
+        val loc = sanitizeValue(s.vertexLocation).filterNot { it.isWhitespace() }.ifEmpty { "global" }
         return if (loc == "global") "https://aiplatform.googleapis.com" else "https://$loc-aiplatform.googleapis.com"
     }
 
     /** Effective Gemini API version: version pasted in the custom URL, else the setting (default v1beta). */
     fun geminiVersion(s: AiProviderSettings): String =
-        pastedVersion(s.customBaseUrl) ?: s.geminiApiVersion.trim().trim('/').ifEmpty { "v1beta" }
+        pastedVersion(s.customBaseUrl) ?: sanitizeValue(s.geminiApiVersion).trim('/').ifEmpty { "v1beta" }
 
     /** Effective Vertex API version: version pasted in the custom URL, else `v1`. */
     fun vertexVersion(s: AiProviderSettings): String = pastedVersion(s.customBaseUrl) ?: "v1"
@@ -199,34 +219,36 @@ object AiEndpoints {
 
     /** Full `generateContent` URL (query-string secrets included; header secrets come from [headers]). */
     fun generateContentUrl(s: AiProviderSettings, model: String = s.model): String {
-        val m = enc(model)
+        val m = enc(sanitizeModel(model))
         if (!s.isVertex) {
             val base = "${geminiBase(s)}/${geminiVersion(s)}/models/$m:generateContent"
-            return if (s.proxyAuthStyle == AiProviderSettings.AUTH_STYLE_QUERY && s.geminiApiKey.isNotBlank()) {
-                "$base?key=${enc(s.geminiApiKey)}"
+            val key = sanitizeValue(s.geminiApiKey)
+            return if (s.proxyAuthStyle == AiProviderSettings.AUTH_STYLE_QUERY && key.isNotEmpty()) {
+                "$base?key=${enc(key)}"
             } else {
                 base
             }
         }
         val base = "${vertexBase(s)}/${vertexVersion(s)}"
         if (s.vertexAuthMode == AiProviderSettings.VERTEX_AUTH_EXPRESS) {
-            return "$base/publishers/google/models/$m:generateContent?key=${enc(s.vertexApiKey)}"
+            return "$base/publishers/google/models/$m:generateContent?key=${enc(sanitizeValue(s.vertexApiKey))}"
         }
-        val loc = s.vertexLocation.trim().ifEmpty { "global" }
-        return "$base/projects/${enc(s.vertexProject)}/locations/${enc(loc)}/publishers/google/models/$m:generateContent"
+        val loc = sanitizeValue(s.vertexLocation).filterNot { it.isWhitespace() }.ifEmpty { "global" }
+        return "$base/projects/${enc(sanitizeValue(s.vertexProject))}/locations/${enc(loc)}/publishers/google/models/$m:generateContent"
     }
 
     /** [url] with any `key=` query value masked (safe for logs and error messages). */
     fun redactUrl(url: String): String = url.replace(Regex("([?&]key=)[^&#]*"), "$1***")
 
     /**
-     * Request headers: content type, provider auth ([bearerToken] for Vertex SA / access-token) and
-     * the user's [AiProviderSettings.extraHeaders] (which override earlier entries case-insensitively).
-     * Header values never contain CR/LF, names are RFC 7230 tokens, so the transport cannot throw.
+     * Request headers: content type (`application/json`, matching kotori), provider auth
+     * ([bearerToken] for Vertex SA / access-token) and the user's [AiProviderSettings.extraHeaders]
+     * (which override earlier entries case-insensitively). Header values never contain CR/LF or
+     * invisible format characters, names are RFC 7230 tokens, so the transport cannot throw.
      */
     fun headers(s: AiProviderSettings, bearerToken: String? = null): Map<String, String> {
         val h = LinkedHashMap<String, String>()
-        h["Content-Type"] = "application/json; charset=utf-8"
+        h["Content-Type"] = "application/json"
         if (!s.isVertex) {
             val key = sanitizeValue(s.geminiApiKey)
             if (key.isNotEmpty()) {
@@ -236,8 +258,9 @@ object AiEndpoints {
                     else -> h["x-goog-api-key"] = key
                 }
             }
-        } else if (s.vertexAuthMode != AiProviderSettings.VERTEX_AUTH_EXPRESS && !bearerToken.isNullOrBlank()) {
-            h["Authorization"] = "Bearer ${sanitizeValue(bearerToken)}"
+        } else if (s.vertexAuthMode != AiProviderSettings.VERTEX_AUTH_EXPRESS) {
+            val token = bearerToken?.let(::sanitizeValue).orEmpty()
+            if (token.isNotEmpty()) h["Authorization"] = "Bearer $token"
         }
         for ((name, value) in parseExtraHeaders(s.extraHeaders, sanitizeValue(s.placeholderKey))) {
             h.keys.firstOrNull { it.equals(name, ignoreCase = true) }?.let { h.remove(it) }
@@ -246,13 +269,31 @@ object AiEndpoints {
         return h
     }
 
-    /** Trims and removes CR/LF and other control characters (header-injection / transport-crash guard). */
-    fun sanitizeValue(v: String): String = v.filter { it >= ' ' && it != '\u007F' }.trim()
+    private fun isUnicodeInvisibleOrOddSpace(c: Char): Boolean =
+        c == '\u00A0' ||
+            c == '\u180E' ||
+            c in '\u2000'..'\u200F' ||
+            c in '\u2028'..'\u202F' ||
+            c in '\u205F'..'\u206F' ||
+            c == '\u3000' ||
+            c == '\uFEFF' ||
+            Character.getType(c) == Character.FORMAT.toInt()
+
+    /**
+     * Trims and removes CR/LF, control characters, and Unicode zero-width / format / non-breaking
+     * space characters that often get pasted with API keys, model names or headers on Android.
+     */
+    fun sanitizeValue(v: String): String =
+        v.filter { it >= ' ' && it !in '\u007F'..'\u009F' && !isUnicodeInvisibleOrOddSpace(it) }.trim()
+
+    /** Sanitizes a model identifier (strips invisible characters, whitespace and optional `models/` prefix). */
+    fun sanitizeModel(v: String): String =
+        sanitizeValue(v).filterNot { it.isWhitespace() }.replace(MODEL_PREFIX, "")
 
     /** `Name: value` lines → pairs; malformed lines (no colon, non-token name) are skipped; `{apiKey}` substituted. */
     fun parseExtraHeaders(text: String, apiKey: String): List<Pair<String, String>> =
         text.split('\n', '\r').mapNotNull { raw ->
-            val line = raw.trim()
+            val line = sanitizeValue(raw)
             val colon = line.indexOf(':')
             if (colon <= 0) return@mapNotNull null
             val name = line.substring(0, colon).trim()

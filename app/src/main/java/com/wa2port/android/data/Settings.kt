@@ -97,7 +97,10 @@ data class Settings(
 class SettingsStore(private val file: File) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    fun load(): Settings = runCatching { json.decodeFromString<Settings>(file.readText()) }.getOrDefault(Settings())
+    fun load(): Settings = runCatching {
+        val loaded = json.decodeFromString<Settings>(file.readText())
+        loaded.copy(ai = loaded.ai.withNormalizedModel())
+    }.getOrDefault(Settings())
 
     fun save(settings: Settings) {
         runCatching {

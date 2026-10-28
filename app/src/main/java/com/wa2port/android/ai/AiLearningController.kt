@@ -10,6 +10,7 @@ import com.wa2port.android.game.GameSession
 import com.wa2port.android.game.Overlay
 import com.wa2port.android.ui.sceneLabel
 import com.wa2port.core.ai.AiConnectionTestResult
+import com.wa2port.core.ai.AiEndpoints
 import com.wa2port.core.ai.AiErrorCode
 import com.wa2port.core.ai.AiException
 import com.wa2port.core.ai.AiPersonaSettings
@@ -611,7 +612,7 @@ class AiLearningController(
             val s = settings()
             if (!s.aiPrefetchEnabled || !s.ai.isConfigured || !s.ai.cacheEnabled) return@launch
             if (dailyPrefetchedCount() >= s.aiPrefetchDailyLimit) return@launch
-            val key = ExplainCache.key(req, s.ai.model)
+            val key = ExplainCache.key(req, AiEndpoints.sanitizeModel(s.ai.model))
             if (inFlight.containsKey(key)) return@launch
             val cached = withContext(io) { runCatching { cache.get(key) }.getOrNull() }
             if (cached != null || qToken.isCancelled || !stillValid()) return@launch
@@ -724,7 +725,7 @@ class AiLearningController(
         val token = CancelToken()
         explainToken = token
         val req = st.request(persona, force)
-        val key = ExplainCache.key(req, ai.model)
+        val key = ExplainCache.key(req, AiEndpoints.sanitizeModel(ai.model))
         val useSingleFlight = !force && ai.cacheEnabled
         // Progressive loading: the local skeleton (< 1 ms, no I/O) fills the sheet immediately.
         st.status = AiStatus.Loading(OfflineExplainer.build(req, now()))

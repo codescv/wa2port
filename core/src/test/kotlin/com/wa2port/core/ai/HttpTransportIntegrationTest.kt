@@ -70,10 +70,10 @@ class HttpTransportIntegrationTest {
         assertEquals("回答「ね」", answer.text) // UTF-8 both ways
         assertEquals(3, seen.size)
         seen.forEach { (uri, headers, body) ->
-            assertEquals("/gemini/v1beta/models/gemini-3.8-flash:generateContent", uri)
+            assertEquals("/gemini/v1beta/models/${AiProviderSettings.DEFAULT_MODEL}:generateContent", uri)
             assertEquals("K", headers["x-goog-api-key"])
             assertEquals("K", headers["x-proxy-token"])
-            assertTrue(headers["content-type"]!!.startsWith("application/json"))
+            assertEquals("application/json", headers["content-type"])
             assertTrue(body.contains("\"contents\""))
         }
         assertTrue(seen[1].third.contains("雪だね"))

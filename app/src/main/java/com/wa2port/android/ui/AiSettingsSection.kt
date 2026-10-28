@@ -153,7 +153,7 @@ fun AiSettingsSection(
             Modifier.horizontalScroll(rememberScrollState()),
         )
     }
-    AiTextField("自定义模型 Custom model", p.model, { v -> set { it.copy(model = v.trim()) } }, placeholder = AiProviderSettings.DEFAULT_MODEL)
+    AiTextField("自定义模型 Custom model", p.model, { v -> set { it.copy(model = AiEndpoints.sanitizeModel(v)) } }, placeholder = AiProviderSettings.DEFAULT_MODEL)
 
     val persona = ai.persona
     OptionRow("家教人设 Persona") {

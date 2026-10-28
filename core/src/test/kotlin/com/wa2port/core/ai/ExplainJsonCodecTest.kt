@@ -110,8 +110,13 @@ class ExplainJsonCodecTest {
         }
         val s = AiProviderSettings(geminiApiKey = "k", customBaseUrl = "https://p", temperature = 0.7f)
         assertEquals(s, ExplainJsonCodec.decodeSettings(ExplainJsonCodec.encodeSettings(s)))
-        // Unknown keys / missing fields tolerated.
+        // Unknown keys / missing fields tolerated; legacy 2.0/2.5/blank models migrated to DEFAULT_MODEL.
         assertEquals(AiProviderSettings(model = "x"), ExplainJsonCodec.decodeSettings("""{"model":"x","future":1}"""))
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, ExplainJsonCodec.decodeSettings("""{"model":"gemini-2.5-flash"}""").model)
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, ExplainJsonCodec.decodeSettings("""{"model":"gemini-2.5-pro"}""").model)
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, ExplainJsonCodec.decodeSettings("""{"model":"gemini-2.0-flash"}""").model)
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, ExplainJsonCodec.decodeSettings("""{"model":"  \u200B "}""").model)
+        assertEquals("gemini-3.8-flash", ExplainJsonCodec.decodeSettings("""{"model":"models/gemini-3.8-flash\uFEFF"}""").model)
         val thread = listOf(FollowUpMessage("a", "user", "q", 1), FollowUpMessage("b", "model", "a", 2, TokenUsage(1, 2)))
         assertEquals(thread, ExplainJsonCodec.decodeThread(ExplainJsonCodec.encodeThread(thread)))
     }
@@ -128,12 +133,38 @@ class ExplainJsonCodecTest {
     @Test
     fun schemaShape() {
         val s = ExplainJsonCodec.EXPLAIN_RESPONSE_SCHEMA
+        val schemaJson = s.toString()
+        assertFalse(schemaJson.contains("\"nullable\""), "responseSchema must never emit nullable:true")
+        assertFalse(schemaJson.contains("\"lemmaRuby\""), "vocab.items must not include lemmaRuby")
+        assertFalse(schemaJson.contains("\"pitchAccent\""), "vocab.items must not include pitchAccent")
+
         val order = s["propertyOrdering"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(1, order.count { it == "officialTranslationNote" })
         assertFalse(s["required"]!!.jsonArray.any { it.jsonPrimitive.content == "officialTranslationNote" })
         val props = s["properties"]!!.jsonObject
-        assertEquals(17, props["chunks"]!!.jsonObject["items"]!!.jsonObject["properties"]!!.jsonObject["vocab"]!!.jsonObject["items"]!!
-            .jsonObject["properties"]!!.jsonObject["partOfSpeech"]!!.jsonObject["enum"]!!.jsonArray.size)
+        val vocabItem = props["chunks"]!!.jsonObject["items"]!!.jsonObject["properties"]!!.jsonObject["vocab"]!!.jsonObject["items"]!!.jsonObject
+        val vocabProps = vocabItem["properties"]!!.jsonObject
+        assertEquals(17, vocabProps["partOfSpeech"]!!.jsonObject["enum"]!!.jsonArray.size)
+        assertEquals(5, vocabProps["jlpt"]!!.jsonObject["enum"]!!.jsonArray.size)
+        assertEquals(
+            listOf("surface", "lemma", "lemmaReading", "partOfSpeech", "meaning"),
+            vocabItem["required"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+
+        fun assertValidObjectSchema(node: JsonObject, path: String) {
+            if (node["type"]?.jsonPrimitive?.content == "OBJECT") {
+                val p = node["properties"]!!.jsonObject
+                val reqKeys = node["required"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty()
+                val ordKeys = node["propertyOrdering"]!!.jsonArray.map { it.jsonPrimitive.content }
+                assertTrue(p.keys.containsAll(reqKeys), "$path required must be a subset of properties")
+                assertEquals(p.keys, ordKeys.toSet(), "$path propertyOrdering must match properties keys")
+                assertEquals(p.keys.size, ordKeys.size, "$path propertyOrdering must have no duplicates")
+                p.forEach { (k, v) -> (v as? JsonObject)?.let { assertValidObjectSchema(it, "$path.$k") } }
+            } else if (node["type"]?.jsonPrimitive?.content == "ARRAY") {
+                (node["items"] as? JsonObject)?.let { assertValidObjectSchema(it, "$path[]") }
+            }
+        }
+        assertValidObjectSchema(s, "root")
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.wa2port.android.ai
 
 import com.wa2port.android.data.Settings
+import com.wa2port.android.data.SettingsStore
 import com.wa2port.android.game.Overlay
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.AiProviderSettings
@@ -289,5 +290,14 @@ class AiPrefetchAndNavTest {
         } finally {
             scope.cancel()
         }
+    }
+
+    @Test
+    fun settingsStoreMigratesRetiredGeminiModelsToDefault() {
+        val file = File(tempDir, "settings.json")
+        file.writeText("""{"ai":{"geminiApiKey":"K","customBaseUrl":"https://gemini.elecpaoao.workers.dev/","model":"gemini-2.5-flash"}}""")
+        val loaded = SettingsStore(file).load()
+        assertEquals(AiProviderSettings.DEFAULT_MODEL, loaded.ai.model)
+        assertEquals("https://gemini.elecpaoao.workers.dev/", loaded.ai.customBaseUrl)
     }
 }

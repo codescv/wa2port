@@ -2,6 +2,7 @@ package com.wa2port.core.ai
 
 import com.sun.net.httpserver.HttpServer
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.AfterEach
@@ -56,7 +57,7 @@ class GeminiAiClientThinkingTest {
         server.stop(0)
     }
 
-    private fun settings(model: String = "gemini-3.8-flash", budget: Int = -1) =
+    private fun settings(model: String = AiProviderSettings.DEFAULT_MODEL, budget: Int = -1) =
         AiProviderSettings(geminiApiKey = "K", customBaseUrl = base, model = model, thinkingBudget = budget)
 
     private fun reply(vararg r: Pair<Int, String>) = synchronized(replies) { replies.addAll(r) }
@@ -143,14 +144,57 @@ class GeminiAiClientThinkingTest {
     }
 
     @Test
-    fun nonThinking400DoesNotRetry() {
-        reply(error400("Invalid JSON payload received. Unknown name \\\"foo\\\"."), 200 to FakeTransport.geminiBody(explainJson))
+    fun opaqueProxy400RetriesOnceWithoutThinkingConfigAndMemoizesOnSuccess() {
+        val proxyModel = "gemini-proxy-flash"
+        reply(
+            error400("Request contains an invalid argument."),
+            200 to FakeTransport.geminiBody(explainJson),
+        )
+        val c = GeminiAiClient({ settings(model = proxyModel) })
+        val expl = c.explainSentence(req, null)
+        assertEquals("雪だね", expl.chunks.single().surface)
+        assertEquals(2, seen.size, "opaque 400 with thinkingConfig retries once without thinkingConfig")
+        assertEquals(0, sentBudget(seen[0].second))
+        assertFalse(generationConfig(seen[1].second).containsKey("thinkingConfig"))
+        assertTrue(generationConfig(seen[1].second).containsKey("responseSchema"))
+        assertTrue(c.isThinkingUnsupported(proxyModel), "successful no-thinking retry memoizes model")
+
+        // Next call omits thinkingConfig up front.
+        seen.clear()
+        reply(200 to FakeTransport.geminiBody(explainJson))
+        c.explainSentence(req.copy(force = true), null)
+        assertEquals(1, seen.size)
+        assertFalse(generationConfig(seen[0].second).containsKey("thinkingConfig"))
+    }
+
+    @Test
+    fun persistentNonThinking400DoesNotPoisonThinkingMemo() {
+        val badErr = error400("Invalid JSON payload received. Unknown name \\\"foo\\\".")
+        reply(badErr, badErr, badErr, badErr)
         val c = GeminiAiClient({ settings() })
         val e = assertThrows(AiException::class.java) { c.explainSentence(req, null) }
         assertEquals(AiErrorCode.INVALID_ARGUMENT, e.code)
         assertEquals(400, e.httpStatus)
-        assertEquals(1, seen.size, "no retry for unrelated 400s")
-        assertFalse(c.isThinkingUnsupported("gemini-3.8-flash"))
+        assertFalse(c.isThinkingUnsupported(AiProviderSettings.DEFAULT_MODEL), "genuine 400 must not poison thinkingUnsupportedModels")
+    }
+
+    @Test
+    fun responseSchema400FallsBackToJsonMimeWithSchemaHint() {
+        // Simulate a proxy that rejects generationConfig.responseSchema with HTTP 400 (with or without thinkingConfig),
+        // then succeeds when responseSchema is omitted and EXPLAIN_JSON_SCHEMA_HINT is in systemInstruction.
+        val schemaErr = error400("Invalid JSON payload received at response_schema.")
+        reply(schemaErr, schemaErr, 200 to FakeTransport.geminiBody(explainJson))
+        val c = GeminiAiClient({ settings() })
+        val expl = c.explainSentence(req, null)
+        assertEquals("雪だね", expl.chunks.single().surface)
+        assertEquals(3, seen.size)
+        val fallbackBody = AiJson.parseToJsonElement(seen[2].second).jsonObject
+        val fallbackGen = fallbackBody["generationConfig"]!!.jsonObject
+        assertEquals("application/json", fallbackGen["responseMimeType"]!!.jsonPrimitive.content)
+        assertFalse(fallbackGen.containsKey("responseSchema"), "fallback drops responseSchema")
+        val sysText = fallbackBody["systemInstruction"]!!.jsonObject["parts"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content
+        assertTrue(sysText.contains("officialTranslationNote") && sysText.contains("spokenEvolution"), "fallback appends JSON schema hint")
+        assertFalse(c.isThinkingUnsupported(AiProviderSettings.DEFAULT_MODEL), "schema rejection must not mark thinking unsupported when budget=0 succeeded")
     }
 
     @Test
@@ -161,7 +205,7 @@ class GeminiAiClientThinkingTest {
         val expl = AiSampleExplanation.build(0L)
         assertThrows(AiException::class.java) { c.askFollowUp(expl, emptyList(), "为什么？", AiPersonaSettings.KOTORI, null) }
         assertEquals(1, seen.size)
-        assertFalse(c.isThinkingUnsupported("gemini-3.8-flash"))
+        assertFalse(c.isThinkingUnsupported(AiProviderSettings.DEFAULT_MODEL))
     }
 
     @Test
@@ -171,6 +215,6 @@ class GeminiAiClientThinkingTest {
         val e = assertThrows(AiException::class.java) { c.explainSentence(req, null) }
         assertEquals(500, e.httpStatus)
         assertEquals(1, seen.size)
-        assertFalse(c.isThinkingUnsupported("gemini-3.8-flash"))
+        assertFalse(c.isThinkingUnsupported(AiProviderSettings.DEFAULT_MODEL))
     }
 }

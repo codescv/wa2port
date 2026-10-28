@@ -495,13 +495,21 @@ private fun ErrorCard(state: AiBreakdownState, err: AiStatus.Error, ai: AiLearni
             Text("在 设置 → AI 学习 中填写 Gemini API Key 或 Vertex AI（可设置自定义服务器地址 / 代理）。", color = Wa2Colors.TextDim, fontSize = 12.sp)
         }
         if (err.message.isNotBlank() && err.code != AiErrorCode.NOT_CONFIGURED) {
-            Text(err.message, color = Wa2Colors.TextDim, fontSize = 12.sp)
+            Text(
+                err.message,
+                color = Wa2Colors.Text,
+                fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0x14FFFFFF)).padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (err.code == AiErrorCode.NOT_CONFIGURED) {
                 if (onOpenSettings != null) Chip("前往设置 Settings", selected = true, onClick = onOpenSettings)
             } else {
                 Chip("重试 Retry", selected = true) { ai.explain() }
+                if (onOpenSettings != null && (err.code == AiErrorCode.INVALID_ARGUMENT || err.code == AiErrorCode.AUTH || err.code == AiErrorCode.NOT_FOUND)) {
+                    Chip("前往设置 Settings", onClick = onOpenSettings)
+                }
             }
             Chip("示例预览 Preview") { ai.openSample(null) }
             if (!state.isSample) Chip("离线分段 Offline") { ai.showOffline() }

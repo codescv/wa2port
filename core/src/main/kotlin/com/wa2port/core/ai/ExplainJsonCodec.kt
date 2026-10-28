@@ -139,7 +139,6 @@ object ExplainJsonCodec {
                                     put("surface", str())
                                     put("lemma", str())
                                     put("lemmaReading", str())
-                                    put("lemmaRuby", rubyItems())
                                     putJsonObject("partOfSpeech") {
                                         put("type", "STRING")
                                         put("enum", JsonArray(PARTS_OF_SPEECH.map { JsonPrimitive(it) }))
@@ -150,13 +149,12 @@ object ExplainJsonCodec {
                                         put("type", "STRING")
                                         put("enum", JsonArray(JLPT_LEVELS.map { JsonPrimitive(it) }))
                                     }
-                                    putJsonObject("pitchAccent") { put("type", "INTEGER") }
                                     put("notes", str())
                                 }
-                                put("required", strings("surface", "lemma", "lemmaReading", "lemmaRuby", "partOfSpeech", "meaning"))
+                                put("required", strings("surface", "lemma", "lemmaReading", "partOfSpeech", "meaning"))
                                 put(
                                     "propertyOrdering",
-                                    strings("surface", "lemma", "lemmaReading", "lemmaRuby", "partOfSpeech", "meaning", "conjugation", "jlpt", "pitchAccent", "notes"),
+                                    strings("surface", "lemma", "lemmaReading", "partOfSpeech", "meaning", "conjugation", "jlpt", "notes"),
                                 )
                             }
                         }
@@ -502,7 +500,7 @@ object ExplainJsonCodec {
     fun encodeExplanation(e: SentenceExplanation): String = AiJson.encodeToString(SentenceExplanation.serializer(), e)
     fun decodeExplanation(s: String): SentenceExplanation = AiJson.decodeFromString(SentenceExplanation.serializer(), s)
     fun encodeSettings(s: AiProviderSettings): String = AiJson.encodeToString(AiProviderSettings.serializer(), s)
-    fun decodeSettings(s: String): AiProviderSettings = AiJson.decodeFromString(AiProviderSettings.serializer(), s)
+    fun decodeSettings(s: String): AiProviderSettings = AiJson.decodeFromString(AiProviderSettings.serializer(), s).withNormalizedModel()
     fun encodeThread(t: List<FollowUpMessage>): String =
         buildJsonArray { t.forEach { add(AiJson.encodeToJsonElement(FollowUpMessage.serializer(), it)) } }.toString()
     fun decodeThread(s: String): List<FollowUpMessage> =
