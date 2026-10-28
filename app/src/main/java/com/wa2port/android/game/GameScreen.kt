@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.wa2port.android.AppViewModel
+import com.wa2port.android.ai.NotebookOverlay
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.data.SaveStore
 import com.wa2port.android.data.WindowMode
@@ -156,6 +157,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     BackHandler {
         when {
             session.movie != null -> if (movieGate?.requestSkip() != false) finishMovie()
+            vm.ai.notebookOpen -> vm.ai.closeNotebook(session)
             vm.ai.breakdown != null -> vm.ai.close(session)
             session.overlay != Overlay.NONE -> session.overlay = Overlay.NONE
             session.windowHidden -> session.windowHidden = false
@@ -268,8 +270,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 }
             }
             // Gesture layer above text, below interactive controls. Inert while any overlay or the AI
-            // breakdown is open, so nothing drawn above it can leak taps / swipes into the stage.
-            val stageInteractive = session.overlay == Overlay.NONE && vm.ai.breakdown == null
+            // breakdown / notebook is open, so nothing drawn above it can leak taps / swipes into the stage.
+            val stageInteractive = session.overlay == Overlay.NONE && vm.ai.breakdown == null && !vm.ai.notebookOpen
             Box(
                 Modifier.fillMaxSize().then(
                     if (stageInteractive) {
@@ -374,6 +376,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 onLog = { session.overlay = Overlay.BACKLOG },
                 onConfig = { session.overlay = Overlay.CONFIG },
                 onTitle = { vm.exitToTitle(autoSave = true) },
+                onNotebook = { vm.ai.openNotebook(session) },
             )
             Overlay.BACKLOG -> {
                 val entries = remember { session.backlog() }
@@ -420,6 +423,13 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     session.overlay = Overlay.CONFIG
                 },
                 onClose = { vm.ai.close(session) },
+            )
+        }
+        if (vm.ai.notebookOpen && vm.ai.breakdown == null) {
+            NotebookOverlay(
+                ai = vm.ai,
+                onReplayVoice = { v -> session.audio.replayVoice(v) },
+                onClose = { vm.ai.closeNotebook(session) },
             )
         }
 

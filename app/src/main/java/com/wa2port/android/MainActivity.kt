@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.wa2port.android.ai.NotebookOverlay
+import com.wa2port.android.game.AiBreakdownOverlay
 import com.wa2port.android.game.GameScreen
 import com.wa2port.android.ui.AssetSetupScreen
 import com.wa2port.android.ui.BgmGalleryScreen
@@ -74,7 +76,7 @@ class MainActivity : ComponentActivity() {
 fun Wa2App(vm: AppViewModel) {
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
         when (vm.screen) {
-            Screen.Title -> TitleScreen(vm)
+            Screen.Title -> TitleScreen(vm, onNotebook = { vm.ai.openNotebook(null) })
             Screen.Game -> {
                 val s = vm.session
                 if (s != null) GameScreen(vm, s) else LaunchedEffect(Unit) { vm.exitToTitle() }
@@ -92,8 +94,38 @@ fun Wa2App(vm: AppViewModel) {
             Screen.BgmGallery -> BgmGalleryScreen(vm = vm, onClose = { vm.back() })
             Screen.SceneReplay -> SceneReplayScreen(vm = vm, onClose = { vm.back() })
         }
-        if (vm.screen != Screen.Title && vm.screen != Screen.Game) {
-            BackHandler { if (vm.screen == Screen.Config && vm.ai.breakdown != null) vm.ai.close(null) else vm.back() }
+        if (vm.screen != Screen.Game && vm.screen != Screen.Config) {
+            vm.ai.breakdown?.let { st ->
+                AiBreakdownOverlay(
+                    state = st,
+                    ai = vm.ai,
+                    persona = vm.ai.persona,
+                    onPersona = { id -> vm.updateSettings { it.copy(aiPersonaId = id) } },
+                    onReplayVoice = null,
+                    onOpenSettings = {
+                        vm.ai.close(null)
+                        vm.ai.closeNotebook(null)
+                        vm.navigate(Screen.Config)
+                    },
+                    onClose = { vm.ai.close(null) },
+                )
+            }
+        }
+        if (vm.screen != Screen.Game && vm.ai.notebookOpen && vm.ai.breakdown == null) {
+            NotebookOverlay(
+                ai = vm.ai,
+                onReplayVoice = null,
+                onClose = { vm.ai.closeNotebook(null) },
+            )
+        }
+        if (vm.screen != Screen.Game && (vm.ai.notebookOpen || vm.ai.breakdown != null || vm.screen != Screen.Title)) {
+            BackHandler {
+                when {
+                    vm.ai.notebookOpen -> vm.ai.closeNotebook(null)
+                    vm.ai.breakdown != null -> vm.ai.close(null)
+                    vm.screen != Screen.Title -> vm.back()
+                }
+            }
         }
 
         vm.busy?.let {
