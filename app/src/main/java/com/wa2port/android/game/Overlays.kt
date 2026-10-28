@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -38,12 +40,16 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
+import com.wa2port.android.data.Settings
 import com.wa2port.android.ui.CloseButton
 import com.wa2port.android.ui.MenuButton
+import com.wa2port.android.ui.Segmented
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.sceneLabel
 import com.wa2port.core.engine.ChoiceOption
@@ -51,6 +57,7 @@ import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.engine.LineRef
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
+import com.wa2port.core.text.TextScale
 
 /** A language part of a bilingual caption. */
 private data class Part(val rich: RichText, val lang: TextLang, val sizePx: Float, val color: Int)
@@ -180,11 +187,21 @@ fun BacklogOverlay(
     }
 }
 
-/** In-game system menu (MENU button / Android Back). */
+/**
+ * In-game system menu (MENU button / Android Back).
+ *
+ * Hosts the secondary QuickBar controls (**快捷控制 Quick Controls**: 3-way language incl. single
+ * 中文, ADV ⇄ NOVEL, font size presets, `✨ 点词` toggle, `👁 隐藏窗口`, and `Q.LOAD 快速读档`) at the top
+ * of the card so the primary QuickBar stays at 7 high-frequency keys.
+ */
 @Composable
 fun GameMenu(
     scene: String,
     inReplayMode: Boolean = false,
+    settings: Settings = Settings(),
+    onUpdateSettings: ((Settings) -> Settings) -> Unit = {},
+    onQuickLoad: () -> Unit = {},
+    onHideWindow: () -> Unit = {},
     onResume: () -> Unit,
     onSave: () -> Unit,
     onLoad: () -> Unit,
@@ -194,27 +211,89 @@ fun GameMenu(
 ) {
     var confirmTitle by remember { mutableStateOf(false) }
     val exitLabel = if (inReplayMode) "结束回想 Exit Replay" else "返回标题 Title"
-    Box(Modifier.fillMaxSize().background(Color(0xCC050A16)).clickable(onClick = onResume), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier.fillMaxSize().background(Color(0xCC050A16)).clickable(onClick = onResume),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(
-            Modifier.width(320.dp).clickable(enabled = false) {},
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier
+                .width(460.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 12.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xE60D1628))
+                .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(14.dp))
+                .clickable(enabled = false) {}
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(sceneLabel(scene), color = Wa2Colors.TextDim, fontSize = 12.sp)
-            MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), onClick = onResume)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("快捷控制 · 系统菜单  Quick Controls & Menu", color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    Text(sceneLabel(scene), color = Wa2Colors.TextDim, fontSize = 12.sp)
+                }
+                CloseButton(onResume)
+            }
+
+            // Secondary QuickBar controls: 3-way language (incl. single 中文), window mode, font size,
+            // tap-to-analyze toggle, and hide window.
+            Segmented(
+                options = listOf(
+                    DisplayLang.BOTH to "中/日 双",
+                    DisplayLang.JP to "日本語",
+                    DisplayLang.CN to "简体中文",
+                ),
+                selected = settings.lang,
+                onSelect = { lang -> onUpdateSettings { it.copy(lang = lang) } },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                QuickControlChip(
+                    label = "窗口: ${settings.windowMode.label} ⇄",
+                    active = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onUpdateSettings { it.copy(windowMode = it.windowMode.next()) } },
+                )
+                QuickControlChip(
+                    label = "字号: ${TextScale.clamp(settings.textScale)}%",
+                    active = settings.textScale != TextScale.DEFAULT,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onUpdateSettings { it.withTextScale(it.nextTextScale()) } },
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                QuickControlChip(
+                    label = if (settings.aiTapToAnalyze) "✨ 点词解析: 开 ON" else "✨ 点词解析: 关 OFF",
+                    active = settings.aiTapToAnalyze,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onUpdateSettings { it.copy(aiTapToAnalyze = !it.aiTapToAnalyze) } },
+                )
+                QuickControlChip(
+                    label = "👁 隐藏窗口 HIDE",
+                    active = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = onHideWindow,
+                )
+            }
+
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x22FFFFFF)))
+
             if (!inReplayMode) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MenuButton("保存 Save", modifier = Modifier.weight(1f), onClick = onSave)
                     MenuButton("读取 Load", modifier = Modifier.weight(1f), onClick = onLoad)
+                    MenuButton("快读 Q.LOAD", modifier = Modifier.weight(1f), onClick = onQuickLoad)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MenuButton("回想 Log", modifier = Modifier.weight(1f), onClick = onLog)
                 MenuButton("设置 Config", modifier = Modifier.weight(1f), onClick = onConfig)
+                MenuButton(exitLabel, modifier = Modifier.weight(1f)) {
+                    if (inReplayMode) onTitle() else confirmTitle = true
+                }
             }
-            MenuButton(exitLabel, modifier = Modifier.fillMaxWidth()) {
-                if (inReplayMode) onTitle() else confirmTitle = true
-            }
+            MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), onClick = onResume)
         }
     }
     if (confirmTitle) {
@@ -222,7 +301,36 @@ fun GameMenu(
             onDismissRequest = { confirmTitle = false },
             confirmButton = { TextButton(onClick = { confirmTitle = false; onTitle() }) { Text(exitLabel) } },
             dismissButton = { TextButton(onClick = { confirmTitle = false }) { Text("取消 Cancel") } },
-            text = { Text("未保存的进度将丢失。返回标题？\nタイトルに戻りますか？") },
+            text = { Text("返回标题画面？（当前进度将自动保存至「继续」）\nタイトルに戻りますか？") },
+        )
+    }
+}
+
+@Composable
+private fun QuickControlChip(
+    label: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier
+            .heightIn(min = 44.dp)
+            .clip(shape)
+            .background(if (active) Wa2Colors.Accent.copy(alpha = 0.22f) else Color(0x66203050))
+            .border(1.dp, if (active) Wa2Colors.Accent else Wa2Colors.AccentDim, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (active) Wa2Colors.Accent else Wa2Colors.Text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
         )
     }
 }

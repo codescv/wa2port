@@ -60,7 +60,6 @@ import com.wa2port.android.ui.SaveLoadPanel
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.ai.JpSentence
 import com.wa2port.core.text.MessageLayout
-import com.wa2port.core.text.TextScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -176,10 +175,16 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     }
     fun act(f: () -> Unit): () -> Unit = { barInteraction++; f() }
 
-    val actions = buildList {
+    val isNovelMode = settings.windowMode == WindowMode.NOVEL || session.stage.novelMode
+    val leftActions = buildList {
         add(QuickAction("AUTO", session.autoMode, act { session.toggleAuto() }))
         add(QuickAction("SKIP", session.skipToggle, act { session.toggleSkip() }))
         add(QuickAction("LOG", false, act { session.overlay = Overlay.BACKLOG }))
+        if (isNovelMode && session.line?.ref?.voice != null) {
+            add(QuickAction("🔊", false, act { session.replayCurrentVoice() }))
+        }
+    }
+    val rightActions = buildList {
         // AI breakdown of the current line (stacks above whatever overlay is open).
         add(
             QuickAction("✨ AI", vm.ai.breakdown != null, act {
@@ -187,34 +192,26 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
             }),
         )
-        if (!session.inReplayMode) {
-            add(QuickAction("Q.SAVE", false, act { scope.launch { session.quickSave() } }))
-            add(QuickAction("Q.LOAD", false, act { scope.launch { session.quickLoad() } }))
-            add(QuickAction("SAVE", false, act { session.overlay = Overlay.SAVE }))
-            add(QuickAction("LOAD", false, act { session.overlay = Overlay.LOAD }))
-        }
+        // 2-state core learner toggle: 日本語 ⇄ 中/日双语 (single 中文 lives in MENU Quick Controls).
         add(
             QuickAction(
-                when (settings.lang) {
-                    DisplayLang.BOTH -> "中/日 双"
-                    DisplayLang.CN -> "中文"
-                    DisplayLang.JP -> "日本語"
+                label = "日⇄双",
+                active = settings.lang == DisplayLang.BOTH,
+                onClick = act {
+                    val nextLang = settings.lang.toggleJpBoth()
+                    vm.updateSettings { it.copy(lang = nextLang) }
+                    session.toast = if (nextLang == DisplayLang.BOTH) "语言: 中/日双语 Bilingual" else "语言: 日本語 Japanese"
                 },
-                false, act { vm.updateSettings { it.copy(lang = it.lang.next()) } },
             ),
         )
-        add(QuickAction(settings.windowMode.label, false, act { vm.updateSettings { it.copy(windowMode = it.windowMode.next()) } }))
-        // Font size: one tap cycles the presets 100 → 115 → 130 → 145 → 85 → 100.
-        add(
-            QuickAction("字号${TextScale.clamp(settings.textScale)}%", false, act {
-                vm.updateSettings { it.withTextScale(it.nextTextScale()) }
-                val next = vm.settings.textScale
-                session.toast = "字号 Text size $next%" + (TextScale.presetLabel(next)?.let { " · $it" } ?: "")
-            }),
-        )
-        add(QuickAction("HIDE", session.windowHidden, act { session.windowHidden = true }))
+        if (!session.inReplayMode) {
+            add(QuickAction("Q.SAVE", false, act { scope.launch { session.quickSave() } }))
+        } else {
+            add(QuickAction("结束回想", false, act { vm.exitToTitle() }))
+        }
         add(QuickAction("MENU", false, act { session.overlay = Overlay.MENU }))
     }
+    val actions = leftActions + rightActions
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
@@ -346,8 +343,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         when (placement) {
             BarPlacement.SIDE -> {
                 val colW = (side - 8.dp).coerceAtMost(96.dp)
-                QuickColumn(actions.take(6), colW, Modifier.align(Alignment.CenterStart).width(side).fillMaxHeight().padding(vertical = 8.dp).alpha(barAlpha))
-                QuickColumn(actions.drop(6), colW, Modifier.align(Alignment.CenterEnd).width(side).fillMaxHeight().padding(vertical = 8.dp).alpha(barAlpha))
+                QuickColumn(leftActions, colW, Modifier.align(Alignment.CenterStart).width(side).fillMaxHeight().padding(vertical = 8.dp).alpha(barAlpha))
+                QuickColumn(rightActions, colW, Modifier.align(Alignment.CenterEnd).width(side).fillMaxHeight().padding(vertical = 8.dp).alpha(barAlpha))
             }
             BarPlacement.TOP -> Row(Modifier.align(Alignment.TopCenter).height(topBox).fillMaxWidth().alpha(barAlpha), verticalAlignment = Alignment.CenterVertically) {
                 QuickRow(actions, Modifier.padding(horizontal = 8.dp))
@@ -361,6 +358,16 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             Overlay.MENU -> GameMenu(
                 scene = session.engine.scene,
                 inReplayMode = session.inReplayMode,
+                settings = settings,
+                onUpdateSettings = vm::updateSettings,
+                onQuickLoad = {
+                    session.overlay = Overlay.NONE
+                    scope.launch { session.quickLoad() }
+                },
+                onHideWindow = {
+                    session.overlay = Overlay.NONE
+                    session.windowHidden = true
+                },
                 onResume = { session.overlay = Overlay.NONE },
                 onSave = { if (!session.inReplayMode) session.overlay = Overlay.SAVE },
                 onLoad = { if (!session.inReplayMode) session.overlay = Overlay.LOAD },

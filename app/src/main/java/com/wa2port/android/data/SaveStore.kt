@@ -20,6 +20,7 @@ data class SlotMeta(
     val previewJp: String,
     val previewCn: String,
     val thumbnail: ImageBitmap?,
+    val locked: Boolean = false,
 )
 
 /**
@@ -28,7 +29,8 @@ data class SlotMeta(
  * on backgrounding / scene change) and `saves/undo.json` ([UNDO_SLOT], the state replaced by the last
  * in-session load, never shown in the grid nor offered as 「继续」). Writing the quick slot first
  * copies the previous `quick.json` to `quick.prev.json` so a quick save can be undone
- * ([restoreQuickPrev]). Writes are atomic (tmp + rename).
+ * ([restoreQuickPrev]). User slots (`slot >= 0`) may be locked via sidecar `.lock` files
+ * ([isLocked], [setLocked]) to prevent accidental overwriting or deletion. Writes are atomic.
  */
 class SaveStore(private val dir: File) {
     init {
@@ -37,17 +39,35 @@ class SaveStore(private val dir: File) {
 
     fun file(slot: Int): File = File(dir, fileNameFor(slot))
 
+    fun lockFile(slot: Int): File = File(dir, lockFileNameFor(slot))
+
     private val quickPrevFile: File get() = File(dir, QUICK_PREV_NAME)
 
     fun exists(slot: Int): Boolean = file(slot).isFile
 
-    suspend fun write(slot: Int, data: SaveData) = withContext(Dispatchers.IO) {
+    /** True when user slot [slot] (`>= 0`) is locked against overwriting and deletion. */
+    fun isLocked(slot: Int): Boolean = slot >= 0 && lockFile(slot).isFile
+
+    /** Locks or unlocks user slot [slot] (`>= 0`) via its `.lock` sidecar file. */
+    fun setLocked(slot: Int, locked: Boolean) {
+        if (slot < 0) return
+        val f = lockFile(slot)
+        if (locked) {
+            runCatching { f.writeText("1") }
+        } else {
+            f.delete()
+        }
+    }
+
+    suspend fun write(slot: Int, data: SaveData): Boolean = withContext(Dispatchers.IO) {
+        if (slot >= 0 && isLocked(slot)) return@withContext false
         val f = file(slot)
         if (slot == QUICK_SLOT) {
             // Keep the previous quick save so 「撤销 Undo」 can bring it back.
             if (f.isFile) runCatching { f.copyTo(quickPrevFile, overwrite = true) } else quickPrevFile.delete()
         }
         writeAtomic(f, data.toJson())
+        true
     }
 
     private fun writeAtomic(f: File, text: String) {
@@ -61,7 +81,10 @@ class SaveStore(private val dir: File) {
         runCatching { SaveData.fromJson(file(slot).readText()) }.getOrNull()
     }
 
-    suspend fun delete(slot: Int) = withContext(Dispatchers.IO) { file(slot).delete() }
+    suspend fun delete(slot: Int): Boolean = withContext(Dispatchers.IO) {
+        if (slot >= 0 && isLocked(slot)) return@withContext false
+        file(slot).delete()
+    }
 
     /**
      * Undoes the last quick save: puts `quick.prev.json` back as `quick.json` (or deletes
@@ -85,7 +108,7 @@ class SaveStore(private val dir: File) {
     private fun metaOf(slot: Int): SlotMeta? {
         if (!exists(slot)) return null
         val d = runCatching { SaveData.fromJson(file(slot).readText()) }.getOrNull() ?: return null
-        return SlotMeta(slot, d.timestamp, d.scene, d.previewJp, d.previewCn, decodeThumbnail(d.thumbnail))
+        return SlotMeta(slot, d.timestamp, d.scene, d.previewJp, d.previewCn, decodeThumbnail(d.thumbnail), locked = isLocked(slot))
     }
 
     /** Metadata of every existing slot (incl. [AUTO_SLOT], never [UNDO_SLOT]), keyed by slot number. */
@@ -119,6 +142,11 @@ class SaveStore(private val dir: File) {
             UNDO_SLOT -> "undo.json"
             QUICK_SLOT -> "quick.json"
             else -> "slot_%02d.json".format(Locale.ROOT, slot)
+        }
+
+        fun lockFileNameFor(slot: Int): String = when (slot) {
+            QUICK_SLOT -> "quick.lock"
+            else -> "slot_%02d.lock".format(Locale.ROOT, slot)
         }
 
         /** Newest of [metas] (ties → the first one), ignoring [UNDO_SLOT]. */

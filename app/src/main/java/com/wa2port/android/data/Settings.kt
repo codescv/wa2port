@@ -20,6 +20,9 @@ enum class DisplayLang(val label: String) {
         CN -> JP
         JP -> BOTH
     }
+
+    /** Primary QuickBar `日⇄双` toggle: 2-state switch between [JP] and [BOTH] ([CN] → [BOTH]). */
+    fun toggleJpBoth(): DisplayLang = if (this == BOTH) JP else BOTH
 }
 
 /** ADV = bottom message window; NOVEL = full-screen page that accumulates lines. */

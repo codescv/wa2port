@@ -275,7 +275,7 @@ class GameSession(
         visibleCn = p.visible(TextLang.CN, segment, 1f)
     }
 
-    private fun completeLine() {
+    fun completeLine() {
         val p = plan ?: return
         segment = p.segments - 1
         completeSegment()
@@ -296,7 +296,7 @@ class GameSession(
     }
 
     /** Finish the reveal, continue after `\k`, or advance the engine. */
-    private fun proceed() {
+    fun proceed() {
         val p = plan
         when {
             p != null && !segmentComplete -> completeSegment()
@@ -370,11 +370,12 @@ class GameSession(
 
     suspend fun saveTo(slot: Int, thumbnailB64: String? = null): Boolean {
         if (inReplayMode) return false
+        if (slot >= 0 && saves.isLocked(slot)) return false
         val thumb = thumbnailB64 ?: SaveStore.encodeThumbnail(stageHandle?.captureThumbnail())
         val data = engine.save(thumb)
         val system = engine.system.toJson()
         return runCatching {
-            saves.write(slot, data)
+            if (!saves.write(slot, data)) return@runCatching false
             writeSystem(system)
             true
         }.getOrDefault(false)
@@ -406,6 +407,7 @@ class GameSession(
 
     suspend fun quickSave() {
         if (inReplayMode) { toast = "回想模式下无法存档 Save disabled in replay"; return }
+        if (saves.isLocked(SaveStore.QUICK_SLOT)) { toast = "快速存档已锁定 Quick slot locked"; return }
         // SaveStore backs the previous quick.json up to quick.prev.json before writing.
         if (saveTo(SaveStore.QUICK_SLOT)) {
             offerUndo("已快速存档 Quick saved") {

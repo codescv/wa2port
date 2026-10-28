@@ -77,4 +77,48 @@ class SaveStoreTest {
         assertNull(store.restoreQuickPrev())
         assertFalse(store.exists(SaveStore.QUICK_SLOT))
     }
+
+    @Test
+    fun lockedSlotPreventsOverwriteAndDelete() = runBlocking {
+        val store = SaveStore(dir)
+        assertTrue(store.write(5, data(100, "1001")))
+        assertFalse(store.isLocked(5))
+
+        store.setLocked(5, true)
+        assertTrue(store.isLocked(5))
+        assertEquals("slot_05.lock", store.lockFile(5).name)
+        assertEquals(true, store.listMeta()[5]?.locked)
+
+        // Overwrite and delete are rejected while locked.
+        assertFalse(store.write(5, data(200, "2001")))
+        assertFalse(store.delete(5))
+        assertEquals("1001", store.read(5)?.scene)
+
+        // Quick slot also supports locking via quick.lock.
+        assertTrue(store.write(SaveStore.QUICK_SLOT, data(150, "1002")))
+        store.setLocked(SaveStore.QUICK_SLOT, true)
+        assertEquals("quick.lock", store.lockFile(SaveStore.QUICK_SLOT).name)
+        assertFalse(store.write(SaveStore.QUICK_SLOT, data(250, "2002")))
+        assertFalse(store.delete(SaveStore.QUICK_SLOT))
+
+        // Reserved negative slots ignore locking.
+        store.setLocked(SaveStore.AUTO_SLOT, true)
+        assertFalse(store.isLocked(SaveStore.AUTO_SLOT))
+        assertTrue(store.write(SaveStore.AUTO_SLOT, data(300, "1003")))
+
+        // Unlocking restores normal write and delete.
+        store.setLocked(5, false)
+        assertFalse(store.isLocked(5))
+        assertTrue(store.write(5, data(400, "2001")))
+        assertEquals("2001", store.read(5)?.scene)
+        assertTrue(store.delete(5))
+        assertFalse(store.exists(5))
+    }
+
+    @Test
+    fun displayLangToggleJpBoth() {
+        assertEquals(DisplayLang.JP, DisplayLang.BOTH.toggleJpBoth())
+        assertEquals(DisplayLang.BOTH, DisplayLang.JP.toggleJpBoth())
+        assertEquals(DisplayLang.BOTH, DisplayLang.CN.toggleJpBoth())
+    }
 }
