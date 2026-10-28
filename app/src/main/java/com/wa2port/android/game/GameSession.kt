@@ -18,7 +18,11 @@ import com.wa2port.core.engine.SkipMode
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.Wa2Engine
 import com.wa2port.core.text.TextLang
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -26,15 +30,25 @@ import java.io.File
 enum class Overlay { NONE, MENU, BACKLOG, SAVE, LOAD, CONFIG, AI }
 
 /**
+ * A short-lived 「撤销 Undo」 offer shown at the top of the game screen after a load / quick save.
+ * [token] distinguishes successive offers (the screen expires each one after [UNDO_WINDOW_MS]).
+ */
+class UndoAction(val message: String, val token: Long, val perform: suspend () -> Unit)
+
+/**
  * Drives one play session: runs [Wa2Engine] from the frame loop ([tick]), owns typewriter/novel-page
  * state, AUTO/SKIP, overlays, quick save/load, and exposes everything as Compose state.
  * Must only be used from the main thread (the engine is single-threaded).
+ *
+ * [ioScope] runs background save writes (autosave); it should outlive the session (e.g. the
+ * ViewModel scope) so an autosave started right before leaving the game still completes.
  */
 class GameSession(
     val engine: Wa2Engine,
     val backend: RenderBackend,
     private val saves: SaveStore,
     private val systemFile: File,
+    private val ioScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
     private val settings: () -> Settings,
 ) {
     val audio: AudioSink = backend.createAudio()
@@ -73,9 +87,14 @@ class GameSession(
     var ended by mutableStateOf(false)
         private set
     var toast by mutableStateOf<String?>(null)
+    /** Pending 「撤销 Undo」 offer (after an in-session load or a quick save), or null. */
+    var undoAction by mutableStateOf<UndoAction?>(null)
     var paused = false
 
     private var lastLine: DialogueLine? = null
+    /** Scene of the last autosave; a different [Wa2Engine.scene] in [sync] triggers a new one. */
+    private var lastAutoSavedScene: String? = null
+    private var undoSeq = 0L
     private var segProgressMs = 0f
     private var autoWaitMs = 0f
     private var pageBreakPending = false
@@ -106,6 +125,8 @@ class GameSession(
     fun loadData(data: SaveData) {
         resetUi()
         engine.load(data)
+        // The loaded state is already on disk: no scene-change autosave right after a load.
+        lastAutoSavedScene = engine.scene
         sync()
         completeLine()
     }
@@ -123,6 +144,7 @@ class GameSession(
         movie = null
         ended = false
         pageBreakPending = false
+        undoAction = null
         engine.skipMode = SkipMode.OFF
         weSetSkip = false
     }
@@ -204,6 +226,11 @@ class GameSession(
         }
         val ch = engine.choices
         if (ch != choices) choices = ch
+        // Autosave on every scene change (never in Scene Replay; needs a line so it is resumable).
+        if (line != null && !inReplayMode && engine.scene != lastAutoSavedScene) {
+            lastAutoSavedScene = engine.scene
+            autoSave(captureThumb = true)
+        }
     }
 
     private fun onNewLine(cl: DialogueLine?) {
@@ -288,6 +315,13 @@ class GameSession(
         if (!held) skipSuppressed = false
     }
 
+    /** ADV 🔊 重听: replays the current line's voice without advancing. False when it has none. */
+    fun replayCurrentVoice(): Boolean {
+        val v = line?.ref?.voice ?: return false
+        audio.replayVoice(v)
+        return true
+    }
+
     fun toggleSkip() {
         skipToggle = !skipToggle
         if (skipToggle) {
@@ -346,21 +380,77 @@ class GameSession(
         }.getOrDefault(false)
     }
 
-    suspend fun loadFrom(slot: Int): Boolean {
+    /**
+     * Loads [slot] in-session. Unless this load *is* the undo ([isUndo]), the current state is first
+     * written to [SaveStore.UNDO_SLOT] and a 「撤销 Undo」 offer ([undoAction]) brings it back via
+     * [undoLoad] — which passes `isUndo = true`, so undoing never overwrites `undo.json` itself.
+     */
+    suspend fun loadFrom(slot: Int, isUndo: Boolean = false, undoMessage: String = "已读取存档 Loaded"): Boolean {
         if (inReplayMode) return false
         val data = saves.read(slot) ?: return false
+        val backedUp = !isUndo && line != null && runCatching {
+            saves.write(SaveStore.UNDO_SLOT, engine.save(null))
+            true
+        }.getOrDefault(false)
         loadData(data)
+        if (backedUp) offerUndo(undoMessage) { undoLoad() }
         return true
+    }
+
+    /** Goes back to the state replaced by the last in-session load (`undo.json`). */
+    suspend fun undoLoad(): Boolean {
+        val ok = loadFrom(SaveStore.UNDO_SLOT, isUndo = true)
+        toast = if (ok) "已撤销读档 Load undone" else "无法撤销 Nothing to undo"
+        return ok
     }
 
     suspend fun quickSave() {
         if (inReplayMode) { toast = "回想模式下无法存档 Save disabled in replay"; return }
-        toast = if (saveTo(SaveStore.QUICK_SLOT)) "已快速存档 Quick saved" else "存档失败 Save failed"
+        // SaveStore backs the previous quick.json up to quick.prev.json before writing.
+        if (saveTo(SaveStore.QUICK_SLOT)) {
+            offerUndo("已快速存档 Quick saved") {
+                saves.restoreQuickPrev()
+                toast = "已撤销快速存档 Quick save undone"
+            }
+        } else {
+            toast = "存档失败 Save failed"
+        }
     }
 
     suspend fun quickLoad() {
         if (inReplayMode) { toast = "回想模式下无法读档 Load disabled in replay"; return }
-        toast = if (loadFrom(SaveStore.QUICK_SLOT)) "已快速读档 Quick loaded" else "没有快速存档 No quick save"
+        if (!loadFrom(SaveStore.QUICK_SLOT, undoMessage = "已快速读档 Quick loaded")) toast = "没有快速存档 No quick save"
+        else if (undoAction == null) toast = "已快速读档 Quick loaded"
+    }
+
+    private fun offerUndo(message: String, perform: suspend () -> Unit) {
+        toast = null
+        val token = ++undoSeq
+        undoAction = UndoAction(message, token) {
+            // One shot: clear first so a double tap cannot run it twice.
+            if (undoAction?.token == token) {
+                undoAction = null
+                perform()
+            }
+        }
+    }
+
+    /**
+     * Writes the current state to [SaveStore.AUTO_SLOT] (`auto.json`) in the background. No-op in
+     * Scene Replay, before the first line, while a movie plays and after the game ended. [captureThumb]
+     * = false skips the stage capture (e.g. from `ON_PAUSE`, where the surface may already be going
+     * away). Never called from the engine-failure path, so a broken state can never become 「继续」.
+     */
+    fun autoSave(captureThumb: Boolean = true): Job? {
+        if (inReplayMode || line == null || ended || movie != null) return null
+        val bitmap = if (captureThumb) runCatching { stageHandle?.captureThumbnail() }.getOrNull() else null
+        val data = runCatching { engine.save(null) }.getOrNull() ?: return null
+        return ioScope.launch {
+            runCatching {
+                val thumb = bitmap?.let { withContext(Dispatchers.Default) { SaveStore.encodeThumbnail(it) } }
+                saves.write(SaveStore.AUTO_SLOT, if (thumb != null) data.copy(thumbnail = thumb) else data)
+            }
+        }
     }
 
     suspend fun persistSystem() = writeSystem(engine.system.toJson())
@@ -379,5 +469,7 @@ class GameSession(
 
     companion object {
         const val MAX_PAGE_LINES = 24
+        /** How long a 「撤销 Undo」 offer stays on screen. */
+        const val UNDO_WINDOW_MS = 4000L
     }
 }
