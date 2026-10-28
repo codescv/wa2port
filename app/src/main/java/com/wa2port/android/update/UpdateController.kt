@@ -84,6 +84,7 @@ class UpdateController(
     private var job: Job? = null
     private var cancel: CancelToken? = null
     private var generation = 0
+    private var pendingInstallAfterPermission = false
 
     init {
         job = scope.launch { restoreDownloaded() }
@@ -128,11 +129,15 @@ class UpdateController(
         }
     }
 
-    /** Downloads the APK of [latest] (from Available / Error(lastRelease) / Downloaded for a re-download). */
-    fun downloadUpdate() {
+    /**
+     * Downloads the APK of [latest] (from Available / Error(lastRelease) / Downloaded for a
+     * re-download) and automatically opens the system installer once validation passes.
+     */
+    fun downloadUpdate(context: Context = app) {
         if (busy) return
         val release = latest ?: return
         val asset = release.apkAsset ?: return
+        pendingInstallAfterPermission = false
         val gen = ++generation
         val token = CancelToken().also { cancel = it }
         val dest = apkFileFor(release)
@@ -153,7 +158,12 @@ class UpdateController(
                 }
                 val problem = withContext(Dispatchers.IO) { validateApk(file).also { if (it != null) file.delete() } }
                 if (gen != generation || state !is UpdateState.Downloading) return@launch
-                state = if (problem != null) UpdateState.Error(problem, release) else UpdateState.Downloaded(release, file)
+                if (problem != null) {
+                    state = UpdateState.Error(problem, release)
+                } else {
+                    state = UpdateState.Downloaded(release, file)
+                    openInstaller(context, release, file)
+                }
             } catch (e: UpdateException) {
                 if (gen != generation || state !is UpdateState.Downloading) return@launch
                 state = if (e.code == UpdateErrorCode.CANCELLED) UpdateState.Available(release) else UpdateState.Error(e.message ?: e.code.name, release)
@@ -164,6 +174,7 @@ class UpdateController(
     /** Cancels a running check (→ Idle, or back to a ready download) or download (→ Available). */
     fun cancelDownload() {
         val s = state
+        pendingInstallAfterPermission = false
         generation++
         cancel?.cancel()
         job?.cancel()
@@ -185,26 +196,48 @@ class UpdateController(
             val problem = withContext(Dispatchers.IO) { validateApk(s.apkFile).also { if (it != null) s.apkFile.delete() } }
             if (gen != generation || state != s) return@launch
             if (problem != null) {
+                pendingInstallAfterPermission = false
                 state = UpdateState.Error(problem, s.latest.takeIf { it.apkAsset != null })
                 return@launch
             }
-            val pm = context.packageManager
-            if (!pm.canRequestPackageInstalls()) {
-                Toast.makeText(context, "请允许「安装未知应用」后再回来点击安装\nAllow \"Install unknown apps\", then tap Install again", Toast.LENGTH_LONG).show()
-                val intent = Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                runCatching { context.startActivity(intent) }
-                return@launch
-            }
-            try {
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", s.apkFile)
-                val intent = Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, APK_MIME)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-            } catch (e: Exception) {
-                state = UpdateState.Error("无法启动安装程序 Cannot start installer: ${e.message ?: e.javaClass.simpleName}", s.latest)
-            }
+            openInstaller(context, s.latest, s.apkFile)
+        }
+    }
+
+    /**
+     * Auto-launches installation when the user returns from Android's "Install unknown apps"
+     * permission screen after granting permission.
+     */
+    fun onHostResume(context: Context) {
+        if (pendingInstallAfterPermission && state is UpdateState.Downloaded && context.packageManager.canRequestPackageInstalls()) {
+            pendingInstallAfterPermission = false
+            installApk(context)
+        }
+    }
+
+    private fun openInstaller(context: Context, release: ReleaseInfo, apkFile: File) {
+        val pm = context.packageManager
+        if (!pm.canRequestPackageInstalls()) {
+            pendingInstallAfterPermission = true
+            Toast.makeText(
+                context,
+                "请允许「安装未知应用」，返回后将自动开始安装\nAllow \"Install unknown apps\" to continue installation",
+                Toast.LENGTH_LONG,
+            ).show()
+            val intent = Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(intent) }
+            return
+        }
+        pendingInstallAfterPermission = false
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
+            val intent = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, APK_MIME)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            state = UpdateState.Error("无法启动安装程序 Cannot start installer: ${e.message ?: e.javaClass.simpleName}", release)
         }
     }
 

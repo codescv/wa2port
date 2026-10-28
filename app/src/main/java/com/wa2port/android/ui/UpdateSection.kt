@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +31,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wa2port.android.update.UpdateController
 import com.wa2port.android.update.UpdateState
 import com.wa2port.core.update.ReleaseInfo
@@ -114,6 +118,16 @@ fun UpdatePill(update: UpdateController, onClick: () -> Unit) {
 @Composable
 fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (() -> Unit)? = null) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                update.onHostResume(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val actions = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp)
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         when (val s = update.state) {
@@ -145,7 +159,9 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                 }
                 Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (s.latest.apkAsset != null) {
-                        UpdateButton(if (compact) "下载更新 Download" else "立即下载并安装 Download & Install", primary = true) { update.downloadUpdate() }
+                        UpdateButton(if (compact) "下载并安装 Download & Install" else "立即下载并安装 Download & Install", primary = true) {
+                            update.downloadUpdate(context)
+                        }
                     }
                     UpdateButton("浏览器下载 Open in browser") { update.openInBrowser(context) }
                     if (onDismiss != null) UpdateButton("取消 Later") { onDismiss() }
@@ -173,7 +189,7 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                 Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     UpdateButton("安装 APK Install", primary = true) { update.installApk(context) }
                     if (s.latest.apkAsset != null) {
-                        UpdateButton("重新下载 Re-download") { update.downloadUpdate() }
+                        UpdateButton("重新下载 Re-download") { update.downloadUpdate(context) }
                     } else {
                         UpdateButton("检查更新 Check") { update.checkForUpdates() }
                     }
@@ -183,7 +199,7 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                 Text("✗ ${s.message}", color = UPDATE_ERR, fontSize = 13.sp)
                 Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     UpdateButton("重试 Retry", primary = true) {
-                        if (s.lastRelease?.apkAsset != null) update.downloadUpdate() else update.checkForUpdates()
+                        if (s.lastRelease?.apkAsset != null) update.downloadUpdate(context) else update.checkForUpdates()
                     }
                     UpdateButton("浏览器打开 GitHub") { update.openInBrowser(context) }
                 }

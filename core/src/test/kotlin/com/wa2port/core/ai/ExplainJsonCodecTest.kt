@@ -218,6 +218,123 @@ class ExplainJsonCodecTest {
         assertEquals("HTTP 401", ExplainJsonCodec.extractErrorMessage("", 401))
     }
 
+    @Test
+    fun backfillsMissingKanjiRubyFromChunksAndVocabOnFlashLitePayload() {
+        val drumSentence = "「ドラムどうすんだよ！他にいないんだぞ。放り出す気かよ？」"
+        // Exact gemini-3.5-flash-lite failure mode (`ex_40f2c30308...`): raw.ruby has furigana on 他,
+        // omits readings on 放り出す and 気, while chunks/vocab carry ほうりだす and き.
+        val rawJson = """
+            {
+              "translation": "架子鼓怎么办啊！又没有其他人了。你打算就这样不管了吗？",
+              "register": "casual",
+              "tone": "急躁、质问",
+              "ruby": [
+                {"base": "「ドラムどうすんだよ！"},
+                {"base": "他", "ruby": "ほか"},
+                {"base": "にいないんだぞ。"},
+                {"base": "放"},
+                {"base": "り"},
+                {"base": "出"},
+                {"base": "す"},
+                {"base": "気"},
+                {"base": "かよ？」"}
+              ],
+              "chunks": [
+                {"surface": "「ドラム", "reading": "どらむ", "textbookForm": "ドラム", "role": "宾语", "meaning": "架子鼓",
+                 "vocab": [{"surface": "ドラム", "lemma": "ドラム", "lemmaReading": "どらむ", "partOfSpeech": "noun", "meaning": "架子鼓，鼓"}]},
+                {"surface": "どうすんだよ！", "reading": "どうすんだよ", "textbookForm": "どうするのだよ",
+                 "spokenEvolution": {"kind": "缩约", "derivation": "どうするの → どうすんの → どうすんだ", "formality": 0.2},
+                 "role": "谓语核心", "meaning": "该怎么办啊",
+                 "vocab": [{"surface": "どう", "lemma": "どう", "lemmaReading": "どう", "partOfSpeech": "adverb", "meaning": "如何，怎样", "jlpt": "N5"},
+                           {"surface": "する", "lemma": "する", "lemmaReading": "する", "partOfSpeech": "verb", "meaning": "做，办", "jlpt": "N5"},
+                           {"surface": "んだよ", "lemma": "のだよ", "lemmaReading": "のだよ", "partOfSpeech": "auxiliary", "meaning": "用于加强语气的断定和诘问"}]},
+                {"surface": "他に", "reading": "ほかに", "textbookForm": "他に", "role": "状语", "meaning": "除此之外，别处",
+                 "vocab": [{"surface": "他", "lemma": "他", "lemmaReading": "ほか", "partOfSpeech": "noun", "meaning": "其他，另外", "jlpt": "N3"},
+                           {"surface": "に", "lemma": "に", "lemmaReading": "に", "partOfSpeech": "particle", "meaning": "在……中", "jlpt": "N5"}]},
+                {"surface": "いないんだぞ。", "reading": "いないんだぞ", "textbookForm": "いないのだぞ",
+                 "spokenEvolution": {"kind": "口语习惯", "derivation": "いないのだ → いないんだ", "formality": 0.2},
+                 "role": "谓语", "meaning": "根本没有啊",
+                 "vocab": [{"surface": "いる", "lemma": "いる", "lemmaReading": "いる", "partOfSpeech": "verb", "meaning": "在", "jlpt": "N5"},
+                           {"surface": "ない", "lemma": "ない", "lemmaReading": "ない", "partOfSpeech": "auxiliary", "meaning": "表否定", "jlpt": "N5"},
+                           {"surface": "んだぞ", "lemma": "のだぞ", "lemmaReading": "のだぞ", "partOfSpeech": "auxiliary", "meaning": "加强语气"}]},
+                {"surface": "放り出す", "reading": "ほうりだす", "textbookForm": "放り出す", "role": "谓语动词", "meaning": "抛弃，撒手不管",
+                 "vocab": [{"surface": "放り出す", "lemma": "放り出す", "lemmaReading": "ほうりだす", "partOfSpeech": "verb", "meaning": "抛弃，放弃", "jlpt": "N1"}]},
+                {"surface": "気かよ？", "reading": "きかよ", "textbookForm": "気かよ", "role": "句尾终助词结构", "meaning": "打算……吗？",
+                 "vocab": [{"surface": "気", "lemma": "気", "lemmaReading": "き", "partOfSpeech": "noun", "meaning": "心思，打算", "jlpt": "N4"},
+                           {"surface": "か", "lemma": "か", "lemmaReading": "か", "partOfSpeech": "particle", "meaning": "表疑问", "jlpt": "N5"},
+                           {"surface": "よ", "lemma": "よ", "lemmaReading": "よ", "partOfSpeech": "particle", "meaning": "表提醒或质问"}]}
+              ],
+              "grammar": []
+            }
+        """.trimIndent()
+        val raw = ExplainJsonCodec.parseRawExplanation(ExplainJsonCodec.parseModelJson(rawJson))
+        val e = ExplainJsonCodec.toSentenceExplanation(
+            raw,
+            ExplainRequest(drumSentence, speakerJp = "武也", officialCnTranslation = "「那鼓手怎么办啊！ 没有其他人了啊。你准备抛下不管了吗？」"),
+            ExplanationMeta(id = "ex_40f2c30308", model = "gemini-3.5-flash-lite", now = 1L),
+        )
+        assertEquals(drumSentence, e.ruby.joinToString("") { it.base })
+        assertEquals("ほか", e.ruby.first { it.base == "他" }.ruby)
+        assertEquals("ほう", e.ruby.first { it.base == "放" }.ruby)
+        assertNull(e.ruby.first { it.base == "り" }.ruby)
+        assertEquals("だ", e.ruby.first { it.base == "出" }.ruby)
+        assertNull(e.ruby.first { it.base == "す" }.ruby)
+        assertEquals("き", e.ruby.first { it.base == "気" }.ruby)
+
+        val c4 = e.chunks.first { it.surface == "放り出す" }
+        assertEquals(listOf("放" to "ほう", "り" to null, "出" to "だ", "す" to null), c4.ruby.map { it.base to it.ruby })
+        val c5 = e.chunks.first { it.surface == "気かよ？" }
+        assertEquals(listOf("気" to "き", "かよ？" to null), c5.ruby.map { it.base to it.ruby })
+
+        val v9 = e.vocab.first { it.lemma == "放り出す" }
+        assertEquals(listOf("放" to "ほう", "り" to null, "出" to "だ", "す" to null), v9.lemmaRuby.map { it.base to it.ruby })
+        val v10 = e.vocab.first { it.lemma == "気" }
+        assertEquals(listOf("気" to "き"), v10.lemmaRuby.map { it.base to it.ruby })
+
+        // Also verify vocab-only backfill when chunk.reading is blank, plus jukujikun normalization.
+        val jukujikunRaw = ExplainJsonCodec.parseRawExplanation(
+            ExplainJsonCodec.parseModelJson(
+                """
+                {
+                  "translation": "明天也要扔下不管吗",
+                  "ruby": [{"base": "明", "ruby": "あ"}, {"base": "日", "ruby": "ひ"}, {"base": "も"}],
+                  "chunks": [
+                    {"surface": "明日も", "reading": "あしたも", "textbookForm": "明日も", "role": "状语", "meaning": "明天也", "vocab": []},
+                    {"surface": "放り出す", "reading": "", "textbookForm": "放り出す", "role": "谓语", "meaning": "不管",
+                     "vocab": [{"surface": "放り出す", "lemma": "放り出す", "lemmaReading": "ほうりだす", "partOfSpeech": "verb", "meaning": "抛下"}]}
+                  ],
+                  "grammar": []
+                }
+                """.trimIndent(),
+            ),
+        )
+        val e2 = ExplainJsonCodec.toSentenceExplanation(
+            jukujikunRaw,
+            ExplainRequest("明日も放り出す"),
+            ExplanationMeta(id = "ex_juku", model = "gemini-3.5-flash-lite", now = 2L),
+        )
+        assertEquals("明日も放り出す", e2.ruby.joinToString("") { it.base })
+        assertEquals("あした", e2.ruby.first { it.base == "明日" }.ruby)
+        assertEquals("ほう", e2.ruby.first { it.base == "放" }.ruby)
+        assertEquals("だ", e2.ruby.first { it.base == "出" }.ruby)
+    }
+
+    @Test
+    fun decodeExplanationRepairsLegacyCachedMissingRuby() {
+        val legacyCachedJson = """
+            {"id":"ex_40f2c3030838d27630c880cba38d8240a1986cddff3b62556bab621c7738f01e","sentence":"「ドラムどうすんだよ！他にいないんだぞ。放り出す気かよ？」","ruby":[{"base":"「ドラムどうすんだよ！","span":{"start":0,"end":11}},{"base":"他","ruby":"ほか","span":{"start":11,"end":12}},{"base":"にいないんだぞ。","span":{"start":12,"end":20}},{"base":"放","span":{"start":20,"end":21}},{"base":"り","span":{"start":21,"end":22}},{"base":"出","span":{"start":22,"end":23}},{"base":"す","span":{"start":23,"end":24}},{"base":"気","span":{"start":24,"end":25}},{"base":"かよ？」","span":{"start":25,"end":29}}],"translation":"架子鼓怎么办啊！又没有其他人了。你打算就这样不管了吗？","chunks":[{"id":"c4","span":{"start":20,"end":24},"alignment":"EXACT","surface":"放り出す","reading":"ほうりだす","ruby":[{"base":"放","span":{"start":20,"end":21}},{"base":"り","span":{"start":21,"end":22}},{"base":"出","span":{"start":22,"end":23}},{"base":"す","span":{"start":23,"end":24}}],"textbookForm":"放り出す","role":"谓语动词","meaning":"抛弃","vocabIds":["v9"]},{"id":"c5","span":{"start":24,"end":28},"alignment":"EXACT","surface":"気かよ？","reading":"きかよ","ruby":[{"base":"気","span":{"start":24,"end":25}},{"base":"かよ？","span":{"start":25,"end":28}}],"textbookForm":"気かよ","role":"句尾","meaning":"打算……吗？","vocabIds":["v10"]}],"vocab":[{"id":"v9","span":{"start":20,"end":24},"alignment":"EXACT","surface":"放り出す","lemma":"放り出す","lemmaReading":"ほうりだす","lemmaRuby":[{"base":"放","span":{"start":0,"end":1}},{"base":"り","span":{"start":1,"end":2}},{"base":"出","span":{"start":2,"end":3}},{"base":"す","span":{"start":3,"end":4}}],"partOfSpeech":"verb","meaning":"抛弃"},{"id":"v10","span":{"start":24,"end":25},"alignment":"EXACT","surface":"気","lemma":"気","lemmaReading":"き","lemmaRuby":[{"base":"気","span":{"start":0,"end":1}}],"partOfSpeech":"noun","meaning":"心思"}],"grammar":[],"model":"gemini-3.5-flash-lite","promptVersion":"wa2-v1","createdAt":1793169190499}
+        """.trimIndent()
+        val decoded = ExplainJsonCodec.decodeExplanation(legacyCachedJson)
+        assertEquals("ほか", decoded.ruby.first { it.base == "他" }.ruby)
+        assertEquals("ほう", decoded.ruby.first { it.base == "放" }.ruby)
+        assertEquals("だ", decoded.ruby.first { it.base == "出" }.ruby)
+        assertEquals("き", decoded.ruby.first { it.base == "気" }.ruby)
+        assertEquals("ほう", decoded.chunks.first { it.id == "c4" }.ruby.first { it.base == "放" }.ruby)
+        assertEquals("き", decoded.chunks.first { it.id == "c5" }.ruby.first { it.base == "気" }.ruby)
+        assertEquals("ほう", decoded.vocab.first { it.id == "v9" }.lemmaRuby.first { it.base == "放" }.ruby)
+        assertEquals("き", decoded.vocab.first { it.id == "v10" }.lemmaRuby.first { it.base == "気" }.ruby)
+    }
+
     @Suppress("unused")
     private fun JsonObject.str(k: String) = this[k]?.jsonPrimitive?.content
 }

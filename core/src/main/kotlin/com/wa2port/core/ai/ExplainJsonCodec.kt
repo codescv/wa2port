@@ -317,6 +317,31 @@ object ExplainJsonCodec {
         return ids
     }
 
+    private fun vocabReadingSpansFor(
+        vSpan: CharSpan,
+        vAlignment: SpanAlignment,
+        vSurface: String,
+        lemma: String,
+        lemmaReading: String,
+        lemmaRuby: List<RubyToken>,
+    ): List<RubyReadingSpan> {
+        if (vAlignment == SpanAlignment.UNALIGNED || vSpan.isEmpty || lemmaReading.isBlank() || !JapaneseText.hasKanji(vSurface)) {
+            return emptyList()
+        }
+        if (JapaneseText.normalise(vSurface) == JapaneseText.normalise(lemma)) {
+            return listOf(RubyReadingSpan(vSpan, lemmaReading, vAlignment))
+        }
+        if (lemma == "来る") return emptyList()
+        return lemmaRuby
+            .filter {
+                it.ruby != null &&
+                    it.span.end <= lemma.length &&
+                    it.span.end <= vSurface.length &&
+                    lemma.substring(0, it.span.end) == vSurface.substring(0, it.span.end)
+            }
+            .map { RubyReadingSpan(CharSpan(vSpan.start + it.span.start, vSpan.start + it.span.end), it.ruby!!, vAlignment) }
+    }
+
     /**
      * Builds a [SentenceExplanation] from validated model output (port of kotori `explanation.ts`).
      * Chunks are aligned on the sentence; vocab is aligned inside its chunk and offset to sentence
@@ -329,37 +354,45 @@ object ExplainJsonCodec {
         meta: ExplanationMeta,
     ): SentenceExplanation {
         val sentence = req.sentence
-        val ruby = RubyBuilder.overlayScriptRuby(
-            sentence,
-            RubyBuilder.buildRuby(sentence, raw.ruby.map { RubyBuilder.RawRuby(it.base, it.ruby) }),
-            req.scriptRuby,
-        )
         val chunkAlign = SpanAlign.alignSpans(sentence, raw.chunks.map { it.surface })
-        val chunks = ArrayList<SemanticChunk>()
+        val chunkReadingSpans = ArrayList<RubyReadingSpan>(raw.chunks.size)
+        val vocabReadingSpans = ArrayList<RubyReadingSpan>()
         val vocab = ArrayList<VocabEntry>()
+        val chunkVocabIds = ArrayList<List<String>>(raw.chunks.size)
+
         raw.chunks.forEachIndexed { ci, rc ->
             val span = chunkAlign.spans[ci]
             val alignment = chunkAlign.alignment[ci]
-            val surface = if (alignment == SpanAlignment.UNALIGNED) rc.surface else sentence.substring(span.start, span.end)
-            val textbookForm = rc.textbookForm.trim().ifEmpty { surface }
+            chunkReadingSpans += RubyReadingSpan(span, rc.reading, alignment)
             val chunkText = sentence.substring(span.start, span.end)
             val vAlign = SpanAlign.alignSpans(chunkText, rc.vocab.map { it.surface })
-            val vocabIds = ArrayList<String>()
+            val vocabIds = ArrayList<String>(rc.vocab.size)
             rc.vocab.forEachIndexed { vi, rv ->
                 val local = vAlign.spans[vi]
                 val vAlignment = if (alignment == SpanAlignment.UNALIGNED) SpanAlignment.UNALIGNED else vAlign.alignment[vi]
                 val vSpan = CharSpan(span.start + local.start, span.start + local.end)
+                val vSurface = if (vAlignment == SpanAlignment.UNALIGNED) rv.surface else sentence.substring(vSpan.start, vSpan.end)
                 val id = "v${vocab.size}"
                 vocabIds += id
                 val lemma = rv.lemma.ifBlank { rv.surface }
+                val lemmaRuby = if (rv.lemmaRuby.isNotEmpty()) {
+                    RubyBuilder.normalizeJukujikunRuby(
+                        lemma,
+                        RubyBuilder.buildRuby(lemma, rv.lemmaRuby.map { RubyBuilder.RawRuby(it.base, it.ruby) }),
+                        listOf(RubyReadingSpan(CharSpan(0, lemma.length), rv.lemmaReading)),
+                    )
+                } else {
+                    RubyBuilder.computeWordRuby(lemma, rv.lemmaReading)
+                }
+                vocabReadingSpans += vocabReadingSpansFor(vSpan, vAlignment, vSurface, lemma, rv.lemmaReading, lemmaRuby)
                 vocab += VocabEntry(
                     id = id,
                     span = vSpan,
                     alignment = vAlignment,
-                    surface = if (vAlignment == SpanAlignment.UNALIGNED) rv.surface else sentence.substring(vSpan.start, vSpan.end),
+                    surface = vSurface,
                     lemma = lemma,
                     lemmaReading = rv.lemmaReading,
-                    lemmaRuby = RubyBuilder.buildRuby(lemma, rv.lemmaRuby.map { RubyBuilder.RawRuby(it.base, it.ruby) }),
+                    lemmaRuby = lemmaRuby,
                     partOfSpeech = rv.partOfSpeech,
                     meaning = rv.meaning,
                     conjugation = rv.conjugation,
@@ -368,7 +401,19 @@ object ExplainJsonCodec {
                     notes = rv.notes,
                 )
             }
-            chunks += SemanticChunk(
+            chunkVocabIds += vocabIds
+        }
+
+        val rawRuby = RubyBuilder.buildRuby(sentence, raw.ruby.map { RubyBuilder.RawRuby(it.base, it.ruby) })
+        val normalizedRuby = RubyBuilder.backfillAndNormalizeRuby(sentence, rawRuby, chunkReadingSpans, vocabReadingSpans)
+        val ruby = RubyBuilder.overlayScriptRuby(sentence, normalizedRuby, req.scriptRuby)
+
+        val chunks = raw.chunks.mapIndexed { ci, rc ->
+            val span = chunkAlign.spans[ci]
+            val alignment = chunkAlign.alignment[ci]
+            val surface = if (alignment == SpanAlignment.UNALIGNED) rc.surface else sentence.substring(span.start, span.end)
+            val textbookForm = rc.textbookForm.trim().ifEmpty { surface }
+            SemanticChunk(
                 id = "c$ci",
                 span = span,
                 alignment = alignment,
@@ -380,7 +425,7 @@ object ExplainJsonCodec {
                 role = rc.role,
                 meaning = rc.meaning,
                 nuance = rc.nuance,
-                vocabIds = vocabIds,
+                vocabIds = chunkVocabIds[ci],
             )
         }
         val grammar = raw.grammar.mapIndexed { gi, g ->
@@ -496,9 +541,47 @@ object ExplainJsonCodec {
         else -> AiErrorCode.NETWORK
     }
 
+    private fun repairCachedRuby(e: SentenceExplanation): SentenceExplanation {
+        if (e.model == OfflineExplainer.MODEL) return e
+        val needsVocabRepair = e.vocab.any {
+            JapaneseText.hasKanji(it.lemma) && it.lemmaReading.isNotBlank() && it.lemmaRuby.none { t -> t.ruby != null }
+        }
+        val needsSentenceRepair = e.ruby.any { it.ruby == null && JapaneseText.hasKanji(it.base) }
+        if (!needsVocabRepair && !needsSentenceRepair) return e
+
+        val repairedVocab = if (needsVocabRepair) {
+            e.vocab.map { v ->
+                if (JapaneseText.hasKanji(v.lemma) && v.lemmaReading.isNotBlank() && v.lemmaRuby.none { it.ruby != null }) {
+                    v.copy(lemmaRuby = RubyBuilder.computeWordRuby(v.lemma, v.lemmaReading))
+                } else {
+                    v
+                }
+            }
+        } else {
+            e.vocab
+        }
+        if (!needsSentenceRepair) {
+            return if (repairedVocab == e.vocab) e else e.copy(vocab = repairedVocab)
+        }
+        val chunkSpans = e.chunks.map { RubyReadingSpan(it.span, it.reading, it.alignment) }
+        val vocabSpans = repairedVocab.flatMap { v ->
+            vocabReadingSpansFor(v.span, v.alignment, v.surface, v.lemma, v.lemmaReading, v.lemmaRuby)
+        }
+        val repairedRuby = RubyBuilder.backfillMissingRuby(e.sentence, e.ruby, chunkSpans + vocabSpans)
+        if (repairedRuby == e.ruby && repairedVocab == e.vocab) return e
+        val repairedChunks = if (repairedRuby != e.ruby) {
+            e.chunks.map { c ->
+                if (c.alignment == SpanAlignment.UNALIGNED) c else c.copy(ruby = RubyBuilder.sliceRuby(repairedRuby, c.span))
+            }
+        } else {
+            e.chunks
+        }
+        return e.copy(ruby = repairedRuby, chunks = repairedChunks, vocab = repairedVocab)
+    }
+
     /** Thread / explanation JSON helpers (cache files). */
     fun encodeExplanation(e: SentenceExplanation): String = AiJson.encodeToString(SentenceExplanation.serializer(), e)
-    fun decodeExplanation(s: String): SentenceExplanation = AiJson.decodeFromString(SentenceExplanation.serializer(), s)
+    fun decodeExplanation(s: String): SentenceExplanation = repairCachedRuby(AiJson.decodeFromString(SentenceExplanation.serializer(), s))
     fun encodeSettings(s: AiProviderSettings): String = AiJson.encodeToString(AiProviderSettings.serializer(), s)
     fun decodeSettings(s: String): AiProviderSettings = AiJson.decodeFromString(AiProviderSettings.serializer(), s).withNormalizedModel()
     fun encodeThread(t: List<FollowUpMessage>): String =

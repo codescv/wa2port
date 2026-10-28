@@ -81,4 +81,86 @@ class RubyBuilderTest {
         assertNull(RubyBuilder.cleanReading("ちょっと", "ちょっと"))
         assertEquals("まじで", RubyBuilder.cleanReading("マジで", "本気で"))
     }
+
+    @Test
+    fun splitsMixedKanjiAndOkuriganaTokens() {
+        val w1 = RubyBuilder.computeWordRuby("放り出す", "ほうりだす")
+        assertEquals("放り出す", join(w1))
+        assertEquals(
+            listOf("放" to "ほう", "り" to null, "出" to "だ", "す" to null),
+            w1.map { it.base to it.ruby },
+        )
+
+        val w2 = RubyBuilder.computeWordRuby("他に", "ほかに")
+        assertEquals(listOf("他" to "ほか", "に" to null), w2.map { it.base to it.ruby })
+
+        val w3 = RubyBuilder.computeWordRuby("気かよ？", "きかよ")
+        assertEquals(listOf("気" to "き", "かよ？" to null), w3.map { it.base to it.ruby })
+
+        // Fast path with mixed kanji+okurigana RawRuby tokens.
+        val s = "他に放り出す"
+        val fast = RubyBuilder.buildRuby(s, listOf(RawRuby("他に", "ほかに"), RawRuby("放り出す", "ほうりだす")))
+        assertEquals(s, join(fast))
+        assertEquals(
+            listOf("他" to "ほか", "に" to null, "放" to "ほう", "り" to null, "出" to "だ", "す" to null),
+            fast.map { it.base to it.ruby },
+        )
+
+        // Fallback path with mixed kanji+okurigana RawRuby tokens.
+        val s2 = "「他にいない。放り出す気かよ？」"
+        val fallback = RubyBuilder.buildRuby(
+            s2,
+            listOf(RawRuby("他に", "ほかに"), RawRuby("放り出す", "ほうりだす"), RawRuby("気かよ", "きかよ")),
+        )
+        assertEquals(s2, join(fallback))
+        assertEquals("ほか", fallback.first { it.base == "他" }.ruby)
+        assertNull(fallback.firstOrNull { it.base == "他に" })
+        assertEquals("ほう", fallback.first { it.base == "放" }.ruby)
+        assertEquals("だ", fallback.first { it.base == "出" }.ruby)
+        assertEquals("き", fallback.first { it.base == "気" }.ruby)
+    }
+
+    @Test
+    fun whitespaceDifferenceInSentencePreservesTokenPositions() {
+        val s = "人　大事な人"
+        val out = RubyBuilder.buildRuby(
+            s,
+            listOf(RawRuby("人", null), RawRuby("大事な", null), RawRuby("人", "ひと")),
+        )
+        assertEquals(s, join(out))
+        assertNull(out.first { it.span == CharSpan(0, 1) }.ruby)
+        assertEquals("ひと", out.first { it.span == CharSpan(5, 6) }.ruby)
+    }
+
+    @Test
+    fun jukujikunNormalizationAndBackfill() {
+        val s = "明日の朝、放り出す"
+        val initial = RubyBuilder.buildRuby(
+            s,
+            listOf(RawRuby("明", "あ"), RawRuby("日", "ひ"), RawRuby("の"), RawRuby("朝", "あさ"), RawRuby("、放り出す", null)),
+        )
+        val chunks = listOf(
+            RubyReadingSpan(CharSpan(0, 3), "あしたの"),
+            RubyReadingSpan(CharSpan(3, 4), "あさ"),
+            RubyReadingSpan(CharSpan(5, 9), "ほうりだす"),
+        )
+        val fixed = RubyBuilder.backfillAndNormalizeRuby(s, initial, chunks, emptyList())
+        assertEquals(s, join(fixed))
+        assertEquals("あした", fixed.first { it.base == "明日" }.ruby)
+        assertEquals("あさ", fixed.first { it.base == "朝" }.ruby)
+        assertEquals("ほう", fixed.first { it.base == "放" }.ruby)
+        assertEquals("だ", fixed.first { it.base == "出" }.ruby)
+
+        // Adjacent kanji from two chunks (`今日` + `行く` -> plainRuns initially groups `今日行`).
+        val s2 = "今日行く"
+        val plain = RubyBuilder.plainRuns(s2, 0)
+        val fixed2 = RubyBuilder.backfillAndNormalizeRuby(
+            s2,
+            plain,
+            listOf(RubyReadingSpan(CharSpan(0, 2), "きょう"), RubyReadingSpan(CharSpan(2, 4), "いく")),
+            emptyList(),
+        )
+        assertEquals(s2, join(fixed2))
+        assertEquals(listOf("今日" to "きょう", "行" to "い", "く" to null), fixed2.map { it.base to it.ruby })
+    }
 }

@@ -40,7 +40,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ui.CloseButton
@@ -58,6 +61,7 @@ private val NB_SCRIM = Color(0xFF060B18)
 private val NB_CARD = Color(0xFF111A2E)
 private val NB_STAR = Color(0xFFFFD54F)
 private val NB_TEXTBOOK = Color(0xFF8FD3A8)
+private val NB_JP_STYLE = TextStyle(localeList = LocaleList(Locale("ja")))
 
 enum class NotebookTab(val label: String) {
     VOCAB("生词 Vocab"),
@@ -394,11 +398,11 @@ private fun NotebookVocabCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 val head = if (RubyBuilder.cleanReading(v.reading, v.lemma) != null) "${v.lemma}【${v.reading}】" else v.lemma
-                Text(head, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(head, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
                 if (v.partOfSpeech.isNotBlank()) NbTag(partOfSpeechLabel(v.partOfSpeech))
                 v.jlpt?.let { NbTag(it, NB_TEXTBOOK) }
                 v.pitchAccent?.let { NbTag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
-                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 13.sp)
+                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 13.sp, style = NB_JP_STYLE)
             }
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
@@ -441,7 +445,7 @@ private fun NotebookGrammarCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(g.pattern, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Text(g.pattern, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
                 g.jlpt?.let { NbTag(it, NB_TEXTBOOK) }
             }
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
@@ -491,7 +495,7 @@ private fun NotebookSentenceCard(
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
         }
-        Text(entry.sentence, color = Wa2Colors.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+        Text(entry.sentence, color = Wa2Colors.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
         val cn = entry.officialCn ?: entry.translation
         if (cn.isNotBlank()) {
             Text(cn, color = Wa2Colors.TextDim, fontSize = 14.sp)
@@ -522,6 +526,7 @@ private fun NotebookQaCard(
                 color = Wa2Colors.Name,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
+                style = NB_JP_STYLE,
                 modifier = Modifier.weight(1f),
             )
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
@@ -548,7 +553,7 @@ private fun SourceSentenceRow(sentenceJp: String, sentenceCn: String, onClick: (
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text("来源句：$sentenceJp", color = Wa2Colors.Accent, fontSize = 12.sp)
+        Text("来源句：$sentenceJp", color = Wa2Colors.Accent, fontSize = 12.sp, style = NB_JP_STYLE)
         if (sentenceCn.isNotBlank()) {
             Text(sentenceCn, color = Wa2Colors.TextDim, fontSize = 11.sp)
         }

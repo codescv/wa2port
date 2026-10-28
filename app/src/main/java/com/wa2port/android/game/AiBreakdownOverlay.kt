@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.paddingFromBaseline
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -70,6 +71,9 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.text.intl.LocaleList
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -104,7 +108,16 @@ private val EVOLVED = Color(0xFFFFA36B)
 private val ERROR = Color(0xFFFF8A80)
 private val OK = Color(0xFF8FD3A8)
 
-private val TIGHT_TEXT_STYLE = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+private val JP_LOCALE_LIST = LocaleList(Locale("ja"))
+private val JP_TEXT_STYLE = TextStyle(localeList = JP_LOCALE_LIST)
+private val TIGHT_JP_TEXT_STYLE = TextStyle(
+    localeList = JP_LOCALE_LIST,
+    platformStyle = PlatformTextStyle(includeFontPadding = false),
+    lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Proportional,
+        trim = LineHeightStyle.Trim.None,
+    ),
+)
 
 /** Characters that must not begin a line (kinsoku shori). */
 private const val NO_LINE_START = "、。，．,.!！?？…‥」』）)】〕〉》ー～ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々"
@@ -209,7 +222,14 @@ private fun HeaderRow(state: AiBreakdownState, ai: AiLearningController, persona
 }
 
 @Composable
-private fun Chip(label: String, selected: Boolean = false, enabled: Boolean = true, color: Color = Wa2Colors.Accent, onClick: () -> Unit) {
+private fun Chip(
+    label: String,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    color: Color = Wa2Colors.Accent,
+    textStyle: TextStyle = TextStyle.Default,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(16.dp)
     Box(
         Modifier.heightIn(min = 36.dp).clip(shape)
@@ -219,15 +239,15 @@ private fun Chip(label: String, selected: Boolean = false, enabled: Boolean = tr
             .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = if (selected) Wa2Colors.Night else if (enabled) Wa2Colors.Text else Wa2Colors.TextDim, fontSize = 13.sp, maxLines = 1)
+        Text(label, color = if (selected) Wa2Colors.Night else if (enabled) Wa2Colors.Text else Wa2Colors.TextDim, fontSize = 13.sp, maxLines = 1, style = textStyle)
     }
 }
 
 @Composable
-private fun Tag(label: String, color: Color = Wa2Colors.AccentDim, textColor: Color = Wa2Colors.Text) {
+private fun Tag(label: String, color: Color = Wa2Colors.AccentDim, textColor: Color = Wa2Colors.Text, modifier: Modifier = Modifier) {
     Text(
         label, color = textColor, fontSize = 11.sp, maxLines = 1,
-        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = 0.35f)).padding(horizontal = 6.dp, vertical = 2.dp),
+        modifier = modifier.clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = 0.35f)).padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
 
@@ -303,7 +323,9 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                                     fontSize = 9.sp,
                                     lineHeight = 10.sp,
                                     maxLines = 1,
-                                    style = TIGHT_TEXT_STYLE,
+                                    softWrap = false,
+                                    style = TIGHT_JP_TEXT_STYLE,
+                                    modifier = Modifier.paddingFromBaseline(top = 10.sp, bottom = 3.sp),
                                 )
                             }
                         }
@@ -325,14 +347,16 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                                     }
                                     .clickable { ai.selectChar(idx) }
                                     .padding(horizontal = 1.dp),
-                                contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     ch,
                                     color = Wa2Colors.Text,
                                     fontSize = 24.sp,
                                     lineHeight = 26.sp,
-                                    style = TIGHT_TEXT_STYLE,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    style = TIGHT_JP_TEXT_STYLE,
+                                    modifier = Modifier.paddingFromBaseline(top = 24.sp, bottom = 6.sp),
                                 )
                             }
                         }
@@ -374,7 +398,9 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
                 val active = state.activeChunk
                 expl.chunks.forEach { c ->
                     // From the chunk strip: also scroll the matching card into view in the detail pane.
-                    Chip(c.surface, selected = active?.id == c.id, color = if (c.isEvolved) EVOLVED else Wa2Colors.Accent) { ai.selectChunk(c, scrollToCard = true) }
+                    Chip(c.surface, selected = active?.id == c.id, color = if (c.isEvolved) EVOLVED else Wa2Colors.Accent, textStyle = JP_TEXT_STYLE) {
+                        ai.selectChunk(c, scrollToCard = true)
+                    }
                 }
             }
         }
@@ -437,7 +463,7 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
         }
         if (skeleton && state.contextBefore.isNotEmpty()) {
             Label("前文 Context", Wa2Colors.TextDim)
-            state.contextBefore.forEach { Text(it, color = Wa2Colors.TextDim, fontSize = 12.sp) }
+            state.contextBefore.forEach { Text(it, color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE) }
         }
     }
 }
@@ -461,18 +487,23 @@ private fun RubyCell(ruby: String?, base: String, showRuby: Boolean = true) {
                         fontSize = 9.sp,
                         lineHeight = 10.sp,
                         maxLines = 1,
-                        style = TIGHT_TEXT_STYLE,
+                        softWrap = false,
+                        style = TIGHT_JP_TEXT_STYLE,
+                        modifier = Modifier.paddingFromBaseline(top = 10.sp, bottom = 3.sp),
                     )
                 }
             }
         }
-        Box(Modifier.height(baseBoxH), contentAlignment = Alignment.Center) {
+        Box(Modifier.height(baseBoxH)) {
             Text(
                 base,
                 color = Wa2Colors.Text,
                 fontSize = 16.sp,
                 lineHeight = 18.sp,
-                style = TIGHT_TEXT_STYLE,
+                maxLines = 1,
+                softWrap = false,
+                style = TIGHT_JP_TEXT_STYLE,
+                modifier = Modifier.paddingFromBaseline(top = 17.sp, bottom = 5.sp),
             )
         }
     }
@@ -711,6 +742,9 @@ private fun SectionHeader(text: String) {
 @Composable
 private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, active: Boolean, ai: AiLearningController, onClick: () -> Unit) {
     val shape = RoundedCornerShape(12.dp)
+    val chunkRuby = if (c.alignment == SpanAlignment.UNALIGNED) emptyList() else RubyBuilder.sliceRuby(expl.ruby, c.span)
+    val hasChunkRuby = chunkRuby.any { !it.ruby.isNullOrBlank() }
+    val topPad = if (hasChunkRuby) with(LocalDensity.current) { 13.sp.toDp() } else 0.dp
     Column(
         Modifier.fillMaxWidth().clip(shape).background(if (active) CARD_ACTIVE else CARD)
             .border(if (active) 2.dp else 1.dp, if (active) Wa2Colors.Accent else Wa2Colors.AccentDim.copy(alpha = 0.4f), shape)
@@ -718,17 +752,31 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(24.dp).clip(CircleShape).background(if (c.isEvolved) EVOLVED else Wa2Colors.Accent), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.padding(top = topPad).size(24.dp).clip(CircleShape)
+                    .background(if (c.isEvolved) EVOLVED else Wa2Colors.Accent),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text("${index + 1}", color = Wa2Colors.Night, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-            RubyLine(if (c.alignment == SpanAlignment.UNALIGNED) emptyList() else RubyBuilder.sliceRuby(expl.ruby, c.span), c.surface, 18.sp)
-            if (RubyBuilder.cleanReading(c.reading, c.surface) != null) Text(c.reading, color = Wa2Colors.TextDim, fontSize = 12.sp)
+            RubyLine(chunkRuby, c.surface, 18.sp)
+            if (RubyBuilder.cleanReading(c.reading, c.surface) != null) {
+                Text(
+                    c.reading,
+                    color = Wa2Colors.TextDim,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    style = TIGHT_JP_TEXT_STYLE,
+                    modifier = Modifier.padding(top = topPad).paddingFromBaseline(top = 19.sp, bottom = 5.sp),
+                )
+            }
             Spacer(Modifier.weight(1f))
-            if (c.role.isNotBlank()) Tag(c.role)
+            if (c.role.isNotBlank()) Tag(c.role, modifier = Modifier.padding(top = topPad))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("📘 课本标准  ", color = TEXTBOOK, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text(c.textbookForm, color = Wa2Colors.Text, fontSize = 15.sp)
+            Text(c.textbookForm, color = Wa2Colors.Text, fontSize = 15.sp, style = JP_TEXT_STYLE)
         }
         c.spokenEvolution?.let { evo ->
             Column(
@@ -736,7 +784,7 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text("🔥 口语演变 · ${evo.kind}", color = EVOLVED, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Text(evo.derivation, color = Wa2Colors.Text, fontSize = 14.sp)
+                Text(evo.derivation, color = Wa2Colors.Text, fontSize = 14.sp, style = JP_TEXT_STYLE)
                 FormalityBar(evo.formalityLevel)
             }
         }
@@ -792,11 +840,22 @@ private fun FormalityBar(level: Int) {
 private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit) {
     val density = LocalDensity.current
     val rubyBoxH = with(density) { 13.sp.toDp() }
+    val baseTop = (size.value + 1f).sp
+    val baseBottom = 5.sp
     val baseBoxH = with(density) { (size.value + 6f).sp.toDp() }
     val lineH = (size.value + 2f).sp
     if (tokens.none { !it.ruby.isNullOrBlank() }) {
-        Box(Modifier.height(baseBoxH), contentAlignment = Alignment.Center) {
-            Text(fallback, color = Wa2Colors.Text, fontSize = size, lineHeight = lineH, style = TIGHT_TEXT_STYLE)
+        Box(Modifier.height(baseBoxH)) {
+            Text(
+                fallback,
+                color = Wa2Colors.Text,
+                fontSize = size,
+                lineHeight = lineH,
+                maxLines = 1,
+                softWrap = false,
+                style = TIGHT_JP_TEXT_STYLE,
+                modifier = Modifier.paddingFromBaseline(top = baseTop, bottom = baseBottom),
+            )
         }
         return
     }
@@ -812,17 +871,22 @@ private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit) 
                             fontSize = 9.sp,
                             lineHeight = 10.sp,
                             maxLines = 1,
-                            style = TIGHT_TEXT_STYLE,
+                            softWrap = false,
+                            style = TIGHT_JP_TEXT_STYLE,
+                            modifier = Modifier.paddingFromBaseline(top = 10.sp, bottom = 3.sp),
                         )
                     }
                 }
-                Box(Modifier.height(baseBoxH), contentAlignment = Alignment.Center) {
+                Box(Modifier.height(baseBoxH)) {
                     Text(
                         t.base,
                         color = Wa2Colors.Text,
                         fontSize = size,
                         lineHeight = lineH,
-                        style = TIGHT_TEXT_STYLE,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TIGHT_JP_TEXT_STYLE,
+                        modifier = Modifier.paddingFromBaseline(top = baseTop, bottom = baseBottom),
                     )
                 }
             }
@@ -840,11 +904,17 @@ private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() 
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(if (RubyBuilder.cleanReading(v.lemmaReading, v.lemma) != null) "${v.lemma}【${v.lemmaReading}】" else v.lemma, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    if (RubyBuilder.cleanReading(v.lemmaReading, v.lemma) != null) "${v.lemma}【${v.lemmaReading}】" else v.lemma,
+                    color = Wa2Colors.Text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    style = JP_TEXT_STYLE,
+                )
                 Tag(partOfSpeechLabel(v.partOfSpeech))
                 v.jlpt?.let { Tag(it, TEXTBOOK) }
                 v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
-                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE)
             }
             if (onToggleStar != null) {
                 StarButton(starred = starred, onClick = onToggleStar)
@@ -875,7 +945,7 @@ private fun GrammarRow(g: GrammarPoint, starred: Boolean = false, onToggleStar: 
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(g.pattern, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(g.pattern, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, style = JP_TEXT_STYLE)
                 g.jlpt?.let { Tag(it, TEXTBOOK) }
             }
             if (onToggleStar != null) {
@@ -891,7 +961,7 @@ private fun GrammarCard(g: GrammarPoint, expl: SentenceExplanation, starred: Boo
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CARD).padding(horizontal = 12.dp, vertical = 8.dp)) {
         GrammarRow(g, starred = starred, onToggleStar = onToggleStar)
         val surfaces = g.chunkIds.mapNotNull { id -> expl.chunks.firstOrNull { it.id == id }?.surface }
-        if (surfaces.isNotEmpty()) Text("见：" + surfaces.joinToString("、") { "「$it」" }, color = Wa2Colors.TextDim, fontSize = 12.sp)
+        if (surfaces.isNotEmpty()) Text("见：" + surfaces.joinToString("、") { "「$it」" }, color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE)
     }
 }
 

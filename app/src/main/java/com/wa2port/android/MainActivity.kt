@@ -52,6 +52,11 @@ class MainActivity : ComponentActivity() {
         setContent { Wa2Theme { Wa2App(vm) } }
     }
 
+    override fun onResume() {
+        super.onResume()
+        vm.update.onHostResume(this)
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
