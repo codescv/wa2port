@@ -42,7 +42,12 @@ import java.io.File
 /** Status of the breakdown request. */
 sealed interface AiStatus {
     data object Idle : AiStatus
-    data object Loading : AiStatus
+
+    /**
+     * Request in flight. [skeleton] is the local [OfflineExplainer] result (< 1 ms: CK-GAL line,
+     * script furigana, coarse chunks) so the sheet is never blank while the model works.
+     */
+    data class Loading(val skeleton: SentenceExplanation) : AiStatus
     data class Ready(val expl: SentenceExplanation) : AiStatus
     data class Error(val code: AiErrorCode, val message: String) : AiStatus
 }
@@ -78,6 +83,12 @@ class AiBreakdownState(
     val followUpPending: Boolean get() = pendingQuestion != null
 
     val explanation: SentenceExplanation? get() = (status as? AiStatus.Ready)?.expl
+
+    /** What the sheet shows: the real breakdown, else the offline skeleton while [AiStatus.Loading]. */
+    val shownExplanation: SentenceExplanation? get() = explanation ?: (status as? AiStatus.Loading)?.skeleton
+
+    /** True while only the loading skeleton is available (no real breakdown yet). */
+    val isSkeleton: Boolean get() = explanation == null && status is AiStatus.Loading
 
     /** Chunk highlighted in the header and expanded in the list (0 ms, purely local). */
     val activeChunk: SemanticChunk?
@@ -268,13 +279,15 @@ class AiLearningController(
             st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, ai.validationError() ?: "尚未配置 AI 服务")
             return
         }
-        st.status = AiStatus.Loading
         if (force) st.thread = emptyList()
         val token = CancelToken()
         explainToken = token
         val req = st.request(persona, force)
+        // Progressive loading: the local skeleton (< 1 ms, no I/O) fills the sheet immediately.
+        st.status = AiStatus.Loading(OfflineExplainer.build(req, now()))
         // readTimeout is per read, not a total deadline: a watchdog cancels the whole call. One
-        // explain may do a token exchange + the call + one nudge retry, hence 2 × timeout + slack.
+        // explain may do a token exchange + the call + one nudge retry, hence 2 × timeout + slack
+        // (a "thinking" HTTP 400 that triggers the no-thinkingConfig retry comes back immediately).
         val deadlineMs = 2L * ai.timeoutMs + 10_000L
         explainJob = scope.launch {
             var timedOut = false

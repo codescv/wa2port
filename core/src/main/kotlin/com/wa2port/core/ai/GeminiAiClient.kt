@@ -9,6 +9,7 @@ import java.net.URL
 import java.net.UnknownHostException
 import java.net.UnknownServiceException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /** Cooperative cancellation for blocking HTTP calls: [cancel] aborts the attached connection. */
 class CancelToken {
@@ -60,6 +61,8 @@ interface HttpTransport {
 class HttpUrlConnectionTransport : HttpTransport {
     override fun post(url: String, headers: Map<String, String>, body: ByteArray, timeoutMs: Int, cancel: CancelToken?): HttpTransport.Response {
         if (cancel?.isCancelled == true) throw IOException("cancelled")
+        // URL(String) is deprecated, but URI(...).toURL() is stricter and would reject URLs that work today.
+        @Suppress("DEPRECATION")
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             cancel?.attach { conn.disconnect() }
@@ -119,8 +122,39 @@ class GeminiAiClient(
         return ServiceAccountTokenProvider(s.vertexServiceAccountJson, transport, now, viaProxy).also { saProvider = it }
     }
 
-    /** One `generateContent` round trip. */
+    /**
+     * Models that rejected an explicit `thinkingConfig` with HTTP 400 (e.g. a model that refuses
+     * `thinkingBudget = 0` or only accepts `thinkingLevel`). Requests for them omit `thinkingConfig`.
+     * In-memory only: a new client (app restart) probes again with a single extra request.
+     */
+    private val thinkingUnsupportedModels: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** True when [model] was memoized as rejecting `thinkingConfig` (see [generate]). */
+    fun isThinkingUnsupported(model: String): Boolean = model in thinkingUnsupportedModels
+
+    /**
+     * One `generateContent` round trip. If the request carries a `thinkingConfig` (budget ≥ 0) and
+     * the server answers HTTP 400 mentioning "thinking", the model is memoized in
+     * [thinkingUnsupportedModels] and the call is retried ONCE without `thinkingConfig`; later
+     * requests for that model drop `thinkingConfig` up front.
+     */
     fun generate(req: GeminiRequest, cancel: CancelToken? = null): GeminiResponse {
+        val sendsThinking = (req.thinkingBudget ?: -1) >= 0
+        if (sendsThinking && req.model in thinkingUnsupportedModels) return generateOnce(req.copy(thinkingBudget = null), cancel)
+        return try {
+            generateOnce(req, cancel)
+        } catch (e: AiException) {
+            if (!sendsThinking || !isThinkingRejection(e) || cancel?.isCancelled == true) throw e
+            thinkingUnsupportedModels += req.model
+            generateOnce(req.copy(thinkingBudget = null), cancel)
+        }
+    }
+
+    /** HTTP 400 whose error message / body mentions `thinking` (case-insensitive). */
+    private fun isThinkingRejection(e: AiException): Boolean =
+        e.httpStatus == 400 && e.message?.contains("thinking", ignoreCase = true) == true
+
+    private fun generateOnce(req: GeminiRequest, cancel: CancelToken?): GeminiResponse {
         val s = settings()
         s.validationError()?.let { throw AiException(AiErrorCode.NOT_CONFIGURED, it) }
         var host = ""
@@ -183,7 +217,8 @@ class GeminiAiClient(
             responseMimeType = "application/json",
             responseSchema = ExplainJsonCodec.EXPLAIN_RESPONSE_SCHEMA,
             temperature = s.temperature,
-            thinkingBudget = s.thinkingBudget,
+            // Structured extraction against a strict schema: no dynamic thinking (−1 → 0).
+            thinkingBudget = s.explainThinkingBudget,
             timeoutMs = s.timeoutMs,
         )
         var res = generate(base, cancel)
@@ -238,6 +273,7 @@ class GeminiAiClient(
                 systemInstruction = prompt.systemInstruction,
                 contents = prompt.contents,
                 temperature = maxOf(s.temperature, 0.4f),
+                // Free-form Q&A benefits from thinking: keep the user's budget (default −1 = dynamic).
                 thinkingBudget = s.thinkingBudget,
                 timeoutMs = s.timeoutMs,
             ),
@@ -263,7 +299,7 @@ class GeminiAiClient(
         val model = runCatching { settings().model }.getOrDefault("")
         return try {
             val s = settings()
-            val res = generate(GeminiRequest(model = s.model, systemInstruction = null, contents = listOf(GeminiContent("user", TEST_PROMPT)), temperature = 0f, thinkingBudget = s.thinkingBudget, timeoutMs = s.timeoutMs))
+            val res = generate(GeminiRequest(model = s.model, systemInstruction = null, contents = listOf(GeminiContent("user", TEST_PROMPT)), temperature = 0f, thinkingBudget = s.explainThinkingBudget, timeoutMs = s.timeoutMs))
             AiConnectionTestResult(true, res.model, now() - started, res.text.trim().ifEmpty { "OK" })
         } catch (e: Exception) {
             val err = e as? AiException ?: mapError(e, null, "", 0)

@@ -35,12 +35,24 @@ data class AiProviderSettings(
     // --- Generation
     val model: String = DEFAULT_MODEL,
     val temperature: Float = 0.2f,
-    /** −1 = model default, 0 = off, > 0 tokens. */
+    /**
+     * −1 = model default (dynamic), 0 = off, > 0 tokens. Used as-is by follow-up questions; the
+     * sentence breakdown and the connection test use [explainThinkingBudget] instead.
+     */
     val thinkingBudget: Int = -1,
     val timeoutMs: Int = 60_000,
     val cacheEnabled: Boolean = true,
 ) {
     val isVertex: Boolean get() = providerType == PROVIDER_VERTEX_AI
+
+    /**
+     * Thinking budget for `explainSentence` / `testConnection`: structured JSON extraction against
+     * a strict `responseSchema` gains nothing from dynamic thinking, so the default −1 becomes 0
+     * (5–15 s → 2–5 s on Flash, far fewer thinking tokens); an explicit budget ≥ 0 is kept. Models
+     * that reject `thinkingConfig` are handled by the HTTP 400 fallback in [GeminiAiClient.generate].
+     * Not part of the cache key, so existing cached breakdowns stay valid.
+     */
+    val explainThinkingBudget: Int get() = if (thinkingBudget < 0) 0 else thinkingBudget
 
     /** True when a request could be attempted (credentials present for the selected provider). */
     val isConfigured: Boolean get() = validationError() == null

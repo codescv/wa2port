@@ -1,5 +1,12 @@
 package com.wa2port.android.game
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +34,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -51,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -291,7 +301,8 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
                 Tag(expl.model, Color(0x33FFFFFF), Wa2Colors.TextDim)
             }
         }
-        TranslationCard(state, expl)
+        // While loading, the detail pane's skeleton card carries the translation (shown once, not twice).
+        if (!state.isSkeleton) TranslationCard(state, expl)
         if (expl != null && expl.chunks.isNotEmpty()) {
             Text("意群 Chunks", color = Wa2Colors.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -305,14 +316,41 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
     }
 }
 
+/**
+ * Translations. With [skeleton] (loading, see [DetailPane]) it also carries the
+ * speaker, the script-furigana sentence ([showSentence]: only when the sentence header is not
+ * already right above) and the preceding context lines, so the detail pane is useful at once.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?) {
+private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?, skeleton: Boolean = false, showSentence: Boolean = false) {
     val official = expl?.officialCnTranslation ?: state.officialCn
-    if (expl == null && official == null) return
+    if (!skeleton && expl == null && official == null) return
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CARD).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (skeleton) {
+            val speaker = listOfNotNull(state.speakerJp, state.speakerCn?.takeIf { it != state.speakerJp }).joinToString(" · ")
+            Text(speaker.ifEmpty { "（旁白 / 内心独白）" }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 13.sp)
+            if (showSentence && expl != null) {
+                FlowRow(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    expl.ruby.forEach { t ->
+                        if (t.ruby != null) {
+                            RubyCell(t.ruby, t.base)
+                        } else {
+                            // Ruby-less runs break per character so long kana runs wrap.
+                            var i = 0
+                            while (i < t.base.length) {
+                                val n = Character.charCount(t.base.codePointAt(i))
+                                RubyCell(null, t.base.substring(i, i + n))
+                                i += n
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (expl != null && expl.model != OfflineExplainer.MODEL) {
             Label("AI 译")
             Text(expl.translation, color = Wa2Colors.Text, fontSize = 16.sp)
@@ -324,11 +362,26 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?)
         if (official != null) {
             Text("官方汉化 CK-GAL", color = Wa2Colors.Name, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text(official, color = Wa2Colors.Text, fontSize = 14.sp)
+        } else if (skeleton) {
+            Text("（本行没有官方汉化 No CK-GAL line）", color = Wa2Colors.TextDim, fontSize = 12.sp)
         }
         expl?.officialTranslationNote?.let {
             Label("对照说明 💬")
             Text(it, color = Wa2Colors.Text, fontSize = 13.sp)
         }
+        if (skeleton && state.contextBefore.isNotEmpty()) {
+            Label("前文 Context", Wa2Colors.TextDim)
+            state.contextBefore.forEach { Text(it, color = Wa2Colors.TextDim, fontSize = 12.sp) }
+        }
+    }
+}
+
+/** One furigana cell (reading over base) of the skeleton card's sentence. */
+@Composable
+private fun RubyCell(ruby: String?, base: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, maxLines = 1)
+        Text(base, color = Wa2Colors.Text, fontSize = 16.sp)
     }
 }
 
@@ -369,6 +422,10 @@ private fun ErrorCard(state: AiBreakdownState, err: AiStatus.Error, ai: AiLearni
  * Chunk cards + vocab + grammar + follow-up Q&A, ending with the follow-up input. Everything lives
  * in one full-height [LazyColumn] so the whole pane scrolls (a pinned input footer used to eat about
  * a third of a landscape phone's pane height, where swipes did nothing).
+ *
+ * Never blank while loading: [AiBreakdownState.isSkeleton] shows the translation card (CK-GAL line,
+ * speaker, context, script furigana) over shimmer placeholders, and a 300 ms [Crossfade] swaps in the
+ * real breakdown. The follow-up input is only offered for a real (non-offline) breakdown.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -381,8 +438,8 @@ private fun DetailPane(
     header: (@Composable () -> Unit)?,
 ) {
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    val expl = state.explanation
+    // A lazy list state can serve one list at a time; the skeleton list (alive during the crossfade) has its own.
+    val skeletonListState = rememberLazyListState()
     val headerCount = if (header != null) 1 else 0
     // Hoisted out of the lazy item so a draft survives the input scrolling out of composition.
     var input by remember(state) { mutableStateOf("") }
@@ -396,8 +453,42 @@ private fun DetailPane(
         val errorCount = if (state.status is AiStatus.Error) 1 else 0
         if (idx >= 0 && header == null) listState.animateScrollToItem(headerCount + errorCount + 1 + idx)
     }
+    Crossfade(targetState = state.isSkeleton, modifier = modifier, animationSpec = tween(durationMillis = 300), label = "ai-skeleton") { skeleton ->
+        if (skeleton) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = skeletonListState,
+                contentPadding = PaddingValues(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
+                item(key = "skeleton-translation") { TranslationCard(state, state.shownExplanation, skeleton = true, showSentence = header == null) }
+                item(key = "skeleton-title") { SkeletonTitle() }
+                items(SHIMMER_CARDS, key = { "shimmer-$it" }) { ShimmerCard(it) }
+                item(key = "followup-locked") { FollowUpLockedBar("AI 解析完成后即可向助教追问") }
+            }
+        } else {
+            FullDetailList(state, ai, persona, onOpenSettings, header, listState, input, onInput = { input = it })
+        }
+    }
+}
+
+/** The real breakdown (or the error card / offline split): everything below the optional [header]. */
+@Composable
+private fun FullDetailList(
+    state: AiBreakdownState,
+    ai: AiLearningController,
+    persona: AiPersonaSettings,
+    onOpenSettings: (() -> Unit)?,
+    header: (@Composable () -> Unit)?,
+    listState: LazyListState,
+    input: String,
+    onInput: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val expl = state.explanation
     LazyColumn(
-        modifier.fillMaxSize(),
+        Modifier.fillMaxSize(),
         state = listState,
         contentPadding = PaddingValues(bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -419,14 +510,73 @@ private fun DetailPane(
                 expl.grammar.forEach { g -> item(key = "grammar-${g.id}") { GrammarCard(g, expl) } }
             }
             followUpItems(state, persona)
-            item(key = "followup-input") {
-                FollowUpInput(state, ai, input, onInput = { input = it }) {
-                    // Scrolling to the last item clamps at the end of the list: newest Q&A + input.
-                    scope.launch { listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+            val canAsk = state.status !is AiStatus.Loading && state.shownExplanation?.model != OfflineExplainer.MODEL
+            if (canAsk) {
+                item(key = "followup-input") {
+                    FollowUpInput(state, ai, input, onInput) {
+                        // Scrolling to the last item clamps at the end of the list: newest Q&A + input.
+                        scope.launch { listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+                    }
+                }
+            } else {
+                item(key = "followup-locked") {
+                    FollowUpLockedBar(if (state.status is AiStatus.Loading) "AI 解析完成后即可向助教追问" else "当前为离线分段模式 · 配置 AI 后可追问")
                 }
             }
         }
     }
+}
+
+/** Shimmer placeholder cards shown under the skeleton translation card. */
+private val SHIMMER_CARDS = listOf(0, 1, 2)
+
+@Composable
+private fun SkeletonTitle() {
+    Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CircularProgressIndicator(Modifier.size(14.dp), color = Wa2Colors.Accent, strokeWidth = 2.dp)
+        Text("正在通过 AI 拆解意群、口语演变与核心词汇语法…", color = Wa2Colors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Animated shimmer placeholder in the shape of a chunk card (badge + title bar + 2 text bars). */
+@Composable
+private fun ShimmerCard(index: Int) {
+    val t = rememberInfiniteTransition(label = "shimmer")
+    val x by t.animateFloat(
+        initialValue = -1f,
+        targetValue = 2f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 1200, easing = LinearEasing), RepeatMode.Restart),
+        label = "shimmer-x",
+    )
+    val base = Color(0x22FFFFFF)
+    val shine = Color(0x44FFFFFF)
+    val brush = Brush.linearGradient(
+        colors = listOf(base, shine, base),
+        start = Offset(x * 600f - 300f, 0f),
+        end = Offset(x * 600f, 0f),
+    )
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        Modifier.fillMaxWidth().clip(shape).background(CARD).border(1.dp, Wa2Colors.AccentDim.copy(alpha = 0.25f), shape).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.size(24.dp).clip(CircleShape).background(brush))
+            Box(Modifier.fillMaxWidth(0.35f + 0.1f * (index % 3)).height(16.dp).clip(RoundedCornerShape(4.dp)).background(brush))
+        }
+        Box(Modifier.fillMaxWidth(0.8f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(brush))
+        Box(Modifier.fillMaxWidth(0.55f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(brush))
+    }
+}
+
+/** Muted bar standing in for the follow-up input while it is unavailable (loading / offline). */
+@Composable
+private fun FollowUpLockedBar(text: String) {
+    Text(
+        "💬 $text", color = Wa2Colors.TextDim, fontSize = 12.sp,
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(10.dp))
+            .background(Color(0x1AFFFFFF)).padding(horizontal = 12.dp, vertical = 10.dp),
+    )
 }
 
 @Composable
