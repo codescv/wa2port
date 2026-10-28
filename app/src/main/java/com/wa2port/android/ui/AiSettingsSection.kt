@@ -179,6 +179,20 @@ fun AiSettingsSection(
     OptionRow("缓存解说 Cache") {
         Segmented(listOf(true to "开 On", false to "关 Off"), p.cacheEnabled, { v -> set { it.copy(cacheEnabled = v) } })
     }
+    OptionRow("⚡ 智能预解析（学习突发期 10 句内后台预取）") {
+        Segmented(
+            listOf(false to "关 Off", true to "开 On"),
+            settings.aiPrefetchEnabled,
+            { v -> onChange { it.copy(aiPrefetchEnabled = v) } },
+        )
+    }
+    Text(
+        "全周目全量预取约 $100–300，因此仅在手动打开 AI 后的 10 句学习突发期内且针对未读行后台预取。" +
+            "（本次会话预取 ${ai.prefetchedCount} 句 · 命中 ${ai.prefetchHitCount} 次）",
+        color = Wa2Colors.TextDim,
+        fontSize = 11.sp,
+        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+    )
     LabeledSlider("温度 Temperature", Math.round(p.temperature * 10), 0..10, "%.1f".format(Locale.ROOT, p.temperature)) { v -> set { it.copy(temperature = v / 10f) } }
     OptionRow("思考预算 Thinking") {
         Segmented(
@@ -189,6 +203,13 @@ fun AiSettingsSection(
     }
     LabeledSlider("超时 Timeout", p.timeoutMs / 1000, 10..180, "${p.timeoutMs / 1000} s") { v -> set { it.copy(timeoutMs = v * 1000) } }
 
+    // Test result is placed immediately above the action row so it is never hidden below the fold.
+    ai.testResult?.let { r ->
+        Text(
+            if (r.ok) "✓ ${r.model} · ${r.latencyMs} ms · ${r.message}" else "✗ ${r.message}",
+            color = if (r.ok) OK_GREEN else ERR_RED, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+        )
+    }
     // Actions.
     var confirmClear by remember { mutableStateOf(false) }
     Row(
@@ -206,12 +227,6 @@ fun AiSettingsSection(
             focus.clearFocus()
             ai.openSample(session)
         }
-    }
-    ai.testResult?.let { r ->
-        Text(
-            if (r.ok) "✓ ${r.model} · ${r.latencyMs} ms · ${r.message}" else "✗ ${r.message}",
-            color = if (r.ok) OK_GREEN else ERR_RED, fontSize = 13.sp, modifier = Modifier.padding(bottom = 6.dp),
-        )
     }
     if (confirmClear) {
         AlertDialog(

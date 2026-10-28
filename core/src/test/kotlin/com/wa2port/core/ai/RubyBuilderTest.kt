@@ -65,4 +65,20 @@ class RubyBuilderTest {
         assertEquals("大事な人", join(out2))
         assertEquals("ひと", out2.last().ruby)
     }
+
+    @Test
+    fun kanaOnlyBaseNeverGetsRuby() {
+        val s = "ドラムを叩く"
+        val out = RubyBuilder.buildRuby(
+            s,
+            listOf(RawRuby("ドラム", "どらむ"), RawRuby("を", "を"), RawRuby("叩", "たた"), RawRuby("く", "く")),
+        )
+        assertEquals(s, join(out))
+        assertNull(out.first { it.base == "ドラム" }.ruby)
+        assertEquals("たた", out.first { it.base == "叩" }.ruby)
+        assertNull(RubyBuilder.cleanReading("どらむ", "ドラム"))
+        assertNull(RubyBuilder.cleanReading("どらむ…", "ドラム…"))
+        assertNull(RubyBuilder.cleanReading("ちょっと", "ちょっと"))
+        assertEquals("まじで", RubyBuilder.cleanReading("マジで", "本気で"))
+    }
 }

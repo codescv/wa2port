@@ -8,9 +8,12 @@ object RubyBuilder {
     /** Model-provided ruby unit. */
     data class RawRuby(val base: String, val ruby: String? = null)
 
-    /** Trim + katakana → hiragana; null when empty or equal to the base. */
-    private fun cleanReading(ruby: String?, base: String): String? {
-        if (ruby == null) return null
+    /**
+     * Trim + katakana → hiragana; null when empty, equal to the base, or [base] contains no kanji
+     * (so kana-only words such as `ドラム` never get redundant `どらむ` furigana).
+     */
+    fun cleanReading(ruby: String?, base: String): String? {
+        if (ruby == null || !JapaneseText.hasKanji(base)) return null
         val r = JapaneseText.katakanaToHiragana(ruby.trim())
         if (r.isEmpty() || r == JapaneseText.katakanaToHiragana(base)) return null
         return r

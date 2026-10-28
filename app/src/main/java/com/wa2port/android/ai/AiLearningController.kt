@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import com.wa2port.android.data.Settings
 import com.wa2port.android.game.GameSession
 import com.wa2port.android.game.Overlay
@@ -27,17 +28,23 @@ import com.wa2port.core.ai.SentenceExplanation
 import com.wa2port.core.ai.SpanAlign
 import com.wa2port.core.ai.formatContextLine
 import com.wa2port.core.engine.DialogueLine
+import com.wa2port.core.engine.LineRef
 import com.wa2port.core.engine.VoiceRef
+import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.TextLang
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /** Status of the breakdown request. */
 sealed interface AiStatus {
@@ -68,6 +75,8 @@ class AiBreakdownState(
     val returnTo: Overlay,
     val isSample: Boolean = false,
 ) {
+    /** Backlog reference of the open line (null for the hand-written sample). */
+    val cursorRef: LineRef? = line?.ref
     var status by mutableStateOf<AiStatus>(AiStatus.Idle)
     var focusCharIndex by mutableStateOf<Int?>(null)
     /** Chunk picked from the chunk strip / cards (wins over [focusCharIndex]; needed for unaligned chunks). */
@@ -116,7 +125,8 @@ class AiBreakdownState(
 /**
  * Owns the AI learning feature for the app (the "GameController" role of the design): opening the
  * breakdown for a line, the explain / follow-up requests (blocking core client on [io], results on
- * Main), the explanation cache, connection tests and the sample / offline previews.
+ * Main), single-flight deduplication + study-burst prefetching, in-sheet `◀ / ▶` line stepping,
+ * the explanation cache, connection tests and the sample / offline previews.
  *
  * At most one explain and one follow-up are in flight; closing or reopening cancels both, and a
  * result for a stale [AiBreakdownState] is dropped (identity check). Every failure becomes an
@@ -129,13 +139,14 @@ class AiLearningController(
     clientFactory: (() -> AiProviderSettings) -> GeminiAiClient = { GeminiAiClient(it) },
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val now: () -> Long = System::currentTimeMillis,
+    private val prefetchDebounceMs: Long = PREFETCH_DEBOUNCE_MS,
 ) {
     val cache = ExplainCache(cacheDir)
     private val client = clientFactory { settings().ai }
     private val testClientFactory = clientFactory
 
     var breakdown by mutableStateOf<AiBreakdownState?>(null)
-        private set
+        internal set
     val persona: AiPersonaSettings
         get() = settings().let { AiPersonaSettings.resolve(it.aiPersonaId, it.aiCustomPersonaName, it.aiCustomPersonaSoul) }
 
@@ -153,17 +164,68 @@ class AiLearningController(
     var cacheStats by mutableStateOf<CacheStats?>(null)
         private set
 
+    // --- Single-flight & study-burst prefetch (#2)
+    /** Active `explainSentence` calls keyed by [ExplainCache.key], joined by both prefetch and [explain]. */
+    val inFlight = ConcurrentHashMap<String, Deferred<SentenceExplanation>>()
+    /** Remaining unread lines in the current study burst (reset to [STUDY_BURST_LINES] on manual [open]). */
+    var remainingBurstLines by mutableIntStateOf(0)
+        internal set
+    /** Session counter: background prefetches started in this session. */
+    var prefetchedCount by mutableIntStateOf(0)
+        private set
+    /** Session counter: manual opens that joined or hit a prefetched explanation. */
+    var prefetchHitCount by mutableIntStateOf(0)
+        private set
+    /** Set by [openNext] when stepping past the latest backlog line so the next script line re-opens AI. */
+    var pendingReopenOnNextLine: Boolean = false
+
+    private val prefetchedKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val hitCountedKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private var dailyEpochDay: Long = -1L
+    private var dailyCount: Int = 0
+
+    private var activeSession: GameSession? = null
+    private var observedSession: GameSession? = null
+    private var sessionObserverJob: Job? = null
+    private var lastOpenedRef: LineRef? = null
+    private var lastSeenLineRef: LineRef? = null
+
     private var explainJob: Job? = null
     private var explainToken: CancelToken? = null
     private var followJob: Job? = null
     private var followToken: CancelToken? = null
+    private var queuedPrefetchJob: Job? = null
+    private var queuedPrefetchToken: CancelToken? = null
+    private var activePrefetchJob: Job? = null
+
+    // ------------------------------------------------------------------------------- request builder
+
+    /**
+     * Pure request builder shared by [open] and background prefetch so `ExplainCache.key(prefetchReq)`
+     * and `ExplainCache.key(openReq)` are guaranteed identical for the same [line] and model.
+     */
+    fun buildRequest(
+        session: GameSession,
+        line: DialogueLine,
+        focusCharIndex: Int? = null,
+        persona: AiPersonaSettings = this.persona,
+        forceRefresh: Boolean = false,
+    ): ExplainRequest = Companion.buildRequest(
+        decoder = session.engine.decoder,
+        scene = session.engine.scene,
+        line = line,
+        contextLines = runCatching { session.contextBefore(line, 3) }.getOrDefault(emptyList()),
+        focusCharIndex = focusCharIndex,
+        persona = persona,
+        forceRefresh = forceRefresh,
+    )
 
     // ------------------------------------------------------------------------------- open / close
 
     /**
      * Opens the breakdown for [line] ([focusCharIndex] = tapped character, if any). The sheet stacks
      * above the current overlay ([returnTo], restored on close); from the plain game view it sets
-     * `Overlay.AI` so the engine pauses. Starts the explain request immediately.
+     * `Overlay.AI` so the engine pauses. Resets the 10-line study-burst window and starts [explain].
      */
     fun open(session: GameSession, line: DialogueLine, focusCharIndex: Int?, returnTo: Overlay = session.overlay) {
         val decoder = session.engine.decoder
@@ -172,25 +234,26 @@ class AiLearningController(
             session.toast = "这一行没有日文 No Japanese text"
             return
         }
-        val context = runCatching {
-            session.contextBefore(line, 3).map { l ->
-                formatContextLine(JpSentence.speaker(l.speakerJp, decoder, TextLang.JP), JpSentence.fromRich(l.jp, decoder).text)
-            }.filter { it.isNotBlank() }
-        }.getOrDefault(emptyList())
+        val req = buildRequest(session, line, focusCharIndex, persona, forceRefresh = false)
         cancelRequests()
+        activeSession = session
+        ensureSessionObserver(session)
+        lastOpenedRef = line.ref
+        lastSeenLineRef = line.ref
+        remainingBurstLines = STUDY_BURST_LINES
         val back = if (returnTo == Overlay.AI) breakdown?.returnTo ?: Overlay.NONE else returnTo
         val st = AiBreakdownState(
             line = line,
             sentence = sentence,
-            speakerJp = JpSentence.speaker(line.speakerJp, decoder, TextLang.JP),
-            speakerCn = JpSentence.speaker(line.speakerCn, decoder, TextLang.CN),
-            officialCn = JpSentence.officialCn(line.cn, decoder),
-            contextBefore = context,
-            sceneHint = "WHITE ALBUM 2 · ${sceneLabel(session.engine.scene)}",
+            speakerJp = req.speakerJp,
+            speakerCn = req.speakerCn,
+            officialCn = req.officialCnTranslation,
+            contextBefore = req.contextBefore,
+            sceneHint = req.sceneHint ?: "WHITE ALBUM 2 · ${sceneLabel(session.engine.scene)}",
             voice = line.ref.voice,
             returnTo = back,
         )
-        st.focusCharIndex = focusCharIndex?.coerceIn(0, (sentence.text.length - 1).coerceAtLeast(0))
+        st.focusCharIndex = req.focusCharIndex
         breakdown = st
         if (back == Overlay.NONE) session.overlay = Overlay.AI
         explain()
@@ -232,11 +295,243 @@ class AiLearningController(
     }
 
     /** Closes the sheet, cancels in-flight requests and restores the overlay it was opened over. */
-    fun close(session: GameSession?) {
+    fun close(session: GameSession? = activeSession) {
         cancelRequests()
         val st = breakdown
         breakdown = null
         if (session != null && session.overlay == Overlay.AI) session.overlay = st?.returnTo?.takeIf { it != Overlay.AI } ?: Overlay.NONE
+    }
+
+    // ------------------------------------------------------------------------------- ◀ / ▶ line navigation (A4)
+
+    /** True when the open breakdown can step backward in [session]'s backlog. */
+    fun canPrev(session: GameSession? = activeSession): Boolean {
+        val s = session ?: return false
+        val st = breakdown ?: return false
+        if (st.isSample) return false
+        val ref = st.cursorRef ?: return false
+        return s.backlog().lastIndexOf(ref) > 0
+    }
+
+    /** True when the open breakdown can step forward in [session]'s backlog or advance to the next script line. */
+    fun canNext(session: GameSession? = activeSession): Boolean {
+        val s = session ?: return false
+        val st = breakdown ?: return false
+        if (st.isSample) return false
+        val ref = st.cursorRef ?: return false
+        val bl = s.backlog()
+        val idx = bl.lastIndexOf(ref)
+        if (idx in 0 until bl.lastIndex) return true
+        return s.line != null && s.choices.isEmpty() && s.movie == null && !s.ended
+    }
+
+    /** Steps to the previous line in [session]'s backlog and opens its breakdown. */
+    fun openPrev(session: GameSession? = activeSession): Boolean {
+        val s = session ?: return false
+        val st = breakdown ?: return false
+        if (st.isSample) return false
+        val ref = st.cursorRef ?: return false
+        val bl = s.backlog()
+        val idx = bl.lastIndexOf(ref)
+        if (idx <= 0) return false
+        val prevLine = runCatching { s.resolve(bl[idx - 1]) }.getOrNull() ?: return false
+        open(s, prevLine, focusCharIndex = null, returnTo = st.returnTo)
+        return true
+    }
+
+    /**
+     * Steps to the next line in [session]'s backlog, or — when already at the latest backlog entry —
+     * sets [pendingReopenOnNextLine], closes the sheet, advances the script via [onAdvanceToNextLine]
+     * (default: completes any reveal and calls [GameSession.onTap]), and re-opens AI on the new line.
+     */
+    fun openNext(session: GameSession? = activeSession, onAdvanceToNextLine: (() -> Unit)? = null): Boolean {
+        val s = session ?: return false
+        val st = breakdown ?: return false
+        if (st.isSample) return false
+        val ref = st.cursorRef ?: return false
+        val bl = s.backlog()
+        val idx = bl.lastIndexOf(ref)
+        if (idx in 0 until bl.lastIndex) {
+            val nextLine = runCatching { s.resolve(bl[idx + 1]) }.getOrNull() ?: return false
+            open(s, nextLine, focusCharIndex = null, returnTo = st.returnTo)
+            return true
+        }
+        if (s.line == null || s.choices.isEmpty().not() || s.movie != null || s.ended) return false
+        val prevRef = s.line?.ref
+        pendingReopenOnNextLine = true
+        lastOpenedRef = prevRef
+        cancelRequests()
+        breakdown = null
+        s.overlay = Overlay.NONE
+        s.windowHidden = false
+        s.skipToggle = false
+        s.autoMode = false
+        if (onAdvanceToNextLine != null) {
+            onAdvanceToNextLine()
+        } else {
+            var guard = 0
+            while (!s.revealDone && guard++ < 16) s.onTap()
+            s.onTap()
+        }
+        // Fallback frame watcher in case the host screen does not call onLineChanged directly.
+        scope.launch {
+            var ticks = 0
+            while (pendingReopenOnNextLine && ticks++ < 120) {
+                if (s.choices.isNotEmpty() || s.movie != null || s.ended) {
+                    pendingReopenOnNextLine = false
+                    break
+                }
+                val cur = s.line
+                if (cur != null && cur.ref != prevRef) {
+                    onLineChanged(s, cur)
+                    break
+                }
+                delay(16)
+            }
+            pendingReopenOnNextLine = false
+        }
+        return true
+    }
+
+    // ------------------------------------------------------------------------------- prefetch & line hook (#2)
+
+    private fun ensureSessionObserver(session: GameSession) {
+        if (observedSession === session && sessionObserverJob?.isActive == true) return
+        observedSession = session
+        sessionObserverJob?.cancel()
+        sessionObserverJob = scope.launch {
+            snapshotFlow { session.line }.collectLatest { line ->
+                onLineChanged(session, line)
+            }
+        }
+    }
+
+    /**
+     * Called when the game's current dialogue line changes:
+     * 1. Fulfils [pendingReopenOnNextLine] (`▶` on the latest line) by completing the typewriter and
+     *    re-opening the AI sheet on the new line (cancelled if choices / movie / end intervened).
+     * 2. Within the 10-line study-burst window after a manual [open], schedules a debounced (600 ms)
+     *    size-1 latest-wins background prefetch for unread lines when `aiPrefetchEnabled` is on.
+     */
+    fun onLineChanged(session: GameSession, line: DialogueLine?) {
+        activeSession = session
+        if (pendingReopenOnNextLine) {
+            if (session.choices.isNotEmpty() || session.movie != null || session.ended || line == null) {
+                pendingReopenOnNextLine = false
+            } else if (line.ref != lastOpenedRef) {
+                pendingReopenOnNextLine = false
+                var guard = 0
+                while (!session.revealDone && guard++ < 16) session.onTap()
+                open(session, line, focusCharIndex = null, returnTo = Overlay.NONE)
+                return
+            }
+        }
+        if (line == null) return
+        if (line.ref == lastSeenLineRef) return
+        lastSeenLineRef = line.ref
+
+        if (remainingBurstLines <= 0) return
+        remainingBurstLines--
+
+        val s = settings()
+        if (!s.aiPrefetchEnabled || !s.ai.isConfigured || !s.ai.cacheEnabled) return
+        if (session.skipping || session.autoMode || session.inReplayMode || session.movie != null || session.ended) return
+        if (line.read) return
+        if (dailyPrefetchedCount() >= s.aiPrefetchDailyLimit) return
+
+        val req = buildRequest(session, line, focusCharIndex = null, persona = persona, forceRefresh = false)
+        if (req.sentence.isBlank()) return
+        enqueuePrefetch(req) {
+            !session.skipping && !session.autoMode && !session.inReplayMode && session.movie == null && !session.ended
+        }
+    }
+
+    /**
+     * Enqueues [req] into the size-1 latest-wins prefetch queue:
+     * - Any previously queued (debouncing or waiting) item is cancelled and replaced immediately.
+     * - The 1 currently running HTTP request ([activePrefetchJob], if any) is allowed to finish into
+     *   [cache] so already-generated tokens are never wasted.
+     */
+    fun enqueuePrefetch(req: ExplainRequest, stillValid: () -> Boolean = { true }) {
+        queuedPrefetchToken?.cancel()
+        queuedPrefetchJob?.cancel()
+        val qToken = CancelToken()
+        queuedPrefetchToken = qToken
+        queuedPrefetchJob = scope.launch {
+            if (prefetchDebounceMs > 0) delay(prefetchDebounceMs)
+            // Wait for the single active prefetch (if any) to finish into cache before starting the latest queued item.
+            activePrefetchJob?.join()
+            if (qToken.isCancelled || !stillValid()) return@launch
+            val s = settings()
+            if (!s.aiPrefetchEnabled || !s.ai.isConfigured || !s.ai.cacheEnabled) return@launch
+            if (dailyPrefetchedCount() >= s.aiPrefetchDailyLimit) return@launch
+            val key = ExplainCache.key(req, s.ai.model)
+            if (inFlight.containsKey(key)) return@launch
+            val cached = withContext(io) { runCatching { cache.get(key) }.getOrNull() }
+            if (cached != null || qToken.isCancelled || !stillValid()) return@launch
+
+            val activeToken = CancelToken()
+            prefetchedKeys += key
+            incrementPrefetchedCount()
+            activePrefetchJob = scope.launch {
+                val (def, _) = acquireOrStartExplain(key, req, useSingleFlight = true, token = activeToken)
+                runCatching { def.await() }
+            }
+        }
+    }
+
+    private fun dailyPrefetchedCount(): Int {
+        val day = now() / 86_400_000L
+        if (day != dailyEpochDay) {
+            dailyEpochDay = day
+            dailyCount = 0
+        }
+        return dailyCount
+    }
+
+    private fun incrementPrefetchedCount() {
+        val day = now() / 86_400_000L
+        if (day != dailyEpochDay) {
+            dailyEpochDay = day
+            dailyCount = 0
+        }
+        dailyCount++
+        prefetchedCount++
+    }
+
+    private fun recordPrefetchHitIfAny(key: String, joinedExisting: Boolean) {
+        if ((joinedExisting || key in prefetchedKeys) && hitCountedKeys.add(key)) {
+            prefetchHitCount++
+        }
+    }
+
+    /**
+     * Single-flight coordinator: returns an existing active [Deferred] in [inFlight] for [key] if
+     * present (`joined = true`), or starts a new call on [io] and registers it in [inFlight]
+     * (`joined = false`).
+     */
+    private fun acquireOrStartExplain(
+        key: String,
+        req: ExplainRequest,
+        useSingleFlight: Boolean,
+        token: CancelToken,
+    ): Pair<Deferred<SentenceExplanation>, Boolean> {
+        if (!useSingleFlight) {
+            return scope.async(io) { client.explainSentence(req, cache, token) } to false
+        }
+        synchronized(inFlight) {
+            inFlight[key]?.takeIf { it.isActive }?.let { return it to true }
+            lateinit var def: Deferred<SentenceExplanation>
+            def = scope.async(io) {
+                try {
+                    client.explainSentence(req, cache, token)
+                } finally {
+                    synchronized(inFlight) { inFlight.remove(key, def) }
+                }
+            }
+            inFlight[key] = def
+            return def to false
+        }
     }
 
     private fun cancelRequests() {
@@ -283,27 +578,32 @@ class AiLearningController(
         val token = CancelToken()
         explainToken = token
         val req = st.request(persona, force)
+        val key = ExplainCache.key(req, ai.model)
+        val useSingleFlight = !force && ai.cacheEnabled
         // Progressive loading: the local skeleton (< 1 ms, no I/O) fills the sheet immediately.
         st.status = AiStatus.Loading(OfflineExplainer.build(req, now()))
         // readTimeout is per read, not a total deadline: a watchdog cancels the whole call. One
         // explain may do a token exchange + the call + one nudge retry, hence 2 × timeout + slack
         // (a "thinking" HTTP 400 that triggers the no-thinkingConfig retry comes back immediately).
         val deadlineMs = 2L * ai.timeoutMs + 10_000L
+        val (def, joined) = acquireOrStartExplain(key, req, useSingleFlight, token)
+        if (useSingleFlight) recordPrefetchHitIfAny(key, joined)
         explainJob = scope.launch {
             var timedOut = false
             val watchdog = launch {
                 delay(deadlineMs)
                 timedOut = true
                 token.cancel()
+                if (!joined) def.cancel()
             }
             val outcome: Result<Pair<SentenceExplanation, List<FollowUpMessage>>> = try {
                 withContext(io) {
-                    val e = client.explainSentence(req, cache, token)
+                    val e = def.await()
                     val th = runCatching { cache.thread(e.id) }.getOrDefault(emptyList())
                     Result.success(e to th)
                 }
             } catch (c: CancellationException) {
-                token.cancel()
+                if (!joined) token.cancel()
                 throw c
             } catch (t: Throwable) {
                 Result.failure(t)
@@ -445,6 +745,44 @@ class AiLearningController(
     }
 
     companion object {
+        /** Number of unread lines after a manual [open] during which background prefetch is active. */
+        const val STUDY_BURST_LINES = 10
+
+        /** Default debounce before a newly displayed line enters the background prefetch slot. */
+        const val PREFETCH_DEBOUNCE_MS = 600L
+
+        /**
+         * Pure request builder shared by [open] and background prefetch so their [ExplainCache.key]
+         * values are guaranteed identical for the same [line] and model.
+         */
+        fun buildRequest(
+            decoder: BilingualTextDecoder,
+            scene: String,
+            line: DialogueLine,
+            contextLines: List<DialogueLine>,
+            focusCharIndex: Int?,
+            persona: AiPersonaSettings,
+            forceRefresh: Boolean = false,
+        ): ExplainRequest {
+            val sentence = JpSentence.fromRich(line.jp, decoder)
+            val context = contextLines.map { l ->
+                formatContextLine(JpSentence.speaker(l.speakerJp, decoder, TextLang.JP), JpSentence.fromRich(l.jp, decoder).text)
+            }.filter { it.isNotBlank() }
+            val clampedFocus = focusCharIndex?.takeIf { sentence.text.isNotEmpty() }?.coerceIn(0, sentence.text.length - 1)
+            return ExplainRequest(
+                sentence = sentence.text,
+                contextBefore = context,
+                speakerJp = JpSentence.speaker(line.speakerJp, decoder, TextLang.JP),
+                speakerCn = JpSentence.speaker(line.speakerCn, decoder, TextLang.CN),
+                officialCnTranslation = JpSentence.officialCn(line.cn, decoder),
+                sceneHint = "WHITE ALBUM 2 · ${sceneLabel(scene)}",
+                focusCharIndex = clampedFocus,
+                scriptRuby = sentence.scriptRuby,
+                persona = persona,
+                force = forceRefresh,
+            )
+        }
+
         /** zh-CN text for an error code (AI sheet / follow-up errors). */
         fun errorText(code: AiErrorCode): String = when (code) {
             AiErrorCode.NOT_CONFIGURED -> "尚未配置 AI 服务 (Gemini / Vertex AI)"

@@ -42,7 +42,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -143,18 +142,29 @@ fun AiBreakdownOverlay(
                 if (maxWidth >= 640.dp) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Column(
-                            Modifier.weight(0.42f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
+                            Modifier.weight(0.42f).fillMaxHeight(),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             SentenceHeader(state, ai, onReplayVoice)
-                            SummaryBlock(state, ai, onOpenSettings)
+                            LazyColumn(
+                                Modifier.weight(1f).fillMaxWidth(),
+                                contentPadding = PaddingValues(bottom = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                item(key = "summary") { SummaryBlock(state, ai, onOpenSettings) }
+                            }
                         }
                         DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(0.58f).fillMaxHeight(), header = null)
                     }
                 } else {
-                    DetailPane(state, ai, persona, onOpenSettings, Modifier.fillMaxSize()) {
+                    Column(
+                        Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         SentenceHeader(state, ai, onReplayVoice)
-                        SummaryBlock(state, ai, onOpenSettings)
+                        DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(1f).fillMaxWidth()) {
+                            SummaryBlock(state, ai, onOpenSettings)
+                        }
                     }
                 }
             }
@@ -170,6 +180,11 @@ private fun HeaderRow(state: AiBreakdownState, ai: AiLearningController, persona
         Text("✨ AI 解说 · ${persona.shortName}", color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.width(12.dp))
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!state.isSample) {
+                Chip("◀ 上一句", enabled = ai.canPrev()) { ai.openPrev() }
+                Chip("下一句 ▶", enabled = ai.canNext()) { ai.openNext() }
+                Spacer(Modifier.width(4.dp))
+            }
             ai.personas.forEach { p ->
                 val label = if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName
                 Chip(label, selected = p.id == persona.id) { onPersona(p.id) }
@@ -250,10 +265,16 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
                 acc
             }
         }
+        val hasAnyRuby = remember(tokens) { tokens.any { !it.ruby.isNullOrBlank() } }
         FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             groups.forEach { (ruby, starts) ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 11.sp, maxLines = 1)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(0.dp),
+                ) {
+                    if (hasAnyRuby) {
+                        Text(ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1)
+                    }
                     Row {
                         starts.forEach { idx ->
                             val ch = String(Character.toChars(text.codePointAt(idx)))
@@ -298,7 +319,9 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
                 if (state.isSample) Tag("示例 Sample", TEXTBOOK)
                 if (expl.model == OfflineExplainer.MODEL) Tag("离线 Offline", TEXTBOOK)
                 if (expl.fromCache) Tag("已缓存 Cached")
-                Tag(expl.model, Color(0x33FFFFFF), Wa2Colors.TextDim)
+                if (!state.isSample && expl.model != OfflineExplainer.MODEL && expl.model.isNotBlank()) {
+                    Tag(expl.model, Color(0x33FFFFFF), Wa2Colors.TextDim)
+                }
             }
         }
         // While loading, the detail pane's skeleton card carries the translation (shown once, not twice).
@@ -503,7 +526,15 @@ private fun FullDetailList(
             }
             if (expl.vocab.isNotEmpty()) {
                 item(key = "vocab-title") { SectionHeader("词汇 Vocab (${expl.vocab.size})") }
-                expl.vocab.forEach { v -> item(key = "vocab-${v.id}") { VocabCard(v) } }
+                expl.vocab.forEach { v ->
+                    item(key = "vocab-${v.id}") {
+                        VocabCard(v) {
+                            val target = SpanAlign.findChunkAtChar(expl.chunks, v.span.start)
+                                ?: expl.chunks.firstOrNull { v.id in it.vocabIds }
+                            target?.let { ai.selectChunk(it) }
+                        }
+                    }
+                }
             }
             if (expl.grammar.isNotEmpty()) {
                 item(key = "grammar-title") { SectionHeader("语法 Grammar (${expl.grammar.size})") }
@@ -600,7 +631,7 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
                 Text("${index + 1}", color = Wa2Colors.Night, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             RubyLine(if (c.alignment == SpanAlignment.UNALIGNED) emptyList() else RubyBuilder.sliceRuby(expl.ruby, c.span), c.surface, 18.sp)
-            if (c.reading.isNotBlank() && c.reading != c.surface) Text(c.reading, color = Wa2Colors.TextDim, fontSize = 12.sp)
+            if (RubyBuilder.cleanReading(c.reading, c.surface) != null) Text(c.reading, color = Wa2Colors.TextDim, fontSize = 12.sp)
             Spacer(Modifier.weight(1f))
             if (c.role.isNotBlank()) Tag(c.role)
         }
@@ -656,14 +687,14 @@ private fun FormalityBar(level: Int) {
 /** Inline furigana line (non-interactive). */
 @Composable
 private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: androidx.compose.ui.unit.TextUnit) {
-    if (tokens.isEmpty()) {
+    if (tokens.none { !it.ruby.isNullOrBlank() }) {
         Text(fallback, color = Wa2Colors.Text, fontSize = size)
         return
     }
     Row(verticalAlignment = Alignment.Bottom) {
         tokens.forEach { t ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(t.ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, maxLines = 1)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                Text(t.ruby ?: " ", color = Wa2Colors.TextDim, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 1)
                 Text(t.base, color = Wa2Colors.Text, fontSize = size)
             }
         }
@@ -675,7 +706,7 @@ private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: androidx.c
 private fun VocabRow(v: VocabEntry) {
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(if (v.lemmaReading.isNotBlank() && v.lemmaReading != v.lemma) "${v.lemma}【${v.lemmaReading}】" else v.lemma, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(if (RubyBuilder.cleanReading(v.lemmaReading, v.lemma) != null) "${v.lemma}【${v.lemmaReading}】" else v.lemma, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             Tag(partOfSpeechLabel(v.partOfSpeech))
             v.jlpt?.let { Tag(it, TEXTBOOK) }
             v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
@@ -688,8 +719,13 @@ private fun VocabRow(v: VocabEntry) {
 }
 
 @Composable
-private fun VocabCard(v: VocabEntry) {
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CARD).padding(horizontal = 12.dp, vertical = 8.dp)) { VocabRow(v) }
+private fun VocabCard(v: VocabEntry, onClick: (() -> Unit)? = null) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        Modifier.fillMaxWidth().clip(shape).background(CARD)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) { VocabRow(v) }
 }
 
 @Composable
