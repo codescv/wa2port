@@ -32,7 +32,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.wa2port.android.ai.AiLearningController
+import com.wa2port.android.ai.NotebookOverlay
 import com.wa2port.android.data.Settings
 import com.wa2port.android.game.GameSession
 import com.wa2port.core.ai.AiEndpoints
@@ -227,13 +230,34 @@ fun AiSettingsSection(
             focus.clearFocus()
             ai.openSample(session)
         }
+        val nbRev = ai.notebookRevision
+        val nbSentenceCount = remember(nbRev) { ai.notebook.sentences().size }
+        val nbStarCount = remember(nbRev) {
+            val s = ai.notebook.stars()
+            s.vocab.size + s.grammar.size + s.sentences.size
+        }
+        MenuButton("📒 学习记录 Notebook", subtitle = "$nbSentenceCount 句 · ★ $nbStarCount") {
+            focus.clearFocus()
+            ai.openNotebook(session)
+        }
+    }
+    if (ai.notebookOpen && ai.breakdown == null) {
+        Dialog(
+            onDismissRequest = { ai.closeNotebook(session) },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            NotebookOverlay(
+                ai = ai,
+                onClose = { ai.closeNotebook(session) },
+            )
+        }
     }
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             confirmButton = { TextButton(onClick = { confirmClear = false; ai.clearCache() }) { Text("清除 Clear") } },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消 Cancel") } },
-            text = { Text("删除所有已缓存的 AI 解说与追问记录？\nDelete all cached breakdowns and follow-ups?") },
+            text = { Text("删除所有已缓存的 AI 解说与追问记录？（注：📒 学习记录与收藏不会受影响）\nDelete all cached breakdowns? (Your Notebook & Stars are preserved.)") },
         )
     }
 }

@@ -21,11 +21,17 @@ import com.wa2port.core.ai.ExplainCache
 import com.wa2port.core.ai.ExplainRequest
 import com.wa2port.core.ai.FollowUpMessage
 import com.wa2port.core.ai.GeminiAiClient
+import com.wa2port.core.ai.GrammarPoint
 import com.wa2port.core.ai.JpSentence
+import com.wa2port.core.ai.NotebookSentenceEntry
+import com.wa2port.core.ai.NotebookStore
 import com.wa2port.core.ai.OfflineExplainer
 import com.wa2port.core.ai.SemanticChunk
 import com.wa2port.core.ai.SentenceExplanation
 import com.wa2port.core.ai.SpanAlign
+import com.wa2port.core.ai.StarredGrammar
+import com.wa2port.core.ai.StarredVocab
+import com.wa2port.core.ai.VocabEntry
 import com.wa2port.core.ai.formatContextLine
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.engine.LineRef
@@ -74,6 +80,7 @@ class AiBreakdownState(
     val voice: VoiceRef?,
     val returnTo: Overlay,
     val isSample: Boolean = false,
+    val returnToNotebook: Boolean = false,
 ) {
     /** Backlog reference of the open line (null for the hand-written sample). */
     val cursorRef: LineRef? = line?.ref
@@ -142,11 +149,27 @@ class AiLearningController(
     private val prefetchDebounceMs: Long = PREFETCH_DEBOUNCE_MS,
 ) {
     val cache = ExplainCache(cacheDir)
+    /** Independent learner notebook in `filesDir/notebook/` (never wiped by [clearCache]). */
+    val notebook = NotebookStore(
+        if (cacheDir.name == "ai_cache" && cacheDir.parentFile != null) File(cacheDir.parentFile, "notebook") else File(cacheDir, "notebook"),
+    )
     private val client = clientFactory { settings().ai }
     private val testClientFactory = clientFactory
 
     var breakdown by mutableStateOf<AiBreakdownState?>(null)
         internal set
+    /** True while the full-screen `📒 学习记录 Notebook` overlay is open. */
+    var notebookOpen by mutableStateOf(false)
+    /** Bumped on every notebook / star mutation so Compose observers re-read [notebook]. */
+    var notebookRevision by mutableIntStateOf(0)
+        private set
+
+    init {
+        scope.launch {
+            withContext(io) { runCatching { notebook.importFromCacheIfEmpty(cacheDir) } }
+            notebookRevision++
+        }
+    }
     val persona: AiPersonaSettings
         get() = settings().let { AiPersonaSettings.resolve(it.aiPersonaId, it.aiCustomPersonaName, it.aiCustomPersonaSoul) }
 
@@ -299,7 +322,130 @@ class AiLearningController(
         cancelRequests()
         val st = breakdown
         breakdown = null
+        if (st?.returnToNotebook == true) {
+            notebookOpen = true
+            return
+        }
         if (session != null && session.overlay == Overlay.AI) session.overlay = st?.returnTo?.takeIf { it != Overlay.AI } ?: Overlay.NONE
+    }
+
+    // ------------------------------------------------------------------------------- notebook & stars (#9)
+
+    /** Opens the full-screen `📒 学习记录 Notebook` overlay. */
+    fun openNotebook(session: GameSession? = activeSession) {
+        if (session != null) activeSession = session
+        notebookRevision++
+        notebookOpen = true
+    }
+
+    /** Closes the `📒 学习记录 Notebook` overlay. */
+    fun closeNotebook(session: GameSession? = activeSession) {
+        notebookOpen = false
+        val s = session ?: activeSession
+        if (s != null && breakdown == null && s.overlay == Overlay.AI) {
+            s.overlay = Overlay.NONE
+        }
+    }
+
+    /**
+     * Opens a previously recorded sentence from [notebook] directly into the AI breakdown sheet
+     * using its persisted [SentenceExplanation] and Q&A thread (no network needed).
+     */
+    fun openFromNotebook(entry: NotebookSentenceEntry, session: GameSession? = activeSession): Boolean {
+        val expl = notebook.loadExplanation(entry.explanationId) ?: cache.get(entry.explanationId) ?: return false
+        val s = session ?: activeSession
+        val back = breakdown?.returnTo ?: s?.overlay?.takeIf { it != Overlay.AI } ?: Overlay.NONE
+        cancelRequests()
+        val st = AiBreakdownState(
+            line = null,
+            sentence = JpSentence.ofText(expl.sentence),
+            speakerJp = expl.speakerJp ?: entry.speakerJp,
+            speakerCn = expl.speakerCn ?: entry.speakerCn,
+            officialCn = expl.officialCnTranslation ?: entry.officialCn,
+            contextBefore = emptyList(),
+            sceneHint = if (entry.scene > 0) "WHITE ALBUM 2 · ${sceneLabel(entry.scene.toString())}" else "WHITE ALBUM 2 · 笔记本",
+            voice = entry.voiceRef,
+            returnTo = back,
+            returnToNotebook = true,
+        )
+        st.status = AiStatus.Ready(expl)
+        st.thread = notebook.loadThread(entry.explanationId).ifEmpty { runCatching { cache.thread(entry.explanationId) }.getOrDefault(emptyList()) }
+        notebookOpen = false
+        breakdown = st
+        if (s != null && back == Overlay.NONE) s.overlay = Overlay.AI
+        return true
+    }
+
+    /** Replays [voiceRef] through the active [GameSession]'s audio player when available. */
+    fun replayVoice(voiceRef: VoiceRef?, session: GameSession? = activeSession): Boolean {
+        val v = voiceRef ?: return false
+        val s = session ?: activeSession ?: return false
+        s.audio.replayVoice(v)
+        return true
+    }
+
+    private fun ensureRecordedForStar(st: AiBreakdownState?, expl: SentenceExplanation?) {
+        if (expl == null || expl.model == OfflineExplainer.MODEL) return
+        if (notebook.sentences().none { it.explanationId == expl.id }) {
+            runCatching { notebook.recordSentence(st?.cursorRef, expl, now()) }
+        }
+    }
+
+    fun isSentenceStarred(sentenceId: String): Boolean {
+        @Suppress("UNUSED_EXPRESSION")
+        notebookRevision
+        return notebook.isSentenceStarred(sentenceId)
+    }
+
+    fun toggleSentenceStar(sentenceId: String? = breakdown?.explanation?.id): Boolean {
+        val id = sentenceId ?: return false
+        val st = breakdown
+        if (st?.explanation?.id == id) ensureRecordedForStar(st, st.explanation)
+        val res = notebook.toggleSentenceStar(id)
+        notebookRevision++
+        return res
+    }
+
+    fun isVocabStarred(vocab: VocabEntry): Boolean {
+        @Suppress("UNUSED_EXPRESSION")
+        notebookRevision
+        return notebook.isVocabStarred(vocab.lemma.ifBlank { vocab.surface })
+    }
+
+    fun toggleVocabStar(vocab: VocabEntry, expl: SentenceExplanation? = breakdown?.explanation): Boolean {
+        val e = expl ?: return false
+        val st = breakdown
+        if (st?.explanation?.id == e.id) ensureRecordedForStar(st, e)
+        val res = notebook.toggleVocabStar(vocab, e, st?.cursorRef, now())
+        notebookRevision++
+        return res
+    }
+
+    fun toggleVocabStar(item: StarredVocab): Boolean {
+        val res = notebook.toggleVocabStar(item, now())
+        notebookRevision++
+        return res
+    }
+
+    fun isGrammarStarred(grammar: GrammarPoint): Boolean {
+        @Suppress("UNUSED_EXPRESSION")
+        notebookRevision
+        return notebook.isGrammarStarred(grammar.pattern)
+    }
+
+    fun toggleGrammarStar(grammar: GrammarPoint, expl: SentenceExplanation? = breakdown?.explanation): Boolean {
+        val e = expl ?: return false
+        val st = breakdown
+        if (st?.explanation?.id == e.id) ensureRecordedForStar(st, e)
+        val res = notebook.toggleGrammarStar(grammar, e, st?.cursorRef, now())
+        notebookRevision++
+        return res
+    }
+
+    fun toggleGrammarStar(item: StarredGrammar): Boolean {
+        val res = notebook.toggleGrammarStar(item, now())
+        notebookRevision++
+        return res
     }
 
     // ------------------------------------------------------------------------------- ◀ / ▶ line navigation (A4)
@@ -599,7 +745,10 @@ class AiLearningController(
             val outcome: Result<Pair<SentenceExplanation, List<FollowUpMessage>>> = try {
                 withContext(io) {
                     val e = def.await()
+                    runCatching { notebook.recordSentence(st.cursorRef, e, now()) }
                     val th = runCatching { cache.thread(e.id) }.getOrDefault(emptyList())
+                        .ifEmpty { runCatching { notebook.loadThread(e.id) }.getOrDefault(emptyList()) }
+                    if (th.isNotEmpty()) runCatching { notebook.saveThread(e.id, th) }
                     Result.success(e to th)
                 }
             } catch (c: CancellationException) {
@@ -615,6 +764,7 @@ class AiLearningController(
                 onSuccess = { (e, th) ->
                     st.status = AiStatus.Ready(e)
                     st.thread = th
+                    notebookRevision++
                 },
                 onFailure = { t ->
                     val ae = t as? AiException
@@ -697,7 +847,17 @@ class AiLearningController(
             st.pendingQuestion = null
             outcome.fold(
                 onSuccess = { answer ->
-                    st.thread = history + FollowUpMessage("u" + answer.id, FollowUpMessage.ROLE_USER, q, answer.createdAt) + answer
+                    val newThread = history + FollowUpMessage("u" + answer.id, FollowUpMessage.ROLE_USER, q, answer.createdAt) + answer
+                    st.thread = newThread
+                    scope.launch {
+                        withContext(io) {
+                            runCatching {
+                                ensureRecordedForStar(st, expl)
+                                notebook.saveThread(expl.id, newThread)
+                            }
+                        }
+                        notebookRevision++
+                    }
                 },
                 onFailure = { t ->
                     val ae = t as? AiException

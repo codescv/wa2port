@@ -73,6 +73,8 @@ import androidx.compose.ui.unit.sp
 import com.wa2port.android.ai.AiBreakdownState
 import com.wa2port.android.ai.AiLearningController
 import com.wa2port.android.ai.AiStatus
+import com.wa2port.android.ai.NotebookOverlay
+import com.wa2port.android.ai.StarButton
 import com.wa2port.android.ui.CloseButton
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.ai.AiErrorCode
@@ -169,6 +171,15 @@ fun AiBreakdownOverlay(
                 }
             }
         }
+        if (ai.notebookOpen) {
+            NotebookOverlay(
+                ai = ai,
+                onReplayVoice = { v ->
+                    if (!ai.replayVoice(v) && state.voice == v) onReplayVoice?.invoke()
+                },
+                onClose = { ai.closeNotebook() },
+            )
+        }
     }
 }
 
@@ -192,6 +203,7 @@ private fun HeaderRow(state: AiBreakdownState, ai: AiLearningController, persona
             Spacer(Modifier.width(6.dp))
             val loading = state.status is AiStatus.Loading
             Chip(if (state.isSample) "↻ 示例" else "↻ 重新生成", enabled = !loading) { ai.regenerate() }
+            Chip("📒 笔记本") { ai.openNotebook() }
         }
         CloseButton(onClose)
     }
@@ -238,11 +250,19 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CARD).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val speaker = listOfNotNull(state.speakerJp, state.speakerCn?.takeIf { it != state.speakerJp }).joinToString(" · ")
             Text(speaker.ifEmpty { "（旁白 / 内心独白）" }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            if (state.voice != null && onReplayVoice != null) {
-                Chip("▶ 原声", onClick = onReplayVoice)
+            if (state.voice != null) {
+                Chip("▶ 原声") {
+                    if (onReplayVoice != null) onReplayVoice() else ai.replayVoice(state.voice)
+                }
+            }
+            if (expl != null && expl.model != OfflineExplainer.MODEL) {
+                StarButton(
+                    starred = ai.isSentenceStarred(expl.id),
+                    onClick = { ai.toggleSentenceStar(expl.id) },
+                )
             }
         }
         // Ruby-bearing tokens stay grouped (reading centred over the base); every other character is
@@ -522,13 +542,17 @@ private fun FullDetailList(
             item(key = "chunks-title") { SectionHeader("逐块解析 · 📘 课本标准 vs 🔥 口语演变") }
             val active = state.activeChunk
             expl.chunks.forEachIndexed { i, c ->
-                item(key = "chunk-${c.id}") { ChunkCard(i, c, expl, active?.id == c.id) { ai.selectChunk(c) } }
+                item(key = "chunk-${c.id}") { ChunkCard(i, c, expl, active?.id == c.id, ai) { ai.selectChunk(c) } }
             }
             if (expl.vocab.isNotEmpty()) {
                 item(key = "vocab-title") { SectionHeader("词汇 Vocab (${expl.vocab.size})") }
                 expl.vocab.forEach { v ->
                     item(key = "vocab-${v.id}") {
-                        VocabCard(v) {
+                        VocabCard(
+                            v = v,
+                            starred = ai.isVocabStarred(v),
+                            onToggleStar = { ai.toggleVocabStar(v, expl) },
+                        ) {
                             val target = SpanAlign.findChunkAtChar(expl.chunks, v.span.start)
                                 ?: expl.chunks.firstOrNull { v.id in it.vocabIds }
                             target?.let { ai.selectChunk(it) }
@@ -538,7 +562,16 @@ private fun FullDetailList(
             }
             if (expl.grammar.isNotEmpty()) {
                 item(key = "grammar-title") { SectionHeader("语法 Grammar (${expl.grammar.size})") }
-                expl.grammar.forEach { g -> item(key = "grammar-${g.id}") { GrammarCard(g, expl) } }
+                expl.grammar.forEach { g ->
+                    item(key = "grammar-${g.id}") {
+                        GrammarCard(
+                            g = g,
+                            expl = expl,
+                            starred = ai.isGrammarStarred(g),
+                            onToggleStar = { ai.toggleGrammarStar(g, expl) },
+                        )
+                    }
+                }
             }
             followUpItems(state, persona)
             val canAsk = state.status !is AiStatus.Loading && state.shownExplanation?.model != OfflineExplainer.MODEL
@@ -618,7 +651,7 @@ private fun SectionHeader(text: String) {
 /** One semantic chunk: 📘 textbook form, 🔥 spoken evolution + formality bar, meaning, nuance; vocab & grammar when active. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, active: Boolean, onClick: () -> Unit) {
+private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, active: Boolean, ai: AiLearningController, onClick: () -> Unit) {
     val shape = RoundedCornerShape(12.dp)
     Column(
         Modifier.fillMaxWidth().clip(shape).background(if (active) CARD_ACTIVE else CARD)
@@ -656,12 +689,24 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
             val vocab = SpanAlign.findVocabForChunk(c, expl.vocab)
             if (vocab.isNotEmpty()) {
                 Label("词汇")
-                vocab.forEach { VocabRow(it) }
+                vocab.forEach { v ->
+                    VocabRow(
+                        v = v,
+                        starred = ai.isVocabStarred(v),
+                        onToggleStar = { ai.toggleVocabStar(v, expl) },
+                    )
+                }
             }
             val grammar = SpanAlign.grammarForChunk(c, expl.grammar)
             if (grammar.isNotEmpty()) {
                 Label("语法")
-                grammar.forEach { g -> GrammarRow(g) }
+                grammar.forEach { g ->
+                    GrammarRow(
+                        g = g,
+                        starred = ai.isGrammarStarred(g),
+                        onToggleStar = { ai.toggleGrammarStar(g, expl) },
+                    )
+                }
             }
         }
     }
@@ -703,14 +748,23 @@ private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: androidx.c
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun VocabRow(v: VocabEntry) {
+private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(if (RubyBuilder.cleanReading(v.lemmaReading, v.lemma) != null) "${v.lemma}【${v.lemmaReading}】" else v.lemma, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Tag(partOfSpeechLabel(v.partOfSpeech))
-            v.jlpt?.let { Tag(it, TEXTBOOK) }
-            v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
-            if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(if (RubyBuilder.cleanReading(v.lemmaReading, v.lemma) != null) "${v.lemma}【${v.lemmaReading}】" else v.lemma, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Tag(partOfSpeechLabel(v.partOfSpeech))
+                v.jlpt?.let { Tag(it, TEXTBOOK) }
+                v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
+                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 12.sp)
+            }
+            if (onToggleStar != null) {
+                StarButton(starred = starred, onClick = onToggleStar)
+            }
         }
         Text(v.meaning, color = Wa2Colors.Text, fontSize = 13.sp)
         v.conjugation?.let { Text("变形：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
@@ -719,30 +773,39 @@ private fun VocabRow(v: VocabEntry) {
 }
 
 @Composable
-private fun VocabCard(v: VocabEntry, onClick: (() -> Unit)? = null) {
+private fun VocabCard(v: VocabEntry, starred: Boolean = false, onToggleStar: (() -> Unit)? = null, onClick: (() -> Unit)? = null) {
     val shape = RoundedCornerShape(10.dp)
     Box(
         Modifier.fillMaxWidth().clip(shape).background(CARD)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) { VocabRow(v) }
+    ) { VocabRow(v, starred = starred, onToggleStar = onToggleStar) }
 }
 
 @Composable
-private fun GrammarRow(g: GrammarPoint) {
+private fun GrammarRow(g: GrammarPoint, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(g.pattern, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            g.jlpt?.let { Tag(it, TEXTBOOK) }
+            Row(
+                Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(g.pattern, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                g.jlpt?.let { Tag(it, TEXTBOOK) }
+            }
+            if (onToggleStar != null) {
+                StarButton(starred = starred, onClick = onToggleStar)
+            }
         }
         Text(g.explanation, color = Wa2Colors.Text, fontSize = 13.sp)
     }
 }
 
 @Composable
-private fun GrammarCard(g: GrammarPoint, expl: SentenceExplanation) {
+private fun GrammarCard(g: GrammarPoint, expl: SentenceExplanation, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CARD).padding(horizontal = 12.dp, vertical = 8.dp)) {
-        GrammarRow(g)
+        GrammarRow(g, starred = starred, onToggleStar = onToggleStar)
         val surfaces = g.chunkIds.mapNotNull { id -> expl.chunks.firstOrNull { it.id == id }?.surface }
         if (surfaces.isNotEmpty()) Text("见：" + surfaces.joinToString("、") { "「$it」" }, color = Wa2Colors.TextDim, fontSize = 12.sp)
     }

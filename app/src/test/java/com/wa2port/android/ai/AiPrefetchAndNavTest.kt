@@ -267,6 +267,25 @@ class AiPrefetchAndNavTest {
             assertNotNull(ai.cache.get(ExplainCache.key(req1, model)), "Active request 1 must finish into cache")
             assertNull(ai.cache.get(ExplainCache.key(req2, model)), "Superseded queued request 2 must be dropped")
             assertNotNull(ai.cache.get(ExplainCache.key(req3, model)), "Latest queued request 3 must be cached")
+            assertTrue(ai.notebook.sentences().isEmpty(), "Unopened background prefetches must not pollute notebook")
+
+            // When the user later opens the prefetched sentence (fromCache = true), it MUST be recorded in notebook.
+            val st1 = AiBreakdownState(
+                line = null, sentence = JpSentence.ofText("第一句"), speakerJp = "和纱", speakerCn = "和纱",
+                officialCn = "第一句译文", contextBefore = emptyList(), sceneHint = "WA2", voice = null, returnTo = Overlay.NONE,
+            )
+            ai.breakdown = st1
+            ai.explain(force = false)
+            val readyDeadline = System.currentTimeMillis() + 2_000L
+            while (st1.status !is AiStatus.Ready && System.currentTimeMillis() < readyDeadline) {
+                Thread.sleep(15)
+            }
+            assertEquals(1, ai.notebook.sentences().size, "User-opened cached/prefetched sentence must be recorded in notebook")
+            val entry = ai.notebook.sentences().first()
+            ai.cache.clear()
+            ai.close()
+            assertTrue(ai.openFromNotebook(entry), "openFromNotebook must work from self-contained notebook snapshot after cache clear")
+            assertEquals("第一句", ai.breakdown?.sentence?.text)
         } finally {
             scope.cancel()
         }
