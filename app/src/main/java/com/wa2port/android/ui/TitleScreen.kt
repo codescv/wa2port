@@ -42,7 +42,7 @@ import com.wa2port.android.update.UpdateState
  * entry fits a ~405 dp-high landscape screen without scrolling.
  */
 @Composable
-fun TitleScreen(vm: AppViewModel) {
+fun TitleScreen(vm: AppViewModel, onNotebook: (() -> Unit)? = null) {
     val ready = vm.assetRoot != null
     Box(
         Modifier
@@ -54,9 +54,23 @@ fun TitleScreen(vm: AppViewModel) {
                 Text("WHITE ALBUM 2", color = Wa2Colors.Text, fontSize = 40.sp, fontWeight = FontWeight.Light, letterSpacing = 6.sp)
                 Text("白色相簿2  ·  ホワイトアルバム2  ·  v${vm.update.currentVersion}", color = Wa2Colors.Accent, fontSize = 18.sp)
                 Spacer(Modifier.height(10.dp))
-                UpdatePill(vm.update) {
-                    vm.update.dialogOpen = true
-                    if (vm.update.state is UpdateState.Idle || vm.update.state is UpdateState.Error) vm.update.checkForUpdates()
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    UpdatePill(vm.update) {
+                        vm.update.dialogOpen = true
+                        if (vm.update.state is UpdateState.Idle || vm.update.state is UpdateState.Error) vm.update.checkForUpdates()
+                    }
+                    Box(
+                        Modifier
+                            .heightIn(min = 38.dp)
+                            .clip(RoundedCornerShape(19.dp))
+                            .background(Color(0x66203A60))
+                            .border(1.dp, Wa2Colors.Accent, RoundedCornerShape(19.dp))
+                            .clickable { onNotebook?.invoke() }
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("📒 学习记录 Notebook", color = Wa2Colors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
