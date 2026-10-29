@@ -1,20 +1,23 @@
 package com.wa2port.core
 
 import com.wa2port.core.text.MessageLayout
-import com.wa2port.core.text.MessageLayout.FIT_STEPS
+import com.wa2port.core.text.MessageLayout.ADV_MIN_LINES
+import com.wa2port.core.text.MessageLayout.ADV_TWO_COL_LINES
 import com.wa2port.core.text.MessageLayout.LINE_PITCH
 import com.wa2port.core.text.MessageLayout.MAIN_PX
 import com.wa2port.core.text.MessageLayout.SINGLE_MAX_CHARS
 import com.wa2port.core.text.MessageLayout.TWO_COL_MAX_CHARS
 import com.wa2port.core.text.MessageLayout.TWO_COL_PX
+import com.wa2port.core.text.Reflow
 import com.wa2port.core.text.TextScale
 import kotlin.math.ceil
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
-/** Font size setting: line caps, ADV window growth, NOVEL caps and the preset / step policy. */
+/** Font size setting: constant glyph sizing, line caps, ADV window capacity, NOVEL caps and presets. */
 class FontScaleTest {
     private val presets = listOf(85, 100, 115, 130, 145)
 
@@ -23,21 +26,37 @@ class FontScaleTest {
 
     @Test
     fun hundredPercentIsUnchanged() {
-        assertEquals(MessageLayout.ADV_TOP, MessageLayout.advTop(1f))
+        assertEquals(MessageLayout.ADV_TOP, MessageLayout.advTop(1f, twoCol = false))
+        assertEquals(0.68375f, MessageLayout.advTop(1f, twoCol = true), 1e-5f)
+        assertEquals(0.56f, MessageLayout.ADV_TOP_MIN)
+        assertEquals(3, ADV_MIN_LINES)
+        assertEquals(4, ADV_TWO_COL_LINES)
+        assertEquals(1.5f, LINE_PITCH)
+        assertEquals(19f, TWO_COL_MAX_CHARS)
         assertEquals(MessageLayout.ADV_COL_GAP, MessageLayout.advColumnGap(1f))
         assertEquals(539f, MessageLayout.advColumnWidth(1f))
         assertEquals(1108f, MessageLayout.advSingleWidth())
-        assertEquals(18f, MessageLayout.lineCap(MessageLayout.advColumnWidth(1f), TWO_COL_PX, TWO_COL_MAX_CHARS, stepped = false))
-        assertEquals(34f, MessageLayout.lineCap(MessageLayout.advSingleWidth(), MAIN_PX, SINGLE_MAX_CHARS, stepped = false))
+        assertEquals(19f, MessageLayout.lineCap(MessageLayout.advColumnWidth(1f), TWO_COL_PX, TWO_COL_MAX_CHARS))
+        assertEquals(34f, MessageLayout.lineCap(MessageLayout.advSingleWidth(), MAIN_PX, SINGLE_MAX_CHARS))
         assertEquals(19f, MessageLayout.novelLineCap(MessageLayout.NOVEL_WIDTH * MessageLayout.STAGE_W, 1f))
     }
 
     @Test
+    fun dynamicFontShrinkingIsRemovedAndReflowEnumExists() {
+        val methods = MessageLayout::class.java.declaredMethods.map { it.name }.toSet()
+        val fields = MessageLayout::class.java.declaredFields.map { it.name }.toSet()
+        assertFalse("fitSteps" in methods, "fitSteps must be removed so glyph size is strictly constant")
+        assertFalse("FIT_STEPS" in fields, "FIT_STEPS must be removed")
+        assertFalse("FIT_EXTRA_RATIO" in fields, "FIT_EXTRA_RATIO must be removed")
+        assertEquals(listOf(Reflow.KEEP_ALL, Reflow.SENTENCE, Reflow.JOIN_ALL), Reflow.entries)
+    }
+
+    @Test
     fun twoColumnCapsAtPresets() {
-        val expected = mapOf(85 to 18f, 100 to 18f, 115 to 16f, 130 to 14f, 145 to 13f, 150 to 12f)
+        val expected = mapOf(85 to 19f, 100 to 19f, 115 to 16f, 130 to 14f, 145 to 13f, 150 to 12f)
         for ((p, cap) in expected) {
             val t = p / 100f
-            assertEquals(cap, MessageLayout.lineCap(MessageLayout.advColumnWidth(t), TWO_COL_PX * t, TWO_COL_MAX_CHARS, false), "two-col $p%")
+            assertEquals(cap, MessageLayout.lineCap(MessageLayout.advColumnWidth(t), TWO_COL_PX * t, TWO_COL_MAX_CHARS), "two-col $p%")
         }
     }
 
@@ -46,79 +65,73 @@ class FontScaleTest {
         val expected = mapOf(85 to 34f, 100 to 34f, 115 to 32f, 130 to 28f, 145 to 25f, 150 to 24f)
         for ((p, cap) in expected) {
             val t = p / 100f
-            assertEquals(cap, MessageLayout.lineCap(MessageLayout.advSingleWidth(), MAIN_PX * t, SINGLE_MAX_CHARS, false), "single $p%")
+            assertEquals(cap, MessageLayout.lineCap(MessageLayout.advSingleWidth(), MAIN_PX * t, SINGLE_MAX_CHARS), "single $p%")
         }
     }
 
-    /** cap × size ≤ width for every slider value and every fit step: the pixel wrap never fires first. */
+    /** cap × size ≤ width for every slider value: constant glyph size never pixel-wraps before cap. */
     @Test
     fun capNeverExceedsColumnWidth() {
-        for (t in allScales) for (f in MessageLayout.fitSteps(t)) {
-            val stepped = f < 1f
-            val two = TWO_COL_PX * t * f
-            val colW = MessageLayout.advColumnWidthFor(two)
-            assertTrue(MessageLayout.lineCap(colW, two, TWO_COL_MAX_CHARS, stepped) * two <= colW, "two-col t=$t f=$f")
-            val w = MessageLayout.advSingleWidth()
-            val one = MAIN_PX * t * f
-            assertTrue(MessageLayout.lineCap(w, one, SINGLE_MAX_CHARS, stepped) * one <= w, "single t=$t f=$f")
-        }
-    }
-
-    /** Stepping down never narrows the cap below the nominal one (the old "widen to the column" intent). */
-    @Test
-    fun steppedCapWidens() {
         for (t in allScales) {
+            val two = TWO_COL_PX * t
             val colW = MessageLayout.advColumnWidth(t)
-            val nominal = MessageLayout.lineCap(colW, TWO_COL_PX * t, TWO_COL_MAX_CHARS, false)
-            for (f in MessageLayout.fitSteps(t).drop(1)) {
-                val size = TWO_COL_PX * t * f
-                assertTrue(MessageLayout.lineCap(MessageLayout.advColumnWidthFor(size), size, TWO_COL_MAX_CHARS, true) >= nominal, "t=$t f=$f")
-            }
+            assertTrue(MessageLayout.lineCap(colW, two, TWO_COL_MAX_CHARS) * two <= colW, "two-col t=$t")
+            val w = MessageLayout.advSingleWidth()
+            val one = MAIN_PX * t
+            assertTrue(MessageLayout.lineCap(w, one, SINGLE_MAX_CHARS) * one <= w, "single t=$t")
         }
     }
 
-    /** Three lines of main text (and of 双语 text) fit the ADV window at the nominal size up to 150 %. */
+    /** 3 lines of single-language text and 4 lines of two-column text fit at every scale 70..150 %. */
     @Test
-    fun windowHoldsThreeLinesAtEveryScale() {
+    fun windowHoldsThreeLinesSingleAndFourLinesTwoColAtEveryScale() {
         for (t in allScales) {
-            val avail = MessageLayout.advTextAvail(MessageLayout.advTop(t))
-            assertTrue(avail >= 3 * LINE_PITCH * MAIN_PX * t, "single t=$t avail=$avail")
-            assertTrue(avail >= 3 * LINE_PITCH * TWO_COL_PX * t, "two-col t=$t avail=$avail")
+            val availSingle = MessageLayout.advTextAvail(MessageLayout.advTop(t, twoCol = false))
+            assertTrue(availSingle >= ADV_MIN_LINES * LINE_PITCH * MAIN_PX * t, "single t=$t avail=$availSingle")
+            val availTwoCol = MessageLayout.advTextAvail(MessageLayout.advTop(t, twoCol = true))
+            assertTrue(availTwoCol >= ADV_TWO_COL_LINES * LINE_PITCH * TWO_COL_PX * t, "two-col t=$t avail=$availTwoCol")
         }
     }
 
     /**
-     * Same check in float32 with `AdvWindow`'s exact operation order on real device stage heights,
-     * so rounding can never tip a 3-line message into the fit loop (no tolerance).
+     * Same check in float32 with `AdvWindow`'s exact operation order on 12 real device stage
+     * heights, verifying 3 lines of `MAIN_PX` in single mode and 4 lines of `TWO_COL_PX` in
+     * `twoCol = true` mode fit at every slider value `70..150` without tolerance.
      */
     @Test
-    fun windowHoldsThreeLinesOnDeviceHeights() {
+    fun windowHoldsLinesOnDeviceHeights() {
         val heights = listOf(540f, 607.5f, 720f, 810f, 900f, 1012.5f, 1080f, 1170f, 1206f, 1350f, 1440f, 1600f)
         for (h in heights) for (p in TextScale.MIN..TextScale.MAX) {
             val t = p / 100f
             val scale = h / 720f * t
             val stageScale = h / 720f
-            val top = h * MessageLayout.advTop(t)
             val bottom = h * MessageLayout.ADV_BOTTOM
             val pad = MessageLayout.ADV_PAD * stageScale
-            val textTop = top + pad * 1.25f
-            val avail = bottom - pad * 0.6f - textTop
-            val single = 3 * ((MAIN_PX * scale * 1f) * LINE_PITCH)
-            val two = 3 * ((TWO_COL_PX * scale * 1f) * LINE_PITCH)
-            assertTrue(single <= avail, "single h=$h p=$p need=$single avail=$avail")
-            assertTrue(two <= avail, "two-col h=$h p=$p need=$two avail=$avail")
+
+            val topSingle = h * MessageLayout.advTop(t, twoCol = false)
+            val availSingle = bottom - pad * 0.6f - (topSingle + pad * 1.25f)
+            val needSingle = ADV_MIN_LINES * ((MAIN_PX * scale) * LINE_PITCH)
+            assertTrue(needSingle <= availSingle, "single h=$h p=$p need=$needSingle avail=$availSingle")
+
+            val topTwoCol = h * MessageLayout.advTop(t, twoCol = true)
+            val availTwoCol = bottom - pad * 0.6f - (topTwoCol + pad * 1.25f)
+            val needTwoCol = ADV_TWO_COL_LINES * ((TWO_COL_PX * scale) * LINE_PITCH)
+            assertTrue(needTwoCol <= availTwoCol, "two-col h=$h p=$p need=$needTwoCol avail=$availTwoCol")
         }
     }
 
     @Test
     fun windowGrowsOnlyUpwardsAndWithinBounds() {
-        var prev = 1f
-        for (t in allScales) {
-            val top = MessageLayout.advTop(t)
-            assertTrue(top <= prev, "monotone at t=$t")
-            assertTrue(top in MessageLayout.ADV_TOP_MIN..MessageLayout.ADV_TOP, "bounds at t=$t: $top")
-            if (t <= 1f) assertEquals(MessageLayout.ADV_TOP, top, "small text keeps the classic window (t=$t)")
-            prev = top
+        for (twoCol in listOf(false, true)) {
+            var prev = 1f
+            for (t in allScales) {
+                val top = MessageLayout.advTop(t, twoCol)
+                assertTrue(top <= prev, "monotone twoCol=$twoCol at t=$t")
+                assertTrue(top in MessageLayout.ADV_TOP_MIN..MessageLayout.ADV_TOP, "bounds twoCol=$twoCol at t=$t: $top")
+                if (!twoCol && t <= 1f) assertEquals(MessageLayout.ADV_TOP, top, "single <=100% keeps classic window (t=$t)")
+                if (twoCol && t <= 0.85f) assertEquals(MessageLayout.ADV_TOP, top, "twoCol <=85% keeps classic window (t=$t)")
+                prev = top
+            }
         }
     }
 
@@ -164,15 +177,15 @@ class FontScaleTest {
             val colW = MessageLayout.advColumnWidth(t)
             val size = TWO_COL_PX * t
             val fit = (colW / size).toInt()
-            val cap = MessageLayout.lineCap(colW, size, TWO_COL_MAX_CHARS, false)
+            val cap = MessageLayout.lineCap(colW, size, TWO_COL_MAX_CHARS)
             for (n in 4..(cap.toInt() * 5)) {
                 val lines = wrap(n, cap, fit)
                 assertEquals(n, lines.sum())
                 assertTrue(lines.all { it >= 4 }, "$p% n=$n: $lines")
-                assertTrue(lines.size <= kotlin.math.ceil(n / cap).toInt(), "$p% n=$n uses the minimum line count: $lines")
+                assertTrue(lines.size <= ceil(n / cap).toInt(), "$p% n=$n uses the minimum line count: $lines")
             }
         }
-        // The pre-fix behaviour (cap fixed at 18 with a 16-char column) really did orphan at 115 %.
+        // Without lineCap clamping to fit115 (16), a 19-char cap on a 16-char column orphans.
         val t = 1.15f
         val fit115 = (MessageLayout.advColumnWidth(t) / (TWO_COL_PX * t)).toInt()
         assertEquals(listOf(16, 16, 2), wrap(34, TWO_COL_MAX_CHARS, fit115, ::oldBalancedCap))
@@ -181,7 +194,7 @@ class FontScaleTest {
         assertEquals(listOf(11, 11, 11, 11, 7), wrap(51, 12f, 12))
     }
 
-    /** The balancer change leaves the 100 % caps (18 two-col, 19 NOVEL, 34 single) untouched up to 5 lines. */
+    /** The balancer change leaves the 100 % caps (18, 19 two-col/NOVEL, 34 single) untouched up to 5 lines. */
     @Test
     fun balancerUnchangedAtHundredPercent() {
         for (cap in listOf(18f, 19f, 34f)) for (n in 1..(cap.toInt() * 5)) {
@@ -189,68 +202,21 @@ class FontScaleTest {
         }
     }
 
-    @Test
-    fun fitStepsUnchangedUpToHundredPercent() {
-        for (t in allScales.filter { it <= 1f }) assertTrue(MessageLayout.fitSteps(t).contentEquals(FIT_STEPS), "t=$t")
-        for (t in allScales.filter { it > 1f }) {
-            val steps = MessageLayout.fitSteps(t)
-            assertEquals(1f, steps.first(), "t=$t starts at the nominal size")
-            assertTrue(steps.toList().zipWithNext().all { (a, b) -> b < a }, "t=$t strictly decreasing")
-            assertEquals(FIT_STEPS.last(), t * steps.last(), 1e-5f, "t=$t ends exactly on the 100 % floor")
-            for (f in FIT_STEPS) {
-                assertTrue(steps.any { kotlin.math.abs(it - f) < 1e-4f }, "t=$t keeps scaled step $f")
-                if (f < t) assertTrue(steps.any { kotlin.math.abs(it * t - f) < 1e-4f }, "t=$t includes the 100 % size $f")
-            }
-        }
-    }
-
     /**
-     * Mirrors `AdvWindow`'s 双语 fit loop for paragraphs of full-width char counts (kept `。\n`
-     * breaks split paragraphs): returns the glyph size (stage px) that fits, or null = clipped.
-     */
-    private fun fittedTwoColSize(t: Float, columns: List<List<Int>>): Float? {
-        val avail = MessageLayout.advTextAvail(MessageLayout.advTop(t))
-        for (f in MessageLayout.fitSteps(t)) {
-            val size = TWO_COL_PX * t * f
-            val colW = MessageLayout.advColumnWidthFor(size)
-            val cap = MessageLayout.lineCap(colW, size, TWO_COL_MAX_CHARS, stepped = f < 1f)
-            val lines = columns.maxOf { col -> col.sumOf { n -> ceil(n / cap).toInt() } }
-            if (lines * LINE_PITCH * size <= avail) return size
-        }
-        return null
-    }
-
-    /**
-     * QA #121: IC 1002 token 194 (CN 13+21+21, JP 15+25+25 chars in three `。\n` sentences) wrapped
-     * to 5 lines at 115 %+ and fell off the 0.71 step → bottom line clipped. Now it fits at every
-     * scale 70 %–150 %, never smaller than at 100 % for scales above it, and larger at 130 %+.
+     * QA #121 regression under v1.4.4 fixed-font design: IC 1002 token 194 (CN 13+21+21 = 55 chars,
+     * JP 15+25+25 = 65 chars in three `。\n` sentences) took 5 lines under `SENTENCE` (`1+2+2`) at
+     * 100 %, which used to shrink font size to 21 px. With `JOIN_ALL` fallback in the 4-line×19-char
+     * window, all 65 JP chars (`ceil(65 / 19) = 4` lines) fit at full constant 28 px!
      */
     @Test
-    fun longMultiSentenceMessageNeverClips() {
-        val msg = listOf(listOf(13, 21, 21), listOf(15, 25, 25))
-        val at100 = fittedTwoColSize(1f, msg)!!
-        assertEquals(21f, at100, 1e-3f) // 0.75 step, cap 25, 3 lines — unchanged
-        for (p in TextScale.MIN..TextScale.MAX) {
-            val size = fittedTwoColSize(p / 100f, msg)
-            assertTrue(size != null, "$p% clipped")
-            if (p >= 100) assertTrue(size!! >= at100 - 1e-3f, "$p%: $size < $at100")
-        }
-        assertTrue(fittedTwoColSize(1.3f, msg)!! > at100 + 1f)
-        assertTrue(fittedTwoColSize(1.45f, msg)!! > at100 + 4f)
-    }
-
-    /** Anything that fits the window at 100 % also fits at every larger scale, at a size ≥ the 100 % one. */
-    @Test
-    fun whatFitsAtHundredFitsAtEveryLargerScale() {
-        for (a in 1..40 step 3) for (b in 0..40 step 4) for (c in 0..40 step 6) {
-            val col = listOf(a, b, c).filter { it > 0 }
-            val msg = listOf(col, col.map { it + it / 5 }) // JP runs ~20 % longer than CN
-            val at100 = fittedTwoColSize(1f, msg) ?: continue
-            for (p in 101..TextScale.MAX) {
-                val size = fittedTwoColSize(p / 100f, msg)
-                assertTrue(size != null && size >= at100 - 1e-3f, "$msg at $p%: $size < $at100")
-            }
-        }
+    fun threeSentenceDialogueFitsFourLinesAtConstant28PxWithJoinAll() {
+        val avail = MessageLayout.advTextAvail(MessageLayout.advTop(1f, twoCol = true))
+        val colW = MessageLayout.advColumnWidth(1f)
+        val cap = MessageLayout.lineCap(colW, TWO_COL_PX, TWO_COL_MAX_CHARS)
+        assertEquals(19f, cap)
+        val joinedJpLines = wrap(15 + 25 + 25, cap, (colW / TWO_COL_PX).toInt())
+        assertEquals(4, joinedJpLines.size)
+        assertTrue(joinedJpLines.size * LINE_PITCH * TWO_COL_PX <= avail)
     }
 
     @Test

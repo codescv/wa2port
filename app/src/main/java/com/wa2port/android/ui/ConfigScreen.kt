@@ -278,11 +278,12 @@ private fun FontPreviewCard(percent: Int, lang: DisplayLang) {
     val twoCol = lang == DisplayLang.BOTH
     val textStage = (if (twoCol) MessageLayout.TWO_COL_PX else MessageLayout.MAIN_PX) * t
     val capChars = if (twoCol) {
-        MessageLayout.lineCap(MessageLayout.advColumnWidth(t), textStage, MessageLayout.TWO_COL_MAX_CHARS, stepped = false)
+        MessageLayout.lineCap(MessageLayout.advColumnWidth(t), textStage, MessageLayout.TWO_COL_MAX_CHARS)
     } else {
-        MessageLayout.lineCap(MessageLayout.advSingleWidth(), textStage, MessageLayout.SINGLE_MAX_CHARS, stepped = false)
+        MessageLayout.lineCap(MessageLayout.advSingleWidth(), textStage, MessageLayout.SINGLE_MAX_CHARS)
     }.toInt()
-    val windowFrac = MessageLayout.ADV_BOTTOM - MessageLayout.advTop(t)
+    val lines = if (twoCol) MessageLayout.ADV_TWO_COL_LINES else MessageLayout.ADV_MIN_LINES
+    val windowFrac = MessageLayout.ADV_BOTTOM - MessageLayout.advTop(t, twoCol)
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
         Text("实时预览 Preview", color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
         BoxWithConstraints(Modifier.fillMaxWidth().widthIn(max = 720.dp)) {
@@ -324,7 +325,7 @@ private fun FontPreviewCard(percent: Int, lang: DisplayLang) {
             }
         }
         Text(
-            "$percent%${TextScale.presetLabel(percent)?.let { " · $it" } ?: ""} · 每行 ≤$capChars 字 chars/line · " +
+            "$percent%${TextScale.presetLabel(percent)?.let { " · $it" } ?: ""} · ${lines}行 × ≤${capChars}字/行 · " +
                 "窗口 Window ${Math.round(windowFrac * 100)}%",
             color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
         )

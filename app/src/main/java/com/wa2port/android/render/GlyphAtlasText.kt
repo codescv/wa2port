@@ -12,6 +12,7 @@ import com.wa2port.core.image.IndexedImage
 import com.wa2port.core.image.TgaDecoder
 import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.MessageLayout
+import com.wa2port.core.text.Reflow
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextItem
 import com.wa2port.core.text.TextLang
@@ -108,6 +109,14 @@ class GlyphAtlasText(
             val g = glyphs[visibleGlyphs - 1]
             return (g.x + g.advance) to g.top
         }
+
+        /** Bottom y (box-relative) of the line containing the last of the first [visibleGlyphs] glyphs. */
+        fun revealedHeight(visibleGlyphs: Int): Float {
+            if (visibleGlyphs <= 0 || glyphs.isEmpty()) return 0f
+            if (visibleGlyphs >= glyphs.size) return height
+            val g = glyphs[visibleGlyphs - 1]
+            return (g.top + g.size).coerceAtMost(height)
+        }
     }
 
     /** True when the atlas for [lang] is present (loads it if needed; blocking). */
@@ -130,7 +139,7 @@ class GlyphAtlasText(
     }
 
     /** Height [drawRich] would use for [rich] wrapped at [maxWidth] (no canvas needed). */
-    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false): Float =
+    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Reflow = Reflow.KEEP_ALL): Float =
         layout(rich, lang, maxWidth, sizePx, maxChars, reflow).height
 
     /**
@@ -149,7 +158,7 @@ class GlyphAtlasText(
         visibleGlyphs: Int = Int.MAX_VALUE,
         outlineColor: Int = this.outlineColor,
         maxChars: Float = 0f,
-        reflow: Boolean = false,
+        reflow: Reflow = Reflow.KEEP_ALL,
     ): Float {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
         drawLayout(canvas, l, lang, x, y, color, visibleGlyphs, outlineColor)
@@ -189,12 +198,11 @@ class GlyphAtlasText(
      * Lays out [rich] (see class docs). Positions are relative to the box origin.
      *
      * [maxChars] (> 0) additionally limits a line to that many full-width characters (half-width
-     * ASCII/kana count 0.5; one trailing closing punctuation may still hang). With [reflow], the
-     * script's hard `\n` breaks (placed for the PC's single wide column) are kept only after
-     * sentence-ending punctuation (。！？…」』） etc.) or before an opening quote; other `\n` join the
-     * lines so a narrower column wraps naturally without orphan stubs.
+     * ASCII/kana count 0.5; one trailing closing punctuation may still hang). [reflow] controls
+     * whether script `\n` breaks are kept ([Reflow.KEEP_ALL]), kept only at sentence boundaries
+     * ([Reflow.SENTENCE]), or soft-joined into a single balanced paragraph ([Reflow.JOIN_ALL]).
      */
-    fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false): TextLayout {
+    fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Reflow = Reflow.KEEP_ALL): TextLayout {
         val full = sizePx * (1f + letterSpacing)
         val pitch = sizePx * lineSpacing
         val band = (pitch - sizePx).coerceAtLeast(0f)
@@ -243,9 +251,14 @@ class GlyphAtlasText(
             var prevCode = -1
             for ((ui, u) in units.withIndex()) {
                 if (u.hardBreak) {
-                    keptBreak[ui] = if (!reflow || u.pageBreak) true else {
-                        val next = units.subList(ui + 1, units.size).firstOrNull { it.codes.isNotEmpty() || it.hardBreak }
-                        prevCode in SENTENCE_END || (next != null && next.codes.isNotEmpty() && next.codes[0] in OPENERS)
+                    keptBreak[ui] = when {
+                        u.pageBreak -> true
+                        reflow == Reflow.KEEP_ALL -> true
+                        reflow == Reflow.JOIN_ALL -> false
+                        else -> {
+                            val next = units.subList(ui + 1, units.size).firstOrNull { it.codes.isNotEmpty() || it.hardBreak }
+                            prevCode in SENTENCE_END || (next != null && next.codes.isNotEmpty() && next.codes[0] in OPENERS)
+                        }
                     }
                 } else if (u.codes.isNotEmpty()) prevCode = u.codes.last()
             }

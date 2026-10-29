@@ -24,6 +24,7 @@ import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.VoiceRef
 import com.wa2port.core.text.BilingualTextDecoder
+import com.wa2port.core.text.Reflow
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextItem
 import com.wa2port.core.text.TextLang
@@ -52,8 +53,8 @@ class FallbackTextPainter(private val decoder: BilingualTextDecoder) : TextPaint
 
     override fun glyphCount(rich: RichText): Int = rich.baseCodes().size
 
-    /** Plain string of the first [limit] glyphs (ruby dropped, `\n`/`\k` as line breaks). */
-    private fun plain(rich: RichText, lang: TextLang, limit: Int): String {
+    /** Plain string of the first [limit] glyphs (ruby dropped, `\n`/`\k` handled per [reflow]). */
+    private fun plain(rich: RichText, lang: TextLang, limit: Int, reflow: Reflow = Reflow.KEEP_ALL): String {
         val sb = StringBuilder()
         var n = 0
         fun add(code: Int): Boolean {
@@ -67,7 +68,8 @@ class FallbackTextPainter(private val decoder: BilingualTextDecoder) : TextPaint
             when (item) {
                 is TextItem.Run -> for (c in item.codes) if (!add(c)) break@loop
                 is TextItem.Ruby -> for (c in item.base) if (!add(c)) break@loop
-                TextItem.NewLine, TextItem.PageBreak -> if (n < limit) sb.append('\n')
+                TextItem.NewLine -> if (n < limit && reflow != Reflow.JOIN_ALL) sb.append('\n')
+                TextItem.PageBreak -> if (n < limit) sb.append('\n')
                 is TextItem.Wait -> {}
             }
         }
@@ -89,22 +91,32 @@ class FallbackTextPainter(private val decoder: BilingualTextDecoder) : TextPaint
     private fun width(maxWidth: Float, sizePx: Float, maxChars: Float): Int =
         (if (maxChars > 0f) minOf(maxWidth, maxChars * sizePx * 1.02f) else maxWidth).toInt()
 
-    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Boolean): Float {
-        val text = plain(rich, lang, Int.MAX_VALUE)
+    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Reflow): Float {
+        val text = plain(rich, lang, Int.MAX_VALUE, reflow)
+        if (text.isEmpty()) return 0f
+        return layout(text, lang, width(maxWidth, sizePx, maxChars), sizePx, Color.WHITE).height.toFloat()
+    }
+
+    override fun measureRevealedHeight(
+        rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float,
+        visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
+    ): Float {
+        if (visibleGlyphs <= 0) return 0f
+        val text = plain(rich, lang, visibleGlyphs, reflow)
         if (text.isEmpty()) return 0f
         return layout(text, lang, width(maxWidth, sizePx, maxChars), sizePx, Color.WHITE).height.toFloat()
     }
 
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
-        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Boolean,
+        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
     ): Float {
         // Lay out the full text (stable line breaks while revealing), then clip to the visible prefix.
-        val full = plain(rich, lang, Int.MAX_VALUE)
+        val full = plain(rich, lang, Int.MAX_VALUE, reflow)
         if (full.isEmpty()) return 0f
         val w = width(maxWidth, sizePx, maxChars)
         val fullLayout = layout(full, lang, w, sizePx, color)
-        val text = if (visibleGlyphs >= Int.MAX_VALUE / 2) full else plain(rich, lang, visibleGlyphs)
+        val text = if (visibleGlyphs >= Int.MAX_VALUE / 2) full else plain(rich, lang, visibleGlyphs, reflow)
         if (text.isNotEmpty()) {
             val l = if (text == full) fullLayout else layout(text, lang, w, sizePx, color)
             canvas.save()

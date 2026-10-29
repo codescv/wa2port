@@ -238,7 +238,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val handle = session.backend.rememberStageHandle()
         SideEffect { session.stageHandle = handle }
 
-        // Geometry of the JP block drawn by AdvWindow, for tap-to-analyze.
+        // Geometry of the JP block drawn by AdvWindow, for tap-to-analyze and overflow window scroll.
         val advHit = remember(session) { AdvHitBox() }
         val gestureHandler = remember(session) {
             StageGestureHandler(
@@ -248,6 +248,15 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 onLongPressEnd = { session.holdSkip(false) },
                 onSwipeUp = { session.overlay = Overlay.BACKLOG },
                 onTwoFingerTap = { session.windowHidden = !session.windowHidden },
+                canScrollWindow = { p ->
+                    val s = vm.settings
+                    val isNovel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
+                    !isNovel && !session.windowHidden && session.line != null &&
+                        session.overlay == Overlay.NONE && vm.ai.breakdown == null &&
+                        advHit.maxScrollPx > 0.5f && advHit.windowRect.contains(p) &&
+                        advHit.voiceRect?.contains(p) != true
+                },
+                onScrollWindow = { dy -> advHit.scrollBy(dy) },
             )
         }
 
@@ -286,10 +295,11 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 ),
             )
             if (session.choices.isNotEmpty() && !session.windowHidden) {
+                val twoColAdv = settings.lang == DisplayLang.BOTH && line?.cn?.isEmpty == false
                 ChoiceCards(
                     painter, session.choices, settings.lang, stageHpx, textScale, onChoose = { session.choose(it) },
-                    // Above the ADV window, which grows upwards with large text.
-                    modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale) - 0.015f),
+                    // Above the ADV window, which grows upwards with large text and 4-line bilingual mode.
+                    modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale, twoColAdv) - 0.015f),
                 )
             }
             // Mode indicators (+ ✨ 点词 while tap-to-analyze changes the meaning of taps on JP text;

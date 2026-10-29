@@ -99,7 +99,11 @@ fun ChoiceCards(painter: TextPainter, choices: List<ChoiceOption>, lang: Display
         val density = LocalDensity.current
         val cardWidth = maxWidth * 0.78f
         val innerPx = with(density) { (cardWidth - 32.dp).toPx() }
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             choices.forEachIndexed { i, ch ->
                 val shape = RoundedCornerShape(12.dp)
                 Box(

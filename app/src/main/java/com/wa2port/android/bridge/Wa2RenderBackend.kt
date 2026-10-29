@@ -18,13 +18,14 @@ import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.VoiceRef
 import com.wa2port.core.engine.Wa2Engine
+import com.wa2port.core.text.Reflow
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
 
 /** [TextPainter] over @render's fon.pak/fnt.pak [GlyphAtlasText], with a small layout cache. */
 class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
     /** Identity key: RichText instances are reused across frames, so identity avoids deep hashing. */
-    private class Key(val rich: RichText, val lang: TextLang, val width: Float, val size: Float, val maxChars: Float, val reflow: Boolean) {
+    private class Key(val rich: RichText, val lang: TextLang, val width: Float, val size: Float, val maxChars: Float, val reflow: Reflow) {
         override fun equals(other: Any?) =
             other is Key && other.rich === rich && other.lang == lang && other.width == width && other.size == size &&
                 other.maxChars == maxChars && other.reflow == reflow
@@ -38,17 +39,22 @@ class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, GlyphAtlasText.TextLayout>?) = size > 160
     }
 
-    private fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false) =
+    private fun layout(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Reflow = Reflow.KEEP_ALL) =
         cache.getOrPut(Key(rich, lang, maxWidth, sizePx, maxChars, reflow)) { glyphs.layout(rich, lang, maxWidth, sizePx, maxChars, reflow) }
 
     override fun glyphCount(rich: RichText): Int = glyphs.glyphCount(rich)
 
-    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Boolean): Float =
+    override fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Reflow): Float =
         layout(rich, lang, maxWidth, sizePx, maxChars, reflow).height
+
+    override fun measureRevealedHeight(
+        rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float,
+        visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
+    ): Float = layout(rich, lang, maxWidth, sizePx, maxChars, reflow).revealedHeight(visibleGlyphs)
 
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
-        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Boolean,
+        maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
     ): Float {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
         glyphs.drawLayout(canvas, l, lang, x, y, color, visibleGlyphs)
@@ -56,7 +62,7 @@ class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
     }
 
     override fun glyphIndexAt(
-        rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Boolean,
+        rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Reflow,
         localX: Float, localY: Float, visibleGlyphs: Int,
     ): Int {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)

@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.VoiceRef
+import com.wa2port.core.text.Reflow
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
 
@@ -23,9 +24,24 @@ interface TextPainter {
 
     /**
      * Height in px of [rich] wrapped to [maxWidth] at [sizePx]. [maxChars] > 0 also caps full-width
-     * characters per line; [reflow] keeps script `\n` only at sentence ends (see GlyphAtlasText.layout).
+     * characters per line; [reflow] controls how script `\n` breaks are handled (see GlyphAtlasText.layout).
      */
-    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Boolean = false): Float
+    fun measureHeight(rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float = 0f, reflow: Reflow = Reflow.KEEP_ALL): Float
+
+    /**
+     * Height in px from the text box top to the bottom of the line containing the last revealed
+     * glyph among the first [visibleGlyphs] glyphs (0 when [visibleGlyphs] <= 0; full
+     * [measureHeight] when all glyphs are visible).
+     */
+    fun measureRevealedHeight(
+        rich: RichText,
+        lang: TextLang,
+        maxWidth: Float,
+        sizePx: Float,
+        visibleGlyphs: Int,
+        maxChars: Float = 0f,
+        reflow: Reflow = Reflow.KEEP_ALL,
+    ): Float = if (visibleGlyphs <= 0) 0f else measureHeight(rich, lang, maxWidth, sizePx, maxChars, reflow)
 
     /** Draws the first [visibleGlyphs] glyphs with the top-left at ([x], [y]); returns the drawn height. */
     fun draw(
@@ -39,7 +55,7 @@ interface TextPainter {
         color: Int,
         visibleGlyphs: Int = Int.MAX_VALUE,
         maxChars: Float = 0f,
-        reflow: Boolean = false,
+        reflow: Reflow = Reflow.KEEP_ALL,
     ): Float
 
     /**
@@ -53,7 +69,7 @@ interface TextPainter {
         maxWidth: Float,
         sizePx: Float,
         maxChars: Float,
-        reflow: Boolean,
+        reflow: Reflow,
         localX: Float,
         localY: Float,
         visibleGlyphs: Int = Int.MAX_VALUE,

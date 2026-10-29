@@ -17,46 +17,11 @@ object MessageLayout {
     const val SECONDARY_PX = 22f
     const val NAME_PX = 25f
 
-    /** 双语 two-column layout: CN left, JP right, ≤18 full-width chars per line at 100 %. */
+    /** 双语 two-column layout: CN left, JP right, ≤19 full-width chars per line at 100 %. */
     const val TWO_COL_PX = 28f
-    const val TWO_COL_MAX_CHARS = 18f
+    const val TWO_COL_MAX_CHARS = 19f
     const val SINGLE_MAX_CHARS = 34f
     const val NOVEL_TWO_COL_PX = 26f
-
-    /** Size steps tried (largest first) when an ADV message does not fit the window; last resort = clip. */
-    val FIT_STEPS: FloatArray = floatArrayOf(1f, 0.93f, 0.86f, 0.8f, 0.75f, 0.71f)
-
-    /** Ratio between the extra fit steps appended for text larger than 100 % ([fitSteps]). */
-    const val FIT_EXTRA_RATIO = 0.95f
-
-    /**
-     * Fit steps (multipliers of the scaled size, largest first) for [textScale]. At ≤ 100 % this is
-     * exactly [FIT_STEPS]. Above 100 % it is the sorted union of
-     * * [FIT_STEPS] (relative to the scaled size, as before),
-     * * every 100 % size below the nominal one (`f / textScale`), and
-     * * finer steps (× [FIT_EXTRA_RATIO]) from 0.71 down to the 100 % floor,
-     * ending exactly on the 100 % floor (`textScale × f == FIT_STEPS.last()`). So a long message that
-     * fits at 100 % (e.g. three `。\n` sentences that wrap to 5 lines at 145 %) still fits instead
-     * of falling off the 0.71 step and being clipped, and since fitting is monotone in size (the
-     * window is never smaller and [advColumnGapFor] gives the same columns at equal glyph size) the
-     * size chosen is never smaller than the one chosen at 100 %.
-     */
-    fun fitSteps(textScale: Float): FloatArray {
-        if (textScale <= 1f) return FIT_STEPS
-        val floor = FIT_STEPS.last()
-        val last = floor / textScale
-        val all = FIT_STEPS.toMutableList()
-        for (f in FIT_STEPS) if (f / textScale < 1f) all += f / textScale
-        var f = floor * FIT_EXTRA_RATIO
-        while (f > last) {
-            all += f
-            f *= FIT_EXTRA_RATIO
-        }
-        all.sortDescending()
-        val out = ArrayList<Float>(all.size)
-        for (v in all) if (v >= last - 1e-6f && (out.isEmpty() || out.last() - v > 1e-4f)) out += v
-        return out.toFloatArray()
-    }
 
     /** Line pitch as a multiple of the glyph size (`GlyphAtlasText.lineSpacing`). */
     const val LINE_PITCH = 1.5f
@@ -70,14 +35,17 @@ object MessageLayout {
     const val ADV_COL_GAP = 30f
 
     /** Highest the ADV window may grow for large text (fraction of the stage height). */
-    const val ADV_TOP_MIN = 0.6f
+    const val ADV_TOP_MIN = 0.56f
 
-    /** Lines of single-language main text the ADV window always holds without shrinking. */
+    /** Lines of single-language main text the ADV window holds. */
     const val ADV_MIN_LINES = 3
 
+    /** Lines of two-column bilingual (`BOTH`) text the ADV window holds. */
+    const val ADV_TWO_COL_LINES = 4
+
     /**
-     * Extra stage px of text area beyond the exact 3-line need, so float rounding at any device
-     * height cannot tip `measure <= avail` and make the fit loop step down.
+     * Extra stage px of text area beyond the exact line-capacity need, so float rounding at any
+     * device height cannot tip `measure <= avail`.
      */
     const val ADV_FIT_MARGIN = 1f
 
@@ -90,18 +58,14 @@ object MessageLayout {
     const val NOVEL_MIN_CHARS = 8f
 
     /**
-     * Per-line full-width character cap for a column [availPx] wide at glyph size [sizePx].
-     *
-     * At the nominal size ([stepped] = false) the cap is the design cap [maxChars] (18 / 34), but
-     * never more than the column physically holds: a cap above `floor(availPx / sizePx)` makes the
-     * layout balance lines for a width that does not fit, so each long line wraps again and leaves
-     * 1–2 character orphans (the 115 %+ bug). When the fit loop has stepped the size down
-     * ([stepped] = true) the cap widens to whatever the column holds at that smaller size.
+     * Per-line full-width character cap for a column [availPx] wide at constant glyph size [sizePx]:
+     * the design cap [maxChars] (19 two-column / 34 single-language), capped at what the column
+     * physically holds (`floor(availPx / sizePx)`) so large text never double-wraps into 1–2 char
+     * orphans.
      */
-    fun lineCap(availPx: Float, sizePx: Float, maxChars: Float, stepped: Boolean): Float {
+    fun lineCap(availPx: Float, sizePx: Float, maxChars: Float): Float {
         if (sizePx <= 0f) return maxChars
-        val fit = floor(availPx / sizePx).coerceAtLeast(1f)
-        return if (stepped) fit else minOf(maxChars, fit)
+        return minOf(maxChars, floor(availPx / sizePx).coerceAtLeast(1f))
     }
 
     /**
@@ -127,18 +91,20 @@ object MessageLayout {
     fun advTextAvail(topFrac: Float): Float {
         val top = topFrac * STAGE_H
         val bottom = ADV_BOTTOM * STAGE_H
-        val textTop = top + ADV_PAD * 1.25f // worst case: a speaker name box is shown
+        val textTop = top + ADV_PAD * 1.25f
         return bottom - ADV_PAD * 0.6f - textTop
     }
 
     /**
-     * ADV window top (fraction of the stage height) for [textScale] (1.0 = 100 %). The default
-     * window holds [ADV_MIN_LINES] lines of 30 px text; above ~107 % it grows upwards just enough (plus [ADV_FIT_MARGIN])
-     * that those lines still fit at the requested size instead of the fit loop shrinking them back.
-     * Never lower than [ADV_TOP] (small text keeps the classic window) nor above [ADV_TOP_MIN].
+     * ADV window top (fraction of the stage height) for [textScale] (1.0 = 100 %). Holds
+     * [ADV_MIN_LINES] (3) lines of [MAIN_PX] in single-language mode and [ADV_TWO_COL_LINES] (4)
+     * lines of [TWO_COL_PX] in two-column bilingual mode ([twoCol] = true), plus [ADV_FIT_MARGIN].
+     * Never lower than [ADV_TOP] nor above [ADV_TOP_MIN].
      */
-    fun advTop(textScale: Float): Float {
-        val need = ADV_MIN_LINES * LINE_PITCH * MAIN_PX * textScale + ADV_FIT_MARGIN
+    fun advTop(textScale: Float, twoCol: Boolean = false): Float {
+        val lines = if (twoCol) ADV_TWO_COL_LINES else ADV_MIN_LINES
+        val glyphPx = if (twoCol) TWO_COL_PX else MAIN_PX
+        val need = lines * LINE_PITCH * glyphPx * textScale + ADV_FIT_MARGIN
         // Solve advTextAvail(top) == need for top.
         val top = (ADV_BOTTOM * STAGE_H - ADV_PAD * 0.6f - ADV_PAD * 1.25f - need) / STAGE_H
         return top.coerceIn(ADV_TOP_MIN, ADV_TOP)
@@ -147,18 +113,17 @@ object MessageLayout {
     /**
      * Gap between the 双语 ADV columns (stage px) for glyphs of [glyphPx] stage px: grows above the
      * 28 px default so one hanging closer (up to one em past the column) cannot cross the divider
-     * into the JP column. Depends on the drawn size, so a stepped-down message gets the same
-     * columns as at 100 % for the same glyph size.
+     * into the JP column.
      */
     fun advColumnGapFor(glyphPx: Float): Float = ADV_COL_GAP * maxOf(1f, glyphPx / TWO_COL_PX)
 
     /** Column width (stage px) of the 双语 ADV layout for glyphs of [glyphPx] stage px. */
     fun advColumnWidthFor(glyphPx: Float): Float = (advSingleWidth() - advColumnGapFor(glyphPx)) / 2f
 
-    /** [advColumnGapFor] at the nominal 双语 size for [textScale]. */
+    /** [advColumnGapFor] at the constant 双语 glyph size for [textScale]. */
     fun advColumnGap(textScale: Float): Float = advColumnGapFor(TWO_COL_PX * textScale)
 
-    /** [advColumnWidthFor] at the nominal 双语 size for [textScale]. */
+    /** [advColumnWidthFor] at the constant 双语 glyph size for [textScale]. */
     fun advColumnWidth(textScale: Float): Float = advColumnWidthFor(TWO_COL_PX * textScale)
 
     /** Single-column text width (stage px) of the ADV window. */
@@ -174,6 +139,17 @@ object MessageLayout {
         return floor(novelColumnWidth(width, scale) / size).coerceAtLeast(NOVEL_MIN_CHARS)
     }
 }
+
+/**
+ * Policy for handling script `\n` ([TextItem.NewLine]) breaks when wrapping to a column.
+ *
+ * * [KEEP_ALL]: preserve every script `\n` break.
+ * * [SENTENCE]: preserve script `\n` only after sentence-ending punctuation (`。！？…」』）` etc.) or
+ *   before opening quotes/brackets (`「『（` etc.); join mid-sentence breaks.
+ * * [JOIN_ALL]: soft-join all script `\n` breaks into a single balanced paragraph (only `\k`
+ *   [TextItem.PageBreak] when `pageBreakIsNewLine` breaks).
+ */
+enum class Reflow { KEEP_ALL, SENTENCE, JOIN_ALL }
 
 /**
  * Font size setting (`Settings.textScale`, percent of the default size): range, one-tap presets,
