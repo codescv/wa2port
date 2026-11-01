@@ -1,5 +1,10 @@
 package com.wa2port.android.ui
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,25 +22,39 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.wa2port.android.data.Settings
+import com.wa2port.android.game.GameSession
 import com.wa2port.android.update.UpdateController
 import com.wa2port.android.update.UpdateState
+import com.wa2port.core.update.AgentFeedbackHelper
+import com.wa2port.core.update.FeedbackGameContext
 import com.wa2port.core.update.ReleaseInfo
 import java.util.Locale
 
@@ -47,7 +66,11 @@ private val UPDATE_OK = Color(0xFF8FD3A8)
  * and flash the hidden system bars). Tapping the scrim dismisses it, except while downloading.
  */
 @Composable
-fun UpdateDialog(update: UpdateController, onDismiss: () -> Unit) {
+fun UpdateDialog(
+    update: UpdateController,
+    onDismiss: () -> Unit,
+    onOpenFeedback: (() -> Unit)? = null,
+) {
     val noRipple = remember { MutableInteractionSource() }
     Box(
         Modifier
@@ -78,6 +101,11 @@ fun UpdateDialog(update: UpdateController, onDismiss: () -> Unit) {
             Text("当前版本 Current: v${update.currentVersion}", color = Wa2Colors.TextDim, fontSize = 12.sp)
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 UpdateStatusBlock(update, compact = false, onDismiss = onDismiss)
+                if (onOpenFeedback != null) {
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        UpdateButton("发送反馈给 Agent", onClick = onOpenFeedback)
+                    }
+                }
             }
         }
     }
@@ -220,6 +248,197 @@ fun UpdateSettingsSection(update: UpdateController) {
     }
     UpdateStatusBlock(update, compact = true)
 }
+
+/**
+ * In-layout Agent feedback section (no window `AlertDialog` so immersive system bars never flash):
+ * lets the user configure their **Agent 反馈邮箱** locally (default `""`, placeholder
+ * `agent@example.com`), write feedback text, optionally attach the active WA2 scene/line context,
+ * and click **发送反馈给 Agent** (`Intent.ACTION_SENDTO` `mailto:` with subject
+ * `wa2port: [v1.4.5] <summary>`).
+ */
+@Composable
+fun AgentFeedbackSection(
+    settings: Settings,
+    onChange: ((Settings) -> Settings) -> Unit,
+    currentVersion: String = AgentFeedbackHelper.DEFAULT_APP_VERSION,
+    session: GameSession? = null,
+) {
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val resolvedVersion = AgentFeedbackHelper.normalizeVersion(currentVersion)
+    val email = settings.agentFeedbackEmail
+    val emailError = AgentFeedbackHelper.validateEmail(email)
+
+    var feedbackText by rememberSaveable { mutableStateOf("") }
+    var includeGameContext by rememberSaveable { mutableStateOf(true) }
+    var statusMessage by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+
+    val gameContext = remember(
+        session,
+        session?.engine?.scene,
+        session?.line,
+        session?.inReplayMode,
+        settings.windowMode,
+        settings.lang,
+        settings.textScale,
+    ) {
+        session?.let { s ->
+            FeedbackGameContext.fromDialogue(
+                scene = s.engine.scene,
+                line = s.line,
+                decoder = s.engine.decoder,
+                sceneTitle = sceneLabel(s.engine.scene),
+                windowMode = settings.windowMode.label,
+                displayLang = settings.lang.label,
+                textScalePercent = settings.textScale,
+                inReplayMode = s.inReplayMode,
+            )
+        }
+    }
+
+    SectionTitle("Agent 反馈 Agent Feedback")
+    Text(
+        "在本机配置 Agent 反馈邮箱后，可一键通过邮件发送问题报告或新功能需求（主题自动使用 wa2port: [v$resolvedVersion] 前缀）。",
+        color = Wa2Colors.TextDim,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(bottom = 4.dp),
+    )
+
+    OutlinedTextField(
+        value = email,
+        onValueChange = { next ->
+            statusMessage = null
+            onChange { it.copy(agentFeedbackEmail = AgentFeedbackHelper.normalizeEmail(next)) }
+        },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        singleLine = true,
+        label = { Text("Agent 反馈邮箱 Agent Email", fontSize = 12.sp) },
+        placeholder = { Text(AgentFeedbackHelper.PLACEHOLDER_EMAIL, fontSize = 13.sp, color = Wa2Colors.TextDim) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+        colors = feedbackFieldColors(),
+    )
+    if (email.isNotEmpty()) {
+        Text(
+            if (emailError == null) "✓ 已保存在本机：$email" else "✗ $emailError",
+            color = if (emailError == null) UPDATE_OK else UPDATE_ERR,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+        )
+    } else {
+        Text(
+            "仅保存在设备本地（默认留空，示例格式：${AgentFeedbackHelper.PLACEHOLDER_EMAIL}）",
+            color = Wa2Colors.TextDim,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+        )
+    }
+
+    if (gameContext != null && gameContext.scene.isNotBlank()) {
+        OptionRow("场景上下文 Scene context") {
+            Segmented(
+                options = listOf(true to "附带 On", false to "不附带 Off"),
+                selected = includeGameContext,
+                onSelect = { includeGameContext = it },
+            )
+            Text(
+                "  ${gameContext.summaryBadge()}",
+                color = Wa2Colors.TextDim,
+                fontSize = 12.sp,
+            )
+        }
+    }
+
+    OutlinedTextField(
+        value = feedbackText,
+        onValueChange = {
+            feedbackText = it
+            statusMessage = null
+        },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(vertical = 2.dp),
+        label = { Text("反馈内容 Feedback / Bug / 需求描述", fontSize = 12.sp) },
+        placeholder = {
+            Text(
+                "输入遇到的问题、排版异常或希望 Agent 自动开发的新功能（打开邮件客户端后也可添加截图附件）…",
+                fontSize = 12.sp,
+                color = Wa2Colors.TextDim,
+            )
+        },
+        maxLines = 6,
+        colors = feedbackFieldColors(),
+    )
+
+    val previewSubject = AgentFeedbackHelper.buildSubject(feedbackText = feedbackText, version = resolvedVersion)
+    Text(
+        "邮件主题 Subject: $previewSubject",
+        color = Wa2Colors.TextDim,
+        fontSize = 11.sp,
+        modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 4.dp),
+    )
+
+    statusMessage?.let { (msg, isError) ->
+        Text(
+            (if (isError) "✗ " else "✓ ") + msg,
+            color = if (isError) UPDATE_ERR else UPDATE_OK,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(vertical = 2.dp),
+        )
+    }
+
+    val canSend = emailError == null && feedbackText.isNotBlank()
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        UpdateButton("发送反馈给 Agent", primary = canSend) {
+            focusManager.clearFocus()
+            if (emailError != null) {
+                statusMessage = emailError to true
+                return@UpdateButton
+            }
+            if (feedbackText.isBlank()) {
+                statusMessage = "请先输入反馈内容 Please enter feedback text" to true
+                return@UpdateButton
+            }
+            val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, SDK ${Build.VERSION.SDK_INT})"
+            val mail = AgentFeedbackHelper.prepareMail(
+                email = email,
+                feedbackText = feedbackText,
+                version = resolvedVersion,
+                deviceInfo = deviceInfo,
+                gameContext = if (includeGameContext) gameContext else null,
+            )
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse(mail.mailtoUri)).apply {
+                if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(intent)
+                statusMessage = "已唤起邮件客户端发送至 ${mail.toEmail} Opened email app" to false
+            } catch (_: ActivityNotFoundException) {
+                statusMessage = "未找到可用的邮件客户端 No email app found" to true
+            } catch (e: Exception) {
+                statusMessage = "无法打开邮件客户端 Cannot open email app: ${e.message ?: e.javaClass.simpleName}" to true
+            }
+        }
+        if (feedbackText.isNotEmpty()) {
+            UpdateButton("清空 Clear") {
+                feedbackText = ""
+                statusMessage = null
+            }
+        }
+    }
+}
+
+@Composable
+private fun feedbackFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = Wa2Colors.Text,
+    unfocusedTextColor = Wa2Colors.Text,
+    focusedBorderColor = Wa2Colors.Accent,
+    unfocusedBorderColor = Wa2Colors.AccentDim,
+    focusedLabelColor = Wa2Colors.Accent,
+    unfocusedLabelColor = Wa2Colors.TextDim,
+    cursorColor = Wa2Colors.Accent,
+)
 
 @Composable
 private fun ReleaseMeta(release: ReleaseInfo) {

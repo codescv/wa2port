@@ -3,6 +3,7 @@ package com.wa2port.android.data
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.AiProviderSettings
 import com.wa2port.core.text.TextScale
+import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -76,6 +77,8 @@ data class Settings(
     val aiPrefetchEnabled: Boolean = false,
     /** AI: maximum background prefetch requests per day. */
     val aiPrefetchDailyLimit: Int = 300,
+    /** Locally configured Agent feedback email address (stored on device only; default empty). */
+    val agentFeedbackEmail: String = "",
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 
@@ -99,7 +102,10 @@ class SettingsStore(private val file: File) {
 
     fun load(): Settings = runCatching {
         val loaded = json.decodeFromString<Settings>(file.readText())
-        loaded.copy(ai = loaded.ai.withNormalizedModel())
+        loaded.copy(
+            ai = loaded.ai.withNormalizedModel(),
+            agentFeedbackEmail = AgentFeedbackHelper.normalizeEmail(loaded.agentFeedbackEmail),
+        )
     }.getOrDefault(Settings())
 
     fun save(settings: Settings) {

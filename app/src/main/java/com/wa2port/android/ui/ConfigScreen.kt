@@ -51,6 +51,7 @@ import com.wa2port.android.game.GameSession
 import com.wa2port.android.update.UpdateController
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
+import com.wa2port.core.update.AgentFeedbackHelper
 
 /**
  * Full-screen config (title) — same panel as the in-game overlay. Without a game session the AI
@@ -63,9 +64,10 @@ fun ConfigScreen(
     onClose: () -> Unit,
     ai: AiLearningController? = null,
     update: UpdateController? = null,
+    initialCategory: ConfigCategory = ConfigCategory.ALL,
 ) {
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-        ConfigPanel(settings, onChange, onClose, ai, update = update)
+        ConfigPanel(settings, onChange, onClose, ai, update = update, initialCategory = initialCategory)
         ai?.breakdown?.let { st ->
             AiBreakdownOverlay(
                 state = st,
@@ -86,7 +88,7 @@ enum class ConfigCategory(val label: String) {
     TEXT_DISPLAY("文字与显示 Text & Display"),
     AUDIO("音频 Audio"),
     AI("✨ AI 学习"),
-    UPDATE("版本更新 Update"),
+    UPDATE("版本与反馈 Update"),
 }
 
 /** Preset values for `settings.windowOpacity`: 清晰 85%, 原作 70%, 通透 50%. */
@@ -109,17 +111,19 @@ fun ConfigPanel(
     ai: AiLearningController? = null,
     session: GameSession? = null,
     update: UpdateController? = null,
+    appVersion: String = update?.currentVersion ?: AgentFeedbackHelper.DEFAULT_APP_VERSION,
+    initialCategory: ConfigCategory = ConfigCategory.ALL,
 ) {
-    val tabs = remember(ai != null, update != null) {
+    val tabs = remember(ai != null) {
         buildList {
             add(ConfigCategory.ALL)
             add(ConfigCategory.TEXT_DISPLAY)
             add(ConfigCategory.AUDIO)
             if (ai != null) add(ConfigCategory.AI)
-            if (update != null) add(ConfigCategory.UPDATE)
+            add(ConfigCategory.UPDATE)
         }
     }
-    var category by rememberSaveable { mutableStateOf(ConfigCategory.ALL) }
+    var category by rememberSaveable(initialCategory) { mutableStateOf(initialCategory) }
     val activeCategory = if (category in tabs) category else ConfigCategory.ALL
     val scrollState = rememberScrollState()
     LaunchedEffect(activeCategory) { scrollState.scrollTo(0) }
@@ -212,8 +216,16 @@ fun ConfigPanel(
             if (ai != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AI)) {
                 AiSettingsSection(settings, onChange, ai, session)
             }
-            if (update != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.UPDATE)) {
-                UpdateSettingsSection(update)
+            if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.UPDATE) {
+                if (update != null) {
+                    UpdateSettingsSection(update)
+                }
+                AgentFeedbackSection(
+                    settings = settings,
+                    onChange = onChange,
+                    currentVersion = appVersion,
+                    session = session,
+                )
             }
         }
     }

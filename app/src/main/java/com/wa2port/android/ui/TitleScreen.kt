@@ -103,13 +103,20 @@ fun TitleScreen(vm: AppViewModel, onNotebook: (() -> Unit)? = null) {
                     { m -> TitleButton("音乐鉴赏 BGM", "音楽モード", enabled = ready, modifier = m) { vm.navigate(Screen.BgmGallery) } },
                 )
                 TitleRow(
-                    { m -> TitleButton("设置 Config", "コンフィグ", modifier = m) { vm.navigate(Screen.Config) } },
+                    { m -> TitleButton("设置 Config", "コンフィグ", modifier = m) { vm.openConfig(ConfigCategory.ALL) } },
                     { m -> TitleButton("资源文件夹 Assets", "素材フォルダ設定", modifier = m) { vm.navigate(Screen.Assets) } },
                 )
             }
         }
         if (vm.update.dialogOpen) {
-            UpdateDialog(vm.update) { vm.update.dialogOpen = false }
+            UpdateDialog(
+                vm.update,
+                onDismiss = { vm.update.dialogOpen = false },
+                onOpenFeedback = {
+                    vm.update.dialogOpen = false
+                    vm.openConfig(ConfigCategory.UPDATE)
+                },
+            )
             BackHandler { vm.update.dialogOpen = false }
         }
     }

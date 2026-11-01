@@ -28,6 +28,7 @@ import com.wa2port.android.game.GameScreen
 import com.wa2port.android.ui.AssetSetupScreen
 import com.wa2port.android.ui.BgmGalleryScreen
 import com.wa2port.android.ui.CgGalleryScreen
+import com.wa2port.android.ui.ConfigCategory
 import com.wa2port.android.ui.ConfigScreen
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadScreen
@@ -86,7 +87,14 @@ fun Wa2App(vm: AppViewModel) {
                 val s = vm.session
                 if (s != null) GameScreen(vm, s) else LaunchedEffect(Unit) { vm.exitToTitle() }
             }
-            Screen.Config -> ConfigScreen(vm.settings, onChange = vm::updateSettings, onClose = { vm.back() }, ai = vm.ai, update = vm.update)
+            Screen.Config -> ConfigScreen(
+                vm.settings,
+                onChange = vm::updateSettings,
+                onClose = { vm.back() },
+                ai = vm.ai,
+                update = vm.update,
+                initialCategory = vm.initialConfigCategory,
+            )
             Screen.Assets -> AssetSetupScreen(vm)
             Screen.Load -> SaveLoadScreen(
                 mode = SaveLoadMode.LOAD,
@@ -110,7 +118,7 @@ fun Wa2App(vm: AppViewModel) {
                     onOpenSettings = {
                         vm.ai.close(null)
                         vm.ai.closeNotebook(null)
-                        vm.navigate(Screen.Config)
+                        vm.openConfig(ConfigCategory.AI)
                     },
                     onClose = { vm.ai.close(null) },
                 )

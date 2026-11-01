@@ -1,6 +1,7 @@
 package com.wa2port.android
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.getValue
@@ -21,10 +22,12 @@ import com.wa2port.android.data.Settings
 import com.wa2port.android.data.SlotMeta
 import com.wa2port.android.data.SettingsStore
 import com.wa2port.android.game.GameSession
+import com.wa2port.android.ui.ConfigCategory
 import com.wa2port.android.update.UpdateController
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.SystemData
 import com.wa2port.core.engine.Wa2Engine
+import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -47,11 +50,15 @@ sealed interface Screen {
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
     private val settingsStore = SettingsStore(File(app.filesDir, "settings.json"))
+    private val feedbackPrefs = app.getSharedPreferences(AgentFeedbackHelper.PREFS_NAME, Context.MODE_PRIVATE)
     val saves = SaveStore(File(app.filesDir, "saves"))
     private val systemFile = File(app.filesDir, "system.json")
 
-    var settings by mutableStateOf(settingsStore.load())
+    var settings by mutableStateOf(loadInitialSettings())
         private set
+
+    /** Initial tab selected when opening [Screen.Config] from the title screen or update overlay. */
+    var initialConfigCategory by mutableStateOf(ConfigCategory.ALL)
 
     val backStack = mutableStateListOf<Screen>(Screen.Title)
     val screen: Screen get() = backStack.last()
@@ -118,13 +125,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         backStack += s
     }
 
+    fun openConfig(category: ConfigCategory = ConfigCategory.ALL) {
+        initialConfigCategory = category
+        navigate(Screen.Config)
+    }
+
     // ------------------------------------------------------------------ settings
 
+    private fun loadInitialSettings(): Settings {
+        val loaded = settingsStore.load()
+        val prefEmail = feedbackPrefs.getString(AgentFeedbackHelper.PREF_KEY_EMAIL, "")
+            ?.let(AgentFeedbackHelper::normalizeEmail)
+            .orEmpty()
+        return if (loaded.agentFeedbackEmail.isEmpty() && prefEmail.isNotEmpty()) {
+            loaded.copy(agentFeedbackEmail = prefEmail).also(settingsStore::save)
+        } else {
+            if (loaded.agentFeedbackEmail != prefEmail) {
+                feedbackPrefs.edit().putString(AgentFeedbackHelper.PREF_KEY_EMAIL, loaded.agentFeedbackEmail).apply()
+            }
+            loaded
+        }
+    }
+
     fun updateSettings(f: (Settings) -> Settings) {
-        val next = f(settings)
+        val rawNext = f(settings)
+        val normalizedEmail = AgentFeedbackHelper.normalizeEmail(rawNext.agentFeedbackEmail)
+        val next = if (normalizedEmail == rawNext.agentFeedbackEmail) rawNext else rawNext.copy(agentFeedbackEmail = normalizedEmail)
         if (next == settings) return
+        val emailChanged = next.agentFeedbackEmail != settings.agentFeedbackEmail
         settings = next
         settingsStore.save(next)
+        if (emailChanged) {
+            feedbackPrefs.edit().putString(AgentFeedbackHelper.PREF_KEY_EMAIL, next.agentFeedbackEmail).apply()
+        }
         session?.audio?.setVolumes(next.bgmVolume / 100f, next.seVolume / 100f, next.voiceVolume / 100f)
     }
 

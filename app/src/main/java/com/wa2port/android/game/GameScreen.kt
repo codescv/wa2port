@@ -412,7 +412,14 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 }, onClose = { session.overlay = Overlay.NONE })
             }
             Overlay.CONFIG -> Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-                ConfigPanel(settings, vm::updateSettings, onClose = { session.overlay = Overlay.NONE }, ai = vm.ai, session = session)
+                ConfigPanel(
+                    settings = settings,
+                    onChange = vm::updateSettings,
+                    onClose = { session.overlay = Overlay.NONE },
+                    ai = vm.ai,
+                    session = session,
+                    appVersion = vm.update.currentVersion,
+                )
             }
         }
 
