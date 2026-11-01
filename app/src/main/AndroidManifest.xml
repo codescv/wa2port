@@ -11,6 +11,11 @@
             <action android:name="android.intent.action.SENDTO" />
             <data android:scheme="mailto" />
         </intent>
+        <!-- Agent feedback with an attached image (ACTION_SEND + EXTRA_STREAM). -->
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="image/*" />
+        </intent>
     </queries>
 
     <application
@@ -34,7 +39,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Shares downloaded update APKs (cacheDir/updates) with the package installer. -->
+        <!-- Shares update APKs (cacheDir/updates) with the installer and feedback images (cacheDir/feedback) with email apps. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

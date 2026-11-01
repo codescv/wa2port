@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider roots: only the in-app update download directory (cacheDir/updates). -->
+<!--
+  FileProvider roots: the in-app update download directory (cacheDir/updates) and the Agent
+  feedback image copies attached to feedback emails (cacheDir/feedback).
+-->
 <paths>
     <cache-path name="updates" path="updates/" />
+    <cache-path name="feedback" path="feedback/" />
 </paths>

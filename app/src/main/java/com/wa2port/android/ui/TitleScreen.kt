@@ -22,6 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +48,7 @@ import com.wa2port.android.update.UpdateState
 @Composable
 fun TitleScreen(vm: AppViewModel, onNotebook: (() -> Unit)? = null) {
     val ready = vm.assetRoot != null
+    var showFeedbackDialog by rememberSaveable { mutableStateOf(false) }
     Box(
         Modifier
             .fillMaxSize()
@@ -114,10 +119,18 @@ fun TitleScreen(vm: AppViewModel, onNotebook: (() -> Unit)? = null) {
                 onDismiss = { vm.update.dialogOpen = false },
                 onOpenFeedback = {
                     vm.update.dialogOpen = false
-                    vm.openConfig(ConfigCategory.UPDATE)
+                    showFeedbackDialog = true
                 },
             )
             BackHandler { vm.update.dialogOpen = false }
+        }
+        if (showFeedbackDialog) {
+            AgentFeedbackDialog(
+                settings = vm.settings,
+                onChange = vm::updateSettings,
+                onDismiss = { showFeedbackDialog = false },
+                currentVersion = vm.update.currentVersion,
+            )
         }
     }
 }

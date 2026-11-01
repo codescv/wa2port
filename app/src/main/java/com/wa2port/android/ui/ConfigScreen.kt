@@ -101,7 +101,8 @@ val WINDOW_OPACITY_PRESETS: List<Pair<Int, String>> = listOf(
 /**
  * Text speed, auto speed, volumes, skip mode, display language, window mode, opacity, text size and
  * (when [ai] is given) the AI learning settings. [session] is the running game, if any (previews
- * open above the in-game config). [update] (title config only) adds 版本与更新 App Update.
+ * open above the in-game config). [update] (title config only) adds 版本与更新 App Update. The
+ * Agent 反馈 row's 撰写反馈 button opens [AgentFeedbackDialog] above the whole panel.
  */
 @Composable
 fun ConfigPanel(
@@ -128,105 +129,117 @@ fun ConfigPanel(
     val scrollState = rememberScrollState()
     LaunchedEffect(activeCategory) { scrollState.scrollTo(0) }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("设置 Config  コンフィグ", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
-            CloseButton(onClose)
+    // 撰写反馈: the in-layout AgentFeedbackDialog overlays the whole panel (not the scrolled list).
+    var showFeedbackDialog by rememberSaveable { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("设置 Config  コンフィグ", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
+                CloseButton(onClose)
+            }
+            // Sticky category tab bar: 1 tap jumps straight to ✨ AI 学习 or 版本更新 without scrolling.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                tabs.forEach { tab ->
+                    val selected = tab == activeCategory
+                    val shape = RoundedCornerShape(18.dp)
+                    Box(
+                        Modifier
+                            .heightIn(min = 38.dp)
+                            .clip(shape)
+                            .background(if (selected) Wa2Colors.Accent else Color(0x66203050))
+                            .border(1.dp, if (selected) Wa2Colors.Accent else Wa2Colors.AccentDim, shape)
+                            .clickable { category = tab }
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            tab.label,
+                            color = if (selected) Wa2Colors.Night else Wa2Colors.Text,
+                            fontSize = 13.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+
+            Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scrollState)) {
+                if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.TEXT_DISPLAY) {
+                    SectionTitle("文字 Text")
+                    LabeledSlider(
+                        "文字速度 Text speed", settings.textSpeed, 5..Settings.TEXT_SPEED_INSTANT,
+                        if (settings.instantText) "瞬间 Instant" else "${settings.textSpeed}/s",
+                    ) { v -> onChange { it.copy(textSpeed = v) } }
+                    LabeledSlider("自动速度 Auto delay", settings.autoDelayMs / 100, 3..60, "%.1f s".format(Locale.ROOT, settings.autoDelayMs / 1000f)) { v ->
+                        onChange { it.copy(autoDelayMs = v * 100) }
+                    }
+                    FontSizeSection(settings.textScale, settings.lang) { v -> onChange { it.withTextScale(v) } }
+                    OptionRow("对话框不透明度预设") {
+                        Segmented(
+                            WINDOW_OPACITY_PRESETS,
+                            settings.windowOpacity,
+                            { v -> onChange { it.copy(windowOpacity = v) } },
+                        )
+                    }
+                    LabeledSlider("窗口透明度 Window", settings.windowOpacity, 0..100, "${settings.windowOpacity}%") { v -> onChange { it.copy(windowOpacity = v) } }
+
+                    SectionTitle("显示 Display")
+                    OptionRow("显示语言 Language") {
+                        Segmented(
+                            listOf(DisplayLang.BOTH to "双语 中+日", DisplayLang.CN to "中文", DisplayLang.JP to "日本語"),
+                            settings.lang, { v -> onChange { it.copy(lang = v) } },
+                        )
+                    }
+                    OptionRow("窗口模式 Window mode") {
+                        Segmented(
+                            listOf(WindowMode.ADV to "ADV 对话框", WindowMode.NOVEL to "NOVEL 全屏"),
+                            settings.windowMode, { v -> onChange { it.copy(windowMode = v) } },
+                        )
+                    }
+                    OptionRow("快进 Skip") {
+                        Segmented(
+                            listOf(false to "仅已读 Read only (既読)", true to "全部 All"),
+                            settings.skipAll, { v -> onChange { it.copy(skipAll = v) } },
+                        )
+                    }
+                }
+
+                if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AUDIO) {
+                    SectionTitle("音量 Volume")
+                    LabeledSlider("音乐 BGM", settings.bgmVolume, 0..100, "${settings.bgmVolume}") { v -> onChange { it.copy(bgmVolume = v) } }
+                    LabeledSlider("音效 SE", settings.seVolume, 0..100, "${settings.seVolume}") { v -> onChange { it.copy(seVolume = v) } }
+                    LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
+                }
+
+                if (ai != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AI)) {
+                    AiSettingsSection(settings, onChange, ai, session)
+                }
+                if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.UPDATE) {
+                    if (update != null) {
+                        UpdateSettingsSection(update)
+                    }
+                    AgentFeedbackSection(
+                        settings = settings,
+                        onOpenFeedback = { showFeedbackDialog = true },
+                    )
+                }
+            }
         }
-        // Sticky category tab bar: 1 tap jumps straight to ✨ AI 学习 or 版本更新 without scrolling.
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(vertical = 6.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            tabs.forEach { tab ->
-                val selected = tab == activeCategory
-                val shape = RoundedCornerShape(18.dp)
-                Box(
-                    Modifier
-                        .heightIn(min = 38.dp)
-                        .clip(shape)
-                        .background(if (selected) Wa2Colors.Accent else Color(0x66203050))
-                        .border(1.dp, if (selected) Wa2Colors.Accent else Wa2Colors.AccentDim, shape)
-                        .clickable { category = tab }
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        tab.label,
-                        color = if (selected) Wa2Colors.Night else Wa2Colors.Text,
-                        fontSize = 13.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                }
-            }
-        }
-
-        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scrollState)) {
-            if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.TEXT_DISPLAY) {
-                SectionTitle("文字 Text")
-                LabeledSlider(
-                    "文字速度 Text speed", settings.textSpeed, 5..Settings.TEXT_SPEED_INSTANT,
-                    if (settings.instantText) "瞬间 Instant" else "${settings.textSpeed}/s",
-                ) { v -> onChange { it.copy(textSpeed = v) } }
-                LabeledSlider("自动速度 Auto delay", settings.autoDelayMs / 100, 3..60, "%.1f s".format(Locale.ROOT, settings.autoDelayMs / 1000f)) { v ->
-                    onChange { it.copy(autoDelayMs = v * 100) }
-                }
-                FontSizeSection(settings.textScale, settings.lang) { v -> onChange { it.withTextScale(v) } }
-                OptionRow("对话框不透明度预设") {
-                    Segmented(
-                        WINDOW_OPACITY_PRESETS,
-                        settings.windowOpacity,
-                        { v -> onChange { it.copy(windowOpacity = v) } },
-                    )
-                }
-                LabeledSlider("窗口透明度 Window", settings.windowOpacity, 0..100, "${settings.windowOpacity}%") { v -> onChange { it.copy(windowOpacity = v) } }
-
-                SectionTitle("显示 Display")
-                OptionRow("显示语言 Language") {
-                    Segmented(
-                        listOf(DisplayLang.BOTH to "双语 中+日", DisplayLang.CN to "中文", DisplayLang.JP to "日本語"),
-                        settings.lang, { v -> onChange { it.copy(lang = v) } },
-                    )
-                }
-                OptionRow("窗口模式 Window mode") {
-                    Segmented(
-                        listOf(WindowMode.ADV to "ADV 对话框", WindowMode.NOVEL to "NOVEL 全屏"),
-                        settings.windowMode, { v -> onChange { it.copy(windowMode = v) } },
-                    )
-                }
-                OptionRow("快进 Skip") {
-                    Segmented(
-                        listOf(false to "仅已读 Read only (既読)", true to "全部 All"),
-                        settings.skipAll, { v -> onChange { it.copy(skipAll = v) } },
-                    )
-                }
-            }
-
-            if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AUDIO) {
-                SectionTitle("音量 Volume")
-                LabeledSlider("音乐 BGM", settings.bgmVolume, 0..100, "${settings.bgmVolume}") { v -> onChange { it.copy(bgmVolume = v) } }
-                LabeledSlider("音效 SE", settings.seVolume, 0..100, "${settings.seVolume}") { v -> onChange { it.copy(seVolume = v) } }
-                LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
-            }
-
-            if (ai != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AI)) {
-                AiSettingsSection(settings, onChange, ai, session)
-            }
-            if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.UPDATE) {
-                if (update != null) {
-                    UpdateSettingsSection(update)
-                }
-                AgentFeedbackSection(
-                    settings = settings,
-                    onChange = onChange,
-                    currentVersion = appVersion,
-                    session = session,
-                )
-            }
+        if (showFeedbackDialog) {
+            AgentFeedbackDialog(
+                settings = settings,
+                onChange = onChange,
+                onDismiss = { showFeedbackDialog = false },
+                currentVersion = appVersion,
+                session = session,
+            )
         }
     }
 }

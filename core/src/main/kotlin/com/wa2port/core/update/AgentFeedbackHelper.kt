@@ -71,28 +71,35 @@ data class FeedbackGameContext(
     }
 }
 
-/** Fully validated and encoded `mailto:` payload ready for `Intent.ACTION_SENDTO`. */
+/**
+ * Fully validated and encoded payload: [mailtoUri] for `Intent.ACTION_SENDTO` (text only), or
+ * [toEmail] / [subject] / [body] as `Intent.ACTION_SEND` extras when an image is attached
+ * ([attachmentName] = the attached image's display name, if any).
+ */
 data class AgentFeedbackMail(
     val toEmail: String,
     val subject: String,
     val body: String,
     val mailtoUri: String,
+    val attachmentName: String? = null,
 )
 
 /**
- * Pure-JVM builder and validator for one-click Agent feedback emails (`wa2port: [v1.4.5] <summary>`).
+ * Pure-JVM builder and validator for one-click Agent feedback emails (`wa2port: [v1.4.6] <title>`).
  *
  * The recipient address is configured exclusively on-device by the user (default `""`) and never
  * hardcoded in source or resources.
  */
 object AgentFeedbackHelper {
     const val APP_ALIAS = "wa2port"
-    const val DEFAULT_APP_VERSION = "1.4.5"
+    const val DEFAULT_APP_VERSION = "1.4.6"
     const val PLACEHOLDER_EMAIL = "agent@example.com"
     const val PREFS_NAME = "wa2port_agent_feedback"
     const val PREF_KEY_EMAIL = "agent_feedback_email"
     const val MAX_SUMMARY_CHARS = 72
     const val DEFAULT_SUMMARY = "App Feedback"
+    const val MAX_TITLE_CHARS = 120
+    const val MAX_ATTACHMENT_NAME_CHARS = 120
 
     private val INVISIBLE_PASTE_CHARS = Regex("[\\u200B-\\u200F\\uFEFF\\u00A0]")
     private val WHITESPACE_RUN = Regex("\\s+")
@@ -156,6 +163,28 @@ object AgentFeedbackHelper {
         return if (clean.isEmpty() || clean == "0.0.0") DEFAULT_APP_VERSION else clean
     }
 
+    /** Collapses [title] to one trimmed line (CR/LF/tabs → single spaces), capped at [MAX_TITLE_CHARS]. */
+    fun normalizeTitle(title: String): String {
+        val collapsed = title.replace(INVISIBLE_PASTE_CHARS, " ").replace(WHITESPACE_RUN, " ").trim()
+        if (collapsed.length <= MAX_TITLE_CHARS) return collapsed
+        return collapsed.substring(0, MAX_TITLE_CHARS - 1).trimEnd() + "…"
+    }
+
+    /**
+     * Sanitizes an attachment display name for the email body (single line, no path separators or
+     * control characters). Returns `null` when [name] is `null` or blank.
+     */
+    fun normalizeAttachmentName(name: String?): String? {
+        if (name == null) return null
+        val leaf = name.substringAfterLast('/').substringAfterLast('\\')
+        val clean = leaf.map { if (it.code < 0x20 || it.code == 0x7F) ' ' else it }.joinToString("")
+            .replace(INVISIBLE_PASTE_CHARS, " ")
+            .replace(WHITESPACE_RUN, " ")
+            .trim()
+        if (clean.isEmpty()) return null
+        return if (clean.length <= MAX_ATTACHMENT_NAME_CHARS) clean else clean.substring(0, MAX_ATTACHMENT_NAME_CHARS - 1).trimEnd() + "…"
+    }
+
     /** Extracts a single-line summary from [summaryOverride] or the first non-blank line of [feedbackText]. */
     fun extractSummary(
         feedbackText: String,
@@ -173,31 +202,42 @@ object AgentFeedbackHelper {
     }
 
     /**
-     * Builds the Vibe Coding dispatcher subject: **`wa2port: [v1.4.5] <summary>`**.
+     * Builds the Vibe Coding dispatcher subject: **`wa2port: [v1.4.6] <title>`**. The summary is
+     * [title] when non-blank, else [summaryOverride], else the first non-blank line of [feedbackText].
      */
     fun buildSubject(
         feedbackText: String,
         summaryOverride: String = "",
         version: String = DEFAULT_APP_VERSION,
+        title: String = "",
     ): String {
         val v = normalizeVersion(version)
-        val summary = extractSummary(feedbackText, summaryOverride)
+        val summary = extractSummary(feedbackText, title.trim().ifEmpty { summaryOverride })
         return "$APP_ALIAS: [v$v] $summary"
     }
 
     /**
-     * Builds the plain-text email body combining the user's feedback with app version, optional
-     * device info, and optional active game scene/line diagnostics.
+     * Builds the plain-text email body combining the user's optional [title] and feedback with app
+     * version, optional device info, optional attached image name ([attachmentName]) and optional
+     * active game scene/line diagnostics.
      */
     fun buildBody(
         feedbackText: String,
         version: String = DEFAULT_APP_VERSION,
         deviceInfo: String? = null,
         gameContext: FeedbackGameContext? = null,
+        title: String = "",
+        attachmentName: String? = null,
     ): String {
         val v = normalizeVersion(version)
+        val normalizedTitle = normalizeTitle(title)
+        val normalizedAttachment = normalizeAttachmentName(attachmentName)
         val normalizedFeedback = feedbackText.replace("\r\n", "\n").replace('\r', '\n').trim()
         return buildString {
+            if (normalizedTitle.isNotEmpty()) {
+                append("标题 Title: ").append(normalizedTitle)
+                append("\n\n")
+            }
             if (normalizedFeedback.isNotEmpty()) {
                 append(normalizedFeedback)
                 append("\n\n")
@@ -206,6 +246,9 @@ object AgentFeedbackHelper {
             append("App: ").append(APP_ALIAS).append(" v").append(v).append('\n')
             deviceInfo?.trim()?.takeIf { it.isNotEmpty() }?.let {
                 append("Device: ").append(it).append('\n')
+            }
+            normalizedAttachment?.let {
+                append("Attachment: ").append(it).append('\n')
             }
             if (gameContext != null && gameContext.scene.isNotBlank()) {
                 val sceneDisplay = gameContext.sceneTitle?.takeIf { it.isNotBlank() } ?: gameContext.scene
@@ -262,16 +305,25 @@ object AgentFeedbackHelper {
         version: String = DEFAULT_APP_VERSION,
         deviceInfo: String? = null,
         gameContext: FeedbackGameContext? = null,
+        title: String = "",
+        attachmentName: String? = null,
     ): AgentFeedbackMail {
         val err = validateEmail(email)
         require(err == null) { err!! }
         val cleanEmail = normalizeEmail(email)
-        val subject = buildSubject(feedbackText = feedbackText, summaryOverride = summaryOverride, version = version)
+        val subject = buildSubject(
+            feedbackText = feedbackText,
+            summaryOverride = summaryOverride,
+            version = version,
+            title = title,
+        )
         val body = buildBody(
             feedbackText = feedbackText,
             version = version,
             deviceInfo = deviceInfo,
             gameContext = gameContext,
+            title = title,
+            attachmentName = attachmentName,
         )
         val uri = buildMailtoUri(cleanEmail, subject, body)
         return AgentFeedbackMail(
@@ -279,6 +331,7 @@ object AgentFeedbackHelper {
             subject = subject,
             body = body,
             mailtoUri = uri,
+            attachmentName = normalizeAttachmentName(attachmentName),
         )
     }
 
