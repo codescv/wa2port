@@ -15,6 +15,8 @@ import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
 import com.wa2port.core.ai.CancelToken
 import com.wa2port.core.update.AppUpdater
+import com.wa2port.core.update.DirectInstallAction
+import com.wa2port.core.update.DirectInstallCoordinator
 import com.wa2port.core.update.ReleaseInfo
 import com.wa2port.core.update.SemanticVersion
 import com.wa2port.core.update.UpdateEndpointConfig
@@ -84,7 +86,14 @@ class UpdateController(
     private var job: Job? = null
     private var cancel: CancelToken? = null
     private var generation = 0
-    private var pendingInstallAfterPermission = false
+    /** Download → verify → install directly; holds the APK waiting for "install unknown apps". */
+    private val directInstall = DirectInstallCoordinator()
+
+    /** Survives process death (Android may kill the app when the unknown-sources permission is toggled). */
+    private val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** True while an APK waits for the unknown-sources permission (auto-installs on resume). */
+    val pendingInstallAfterPermission: Boolean get() = directInstall.pendingInstallAfterSettings
 
     init {
         job = scope.launch { restoreDownloaded() }
@@ -137,7 +146,7 @@ class UpdateController(
         if (busy) return
         val release = latest ?: return
         val asset = release.apkAsset ?: return
-        pendingInstallAfterPermission = false
+        clearPendingInstall()
         val gen = ++generation
         val token = CancelToken().also { cancel = it }
         val dest = apkFileFor(release)
@@ -174,7 +183,7 @@ class UpdateController(
     /** Cancels a running check (→ Idle, or back to a ready download) or download (→ Available). */
     fun cancelDownload() {
         val s = state
-        pendingInstallAfterPermission = false
+        clearPendingInstall()
         generation++
         cancel?.cancel()
         job?.cancel()
@@ -196,7 +205,7 @@ class UpdateController(
             val problem = withContext(Dispatchers.IO) { validateApk(s.apkFile).also { if (it != null) s.apkFile.delete() } }
             if (gen != generation || state != s) return@launch
             if (problem != null) {
-                pendingInstallAfterPermission = false
+                clearPendingInstall()
                 state = UpdateState.Error(problem, s.latest.takeIf { it.apkAsset != null })
                 return@launch
             }
@@ -206,30 +215,53 @@ class UpdateController(
 
     /**
      * Auto-launches installation when the user returns from Android's "Install unknown apps"
-     * permission screen after granting permission.
+     * permission screen after granting permission (also after a process restart, see [restoreDownloaded]).
      */
     fun onHostResume(context: Context) {
-        if (pendingInstallAfterPermission && state is UpdateState.Downloaded && context.packageManager.canRequestPackageInstalls()) {
-            pendingInstallAfterPermission = false
-            installApk(context)
+        val s = state as? UpdateState.Downloaded ?: return
+        if (!directInstall.pendingInstallAfterSettings) return
+        val action = directInstall.onAppForegrounded(context.packageManager.canRequestPackageInstalls())
+        if (action is DirectInstallAction.LaunchInstaller) {
+            persistPending(false)
+            if (action.apkFile == s.apkFile) installApk(context) else launchInstaller(context, s.latest, action.apkFile)
+        } else if (!directInstall.pendingInstallAfterSettings) {
+            persistPending(false)
         }
     }
 
+    /**
+     * Called right after validation (and on every manual 重新安装 tap): launches the system installer
+     * directly, or asks for "install unknown apps" and keeps the APK pending for [onHostResume].
+     */
     private fun openInstaller(context: Context, release: ReleaseInfo, apkFile: File) {
-        val pm = context.packageManager
-        if (!pm.canRequestPackageInstalls()) {
-            pendingInstallAfterPermission = true
-            Toast.makeText(
-                context,
-                "请允许「安装未知应用」，返回后将自动开始安装\nAllow \"Install unknown apps\" to continue installation",
-                Toast.LENGTH_LONG,
-            ).show()
-            val intent = Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            runCatching { context.startActivity(intent) }
-            return
+        when (val action = directInstall.onApkVerified(apkFile, context.packageManager.canRequestPackageInstalls())) {
+            is DirectInstallAction.LaunchInstaller -> {
+                persistPending(false)
+                launchInstaller(context, release, action.apkFile)
+            }
+            is DirectInstallAction.RequestInstallPermission -> {
+                persistPending(true)
+                Toast.makeText(
+                    context,
+                    "请允许「安装未知应用」，返回后将自动开始安装\nAllow \"Install unknown apps\" to continue installation",
+                    Toast.LENGTH_LONG,
+                ).show()
+                val intent = Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    // Some ROMs lack the per-app screen: fall back to the generic settings list.
+                    runCatching {
+                        context.startActivity(Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }.onFailure { toast("无法打开权限设置 Cannot open settings: ${e.message ?: e.javaClass.simpleName}") }
+                }
+            }
+            DirectInstallAction.None -> Unit
         }
-        pendingInstallAfterPermission = false
+    }
+
+    private fun launchInstaller(context: Context, release: ReleaseInfo, apkFile: File) {
         try {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
             val intent = Intent(Intent.ACTION_VIEW)
@@ -239,6 +271,15 @@ class UpdateController(
         } catch (e: Exception) {
             state = UpdateState.Error("无法启动安装程序 Cannot start installer: ${e.message ?: e.javaClass.simpleName}", release)
         }
+    }
+
+    private fun clearPendingInstall() {
+        directInstall.clearPending()
+        persistPending(false)
+    }
+
+    private fun persistPending(pending: Boolean) {
+        prefs.edit().putBoolean(KEY_PENDING_INSTALL, pending).apply()
     }
 
     /** Opens the release page (or [url]) in the browser. */
@@ -315,11 +356,17 @@ class UpdateController(
                 }
             }
             best
-        } ?: return
+        } ?: run {
+            persistPending(false)
+            return
+        }
         val (file, info) = restored
         val version = info.versionName?.let { SemanticVersion.parse(it)?.toString() ?: it }
             ?: file.name.removePrefix("wa2port-").removeSuffix(".apk")
-        if (state != UpdateState.Idle) return
+        if (state != UpdateState.Idle) {
+            persistPending(false)
+            return
+        }
         state = UpdateState.Downloaded(
             ReleaseInfo(
                 tagName = "v$version",
@@ -332,10 +379,15 @@ class UpdateController(
             ),
             file,
         )
+        // Process died while the user was granting "install unknown apps": re-arm and auto-install.
+        directInstall.restorePending(file, prefs.getBoolean(KEY_PENDING_INSTALL, false))
+        if (directInstall.pendingInstallAfterSettings) onHostResume(app) else persistPending(false)
     }
 
     private companion object {
         const val APK_MIME = "application/vnd.android.package-archive"
+        const val PREFS_NAME = "wa2port_update"
+        const val KEY_PENDING_INSTALL = "pending_install_after_permission"
         val UNSAFE_CHARS = Regex("[^0-9A-Za-z._-]")
     }
 }

@@ -3,8 +3,11 @@ package com.wa2port.android.ui
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
@@ -66,8 +69,11 @@ import com.wa2port.android.update.UpdateController
 import com.wa2port.android.update.UpdateState
 import com.wa2port.core.update.AgentFeedbackHelper
 import com.wa2port.core.update.AgentFeedbackMail
+import com.wa2port.core.update.FeedbackEmailTargetResolver
 import com.wa2port.core.update.FeedbackGameContext
+import com.wa2port.core.update.FeedbackSendIntentSpec
 import com.wa2port.core.update.ReleaseInfo
+import com.wa2port.core.update.ResolvedEmailActivity
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -228,11 +234,14 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                 Row(actions) { UpdateButton("取消下载 Cancel") { update.cancelDownload() } }
             }
             is UpdateState.Downloaded -> {
-                Text("✓ v${s.latest.version} 下载完成，点击安装 Ready to install", color = UPDATE_OK, fontSize = 14.sp)
-                Text("安装时系统会请求「安装未知应用」权限；更新会保留存档与设置。", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                Text("✓ v${s.latest.version} 已下载并校验 Downloaded & verified", color = UPDATE_OK, fontSize = 14.sp)
+                Text(
+                    "下载校验完成后会直接启动安装；如需授予「安装未知应用」权限，返回后将自动继续安装。若关闭了安装窗口，可点击「重新安装」。更新会保留存档与设置。",
+                    color = Wa2Colors.TextDim, fontSize = 12.sp,
+                )
                 if (!compact) ReleaseNotes(s.latest)
                 Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    UpdateButton("安装 APK Install", primary = true) { update.installApk(context) }
+                    UpdateButton("重新安装 Install", primary = true) { update.installApk(context) }
                     if (s.latest.apkAsset != null) {
                         UpdateButton("重新下载 Re-download") { update.downloadUpdate(context) }
                     } else {
@@ -303,10 +312,11 @@ fun AgentFeedbackSection(
  * In-layout Agent feedback overlay (no window `Dialog` / `AlertDialog`, styled like [UpdateDialog],
  * so immersive system bars never flash). Fields: **Agent 反馈邮箱** (saved locally to
  * `settings.agentFeedbackEmail`), **标题**, **问题描述**, **增加图片** (system picker) and the
- * optional active WA2 scene/line context. Sends `wa2port: [v1.4.6] <title>`:
+ * optional active WA2 scene/line context. Sends `wa2port: [v1.4.7] <title>`:
  * - text only → `Intent.ACTION_SENDTO` `mailto:`;
  * - with an image → `Intent.ACTION_SEND` carrying a FileProvider copy (`cacheDir/feedback`) as
- *   `EXTRA_STREAM`, restricted to email apps by a `mailto:` selector (chooser fallback).
+ *   `EXTRA_STREAM`, sent as an explicit `ACTION_SEND` to the resolved email client's compose activity
+ *   (no selector; chooser fallback only when no email client is found).
  *
  * Tapping the scrim dismisses only while the draft is empty, so a half-written report is not lost.
  */
@@ -664,9 +674,13 @@ private fun launchMailto(context: Context, mail: AgentFeedbackMail): Pair<String
 }
 
 /**
- * Feedback with an image: `Intent.ACTION_SEND` + `EXTRA_STREAM` ([contentUri], read grant via
- * ClipData), limited to email apps by a `mailto:` selector; falls back to a chooser without the
- * selector when no email app accepts it. Returns the status line.
+ * Feedback with an image. Android 15–17 / ColorOS reject `ACTION_SEND(image/any)` + a `mailto:`
+ * selector (`MATCH_NO_TYPE`) or hijack it into the generic "分享1张图片" share sheet, so instead:
+ * probe `mailto:` handlers (default app if it is a real client → Gmail → other handlers; system
+ * resolvers filtered by [FeedbackEmailTargetResolver]), find each one's `ACTION_SEND` compose activity
+ * (`image/any`, `any/any`, `message/rfc822`), grant read access to [contentUri] and start an explicit
+ * component `ACTION_SEND` **without selector** so the compose screen opens directly. Only when no email
+ * client accepts it does it fall back to a chooser. Returns the status line.
  */
 private fun launchImageMail(
     context: Context,
@@ -674,34 +688,106 @@ private fun launchImageMail(
     contentUri: Uri,
     mimeType: String,
 ): Pair<String, Boolean> {
-    fun sendIntent() = Intent(Intent.ACTION_SEND).apply {
-        type = mimeType
+    val pm = context.packageManager
+    val mailtoProbe = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"))
+    val defaultMailto = pm.resolveDefaultActivity(mailtoProbe)
+    val mailtoActivities = pm.queryActivitiesSafe(mailtoProbe, PackageManager.MATCH_DEFAULT_ONLY)
+    val targets = FeedbackEmailTargetResolver.resolveComposeTargets(
+        defaultMailto = defaultMailto,
+        mailtoActivities = mailtoActivities,
+        attachmentMime = mimeType,
+    ) { pkg, mime ->
+        pm.queryActivitiesSafe(Intent(Intent.ACTION_SEND).setType(mime).setPackage(pkg), PackageManager.MATCH_DEFAULT_ONLY)
+            .ifEmpty { pm.queryActivitiesSafe(Intent(Intent.ACTION_SEND).setType(mime).setPackage(pkg), 0) }
+    }
+    for (target in targets) {
+        val spec = FeedbackEmailTargetResolver.buildAttachmentSendSpec(mail, target, contentUri.toString())
+        runCatching { context.grantUriPermission(target.packageName, contentUri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        val intent = spec.toIntent(contentUri).apply {
+            if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (context.tryStart(intent)) {
+            return "已打开邮件撰写页（含图片）发送至 ${mail.toEmail} Opened email compose with image" to false
+        }
+    }
+    // Last resort: no email client exposes a visible ACTION_SEND compose activity.
+    val fallbackSend = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType.ifBlank { FeedbackEmailTargetResolver.DEFAULT_IMAGE_MIME }
         putExtra(Intent.EXTRA_EMAIL, arrayOf(mail.toEmail))
         putExtra(Intent.EXTRA_SUBJECT, mail.subject)
         putExtra(Intent.EXTRA_TEXT, mail.body)
         putExtra(Intent.EXTRA_STREAM, contentUri)
-        clipData = ClipData.newRawUri("feedback_image", contentUri)
+        clipData = ClipData.newRawUri(FeedbackEmailTargetResolver.CLIP_LABEL, contentUri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    val chooser = Intent.createChooser(fallbackSend, "发送反馈 Send feedback").apply {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     return try {
-        context.startActivity(sendIntent().apply { selector = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")) })
-        "已唤起邮件客户端（含图片）发送至 ${mail.toEmail} Opened email app with image" to false
+        context.startActivity(chooser)
+        "未找到邮件客户端，已打开分享面板 Choose an app to send" to false
     } catch (_: ActivityNotFoundException) {
-        try {
-            val chooser = Intent.createChooser(sendIntent(), "发送反馈 Send feedback").apply {
-                if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(chooser)
-            "未找到邮件客户端，已打开分享面板 Choose an app to send" to false
-        } catch (_: ActivityNotFoundException) {
-            "未找到可用的邮件客户端 No email app found" to true
-        } catch (e: Exception) {
-            "无法打开邮件客户端 Cannot open email app: ${e.message ?: e.javaClass.simpleName}" to true
-        }
+        "未找到可用的邮件客户端 No email app found" to true
     } catch (e: Exception) {
         "无法打开邮件客户端 Cannot open email app: ${e.message ?: e.javaClass.simpleName}" to true
     }
+}
+
+/** Maps the pure [FeedbackSendIntentSpec] 1:1 onto an explicit `ACTION_SEND` (never a selector). */
+private fun FeedbackSendIntentSpec.toIntent(streamUri: Uri): Intent {
+    val intent = Intent(action)
+    val explicitClass = className
+    if (explicitClass != null) intent.component = ComponentName(packageName, explicitClass) else intent.setPackage(packageName)
+    intent.type = mimeType
+    intent.putExtra(Intent.EXTRA_EMAIL, recipients.toTypedArray())
+    intent.putExtra(Intent.EXTRA_SUBJECT, subject)
+    intent.putExtra(Intent.EXTRA_TEXT, text)
+    intent.putExtra(Intent.EXTRA_STREAM, streamUri)
+    intent.clipData = ClipData.newRawUri(clipLabel, streamUri)
+    if (grantReadUriPermission) intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    // hasSelector is always false by contract.
+    return intent
+}
+
+private fun Context.tryStart(intent: Intent): Boolean =
+    try {
+        startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
+    } catch (_: SecurityException) {
+        false
+    }
+
+private fun PackageManager.resolveDefaultActivity(intent: Intent): ResolvedEmailActivity? {
+    val info = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            resolveActivity(intent, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        }
+    }.getOrNull()
+    return info?.toResolvedEmailActivity()
+}
+
+private fun PackageManager.queryActivitiesSafe(intent: Intent, flags: Int): List<ResolvedEmailActivity> =
+    runCatching {
+        val infos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(flags.toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            queryIntentActivities(intent, flags)
+        }
+        infos.mapNotNull { it.toResolvedEmailActivity() }
+    }.getOrDefault(emptyList())
+
+private fun ResolveInfo.toResolvedEmailActivity(): ResolvedEmailActivity? {
+    val ai = activityInfo ?: return null
+    val pkg = ai.packageName ?: return null
+    val name = ai.name ?: return null
+    return ResolvedEmailActivity(packageName = pkg, activityName = name)
 }
 
 @Composable

@@ -23,7 +23,7 @@ class AgentFeedbackHelperTest {
     @Test
     fun defaultVersionAndConstantsMatchReleaseSpec() {
         assertEquals("wa2port", AgentFeedbackHelper.APP_ALIAS)
-        assertEquals("1.4.6", AgentFeedbackHelper.DEFAULT_APP_VERSION)
+        assertEquals("1.4.7", AgentFeedbackHelper.DEFAULT_APP_VERSION)
         assertEquals("agent@example.com", AgentFeedbackHelper.PLACEHOLDER_EMAIL)
     }
 
@@ -80,7 +80,7 @@ class AgentFeedbackHelperTest {
     @Test
     fun buildsVibeCodingSubjectWithVersionPrefix() {
         assertEquals(
-            "wa2port: [v1.4.6] 双语模式下第四行标点优化",
+            "wa2port: [v1.4.7] 双语模式下第四行标点优化",
             AgentFeedbackHelper.buildSubject("  \n  双语模式下第四行标点优化\n详细复现步骤…  "),
         )
         assertEquals(
@@ -88,13 +88,13 @@ class AgentFeedbackHelperTest {
             AgentFeedbackHelper.buildSubject("Body line", summaryOverride = "  Custom   summary ", version = "v1.4.5"),
         )
         assertEquals(
-            "wa2port: [v1.4.6] App Feedback",
+            "wa2port: [v1.4.7] App Feedback",
             AgentFeedbackHelper.buildSubject("   ", version = "0.0.0"),
         )
         val longLine = "あ".repeat(100)
         val subject = AgentFeedbackHelper.buildSubject(longLine)
-        assertTrue(subject.startsWith("wa2port: [v1.4.6] "))
-        val summaryPart = subject.removePrefix("wa2port: [v1.4.6] ")
+        assertTrue(subject.startsWith("wa2port: [v1.4.7] "))
+        val summaryPart = subject.removePrefix("wa2port: [v1.4.7] ")
         assertEquals(AgentFeedbackHelper.MAX_SUMMARY_CHARS, summaryPart.length)
         assertTrue(summaryPart.endsWith("…"))
     }
@@ -214,27 +214,27 @@ class AgentFeedbackHelperTest {
     @Test
     fun titleTakesPrecedenceForSubjectAndFallsBackToFirstDescriptionLine() {
         assertEquals(
-            "wa2port: [v1.4.6] 回想模式 语音重叠",
+            "wa2port: [v1.4.7] 回想模式 语音重叠",
             AgentFeedbackHelper.buildSubject(
                 feedbackText = "第一行描述\n第二行",
                 title = "  回想模式\n语音重叠  ",
             ),
         )
         assertEquals(
-            "wa2port: [v1.4.6] Title wins",
+            "wa2port: [v1.4.7] Title wins",
             AgentFeedbackHelper.buildSubject("desc", summaryOverride = "override", title = "Title wins"),
         )
         // Blank title → summaryOverride → first non-blank description line (backward compatible).
         assertEquals(
-            "wa2port: [v1.4.6] override",
+            "wa2port: [v1.4.7] override",
             AgentFeedbackHelper.buildSubject("desc", summaryOverride = "override", title = "   "),
         )
         assertEquals(
-            "wa2port: [v1.4.6] 第一行描述",
+            "wa2port: [v1.4.7] 第一行描述",
             AgentFeedbackHelper.buildSubject(feedbackText = "\n  第一行描述  \n第二行", title = ""),
         )
         assertEquals(
-            "wa2port: [v1.4.6] App Feedback",
+            "wa2port: [v1.4.7] App Feedback",
             AgentFeedbackHelper.buildSubject(feedbackText = "  ", title = " \t "),
         )
     }
@@ -243,24 +243,24 @@ class AgentFeedbackHelperTest {
     fun buildsBodyWithTitleDescriptionAndAttachmentName() {
         val body = AgentFeedbackHelper.buildBody(
             feedbackText = "NOVEL 模式下第 3 行被截断。\r\n复现：1002 #42",
-            version = "1.4.6",
+            version = "1.4.7",
             deviceInfo = "Pixel 9 (Android 15, SDK 35)",
             title = " 文字截断\n问题 ",
             attachmentName = "Screenshot_20261101.png",
         )
         assertTrue(
-            body.startsWith("标题 Title: 文字截断 问题\n\nNOVEL 模式下第 3 行被截断。\n复现：1002 #42\n\n---\nApp: wa2port v1.4.6\n"),
+            body.startsWith("标题 Title: 文字截断 问题\n\nNOVEL 模式下第 3 行被截断。\n复现：1002 #42\n\n---\nApp: wa2port v1.4.7\n"),
             body,
         )
         assertTrue(body.contains("Device: Pixel 9 (Android 15, SDK 35)\nAttachment: Screenshot_20261101.png"), body)
         assertFalse(body.contains('\r'))
 
         // Defaults keep the v1.4.5 body shape: no title line, no attachment line.
-        val legacy = AgentFeedbackHelper.buildBody(feedbackText = "Only description", version = "1.4.6")
-        assertEquals("Only description\n\n---\nApp: wa2port v1.4.6", legacy)
+        val legacy = AgentFeedbackHelper.buildBody(feedbackText = "Only description", version = "1.4.7")
+        assertEquals("Only description\n\n---\nApp: wa2port v1.4.7", legacy)
         val blankExtras = AgentFeedbackHelper.buildBody(
             feedbackText = "Only description",
-            version = "1.4.6",
+            version = "1.4.7",
             title = "   ",
             attachmentName = "  \n ",
         )
@@ -283,14 +283,14 @@ class AgentFeedbackHelperTest {
         val mail = AgentFeedbackHelper.prepareMail(
             email = " agent@example.com ",
             feedbackText = "CG 鉴赏缩略图错位 A+B & C\n详见截图",
-            version = "v1.4.6",
+            version = "v1.4.7",
             title = "CG 缩略图错位",
             attachmentName = "cg_bug.png",
         )
         assertEquals("agent@example.com", mail.toEmail)
-        assertEquals("wa2port: [v1.4.6] CG 缩略图错位", mail.subject)
+        assertEquals("wa2port: [v1.4.7] CG 缩略图错位", mail.subject)
         assertEquals("cg_bug.png", mail.attachmentName)
-        assertTrue(mail.body.startsWith("标题 Title: CG 缩略图错位\n\nCG 鉴赏缩略图错位 A+B & C\n详见截图\n\n---\nApp: wa2port v1.4.6"))
+        assertTrue(mail.body.startsWith("标题 Title: CG 缩略图错位\n\nCG 鉴赏缩略图错位 A+B & C\n详见截图\n\n---\nApp: wa2port v1.4.7"))
         assertTrue(mail.body.contains("Attachment: cg_bug.png"))
 
         val query = URI.create(mail.mailtoUri).rawSchemeSpecificPart.substringAfter('?')
@@ -300,7 +300,7 @@ class AgentFeedbackHelperTest {
 
         // Text-only feedback (no title, no image) stays backward compatible.
         val plain = AgentFeedbackHelper.prepareMail(email = "agent@example.com", feedbackText = "首行摘要\n更多")
-        assertEquals("wa2port: [v1.4.6] 首行摘要", plain.subject)
+        assertEquals("wa2port: [v1.4.7] 首行摘要", plain.subject)
         assertNull(plain.attachmentName)
         assertFalse(plain.body.contains("Attachment:"))
         assertFalse(plain.body.contains("标题 Title:"))

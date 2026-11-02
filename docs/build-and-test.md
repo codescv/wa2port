@@ -54,6 +54,8 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 | `VmTest` | 验证 `function.fnc` 签名解析、全部 `.bnr` 剧本字节码加载、控制流（`if/elif/else` 链、`for`、`switch`）、可重入挂起/恢复（`CallOutcome.Block`）、`FB`/`F` 亮度与 `.AMP` 槽位路由，以及通过 `HeadlessRunner` 对主线剧本进行数千步无头推演。 |
 | `CgGalleryTest` | 验证 `cg_cards.tsv`（`.data 0x4c01b0`）对真实安装目录的 149 张卡片（27 IC + 122 CC）/ 272 个差分变体精确匹配、9 个合成图层部件与 8 张未引用 `v*.tga` 过滤，以及 `SystemData.cgFlags` 卡片级/变体级解锁逻辑。 |
 | `BgmAndReplayTest` | 验证 `SystemData.gflags`（1024 项）持久化、`BgmGallery` 全部 63 首曲目在 `BGM.PAK`/`IC/BGM.PAK` 中的解析与特殊解锁规则（#25 `BGM_021/035` 切换、#31 完整版联动解锁），以及 `SceneReplayGallery` 全部 24 个回想槽位的缩略图（`tv%06d.tga`）、`9999.bnr` + `GetReplayMode()`（op `222`）剧本分发与 `GoTitle()` 结束回归。 |
+| `DirectInstallCoordinatorTest` | 验证 v1.4.7「下载并安装」直装状态机：校验通过且已授权时立即拉起系统安装程序；缺少「安装未知应用」权限时保持 APK 待装、返回应用（`onResume`）且授权后自动安装一次；APK 被删除时放弃；进程被杀后通过持久化标记恢复待装；「重新安装」可再次触发。 |
+| `FeedbackEmailTargetResolverTest` | 验证带图反馈直达邮件撰写页：过滤 `android` / `com.oplus.resolver` / `intentresolver` / `*ResolverActivity` / `*ChooserActivity` 等系统解析器，按「默认 `mailto:` 应用 → Gmail → 其他 `mailto:` 应用」排序，按 `image/*` → `*/*` → `message/rfc822` 查找 `ACTION_SEND` 撰写 Activity，并生成带 `EXTRA_EMAIL/SUBJECT/TEXT/STREAM`、`ClipData`、读权限且**无 selector** 的显式 Intent 规格。 |
 
 ---
 
