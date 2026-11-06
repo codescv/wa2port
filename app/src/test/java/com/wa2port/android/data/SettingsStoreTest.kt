@@ -19,4 +19,14 @@ class SettingsStoreTest {
         val reloaded = store.load()
         assertEquals("agent@example.com", reloaded.agentFeedbackEmail)
     }
+
+    @Test
+    fun orientationPersists() {
+        val store = SettingsStore(File(dir, "settings.json"))
+        assertEquals(OrientationMode.LANDSCAPE, store.load().orientation)
+        store.save(store.load().copy(orientation = OrientationMode.PORTRAIT))
+        assertEquals(OrientationMode.PORTRAIT, SettingsStore(File(dir, "settings.json")).load().orientation)
+        store.save(store.load().copy(orientation = OrientationMode.AUTO))
+        assertEquals(OrientationMode.AUTO, store.load().orientation)
+    }
 }
