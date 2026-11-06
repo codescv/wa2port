@@ -57,6 +57,7 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 | `DirectInstallCoordinatorTest` | 验证 v1.4.7「下载并安装」直装状态机：校验通过且已授权时立即拉起系统安装程序；缺少「安装未知应用」权限时保持 APK 待装、返回应用（`onResume`）且授权后自动安装一次；APK 被删除时放弃；进程被杀后通过持久化标记恢复待装；「重新安装」可再次触发。 |
 | `FeedbackEmailTargetResolverTest` | 验证带图反馈直达邮件撰写页：过滤 `android` / `com.oplus.resolver` / `intentresolver` / `*ResolverActivity` / `*ChooserActivity` 等系统解析器，按「默认 `mailto:` 应用 → Gmail → 其他 `mailto:` 应用」排序，按 `image/*` → `*/*` → `message/rfc822` 查找 `ACTION_SEND` 撰写 Activity，并生成带 `EXTRA_EMAIL/SUBJECT/TEXT/STREAM`、`ClipData`、读权限且**无 selector** 的显式 Intent 规格。 |
 | `DeckLayoutTest` | 验证 v1.4.8 竖屏阅读区（`DECK_SCALE = 412/720`）字号、悬挂标点安全边界（`left + pad + (cap + 1)·em ≤ right`）、A–D 四档设备在 70%–150% 字号下的行容量与高度预算、分支提示框拆分高度，以及全语料 118,111 条中日双语台词在堆叠阅读区内的免滚动覆盖率（≥99.29%）。 |
+| `OfflineAiPackTest` / `AiPackDownloaderTest` / `AiPackCorpusTest` | 验证 v1.4.9 方案 3A 全剧本离线 AI 解读包（`.wa2ai` v1）：64 条分块 DEFLATE 随机访问索引、运行期从本地 `script.pak` 重水合原句与 `CharSpan`、损毁头部/超限载荷防御、HTTP 206 `.part` 断点续传与 GitHub API 403/429 直连 CDN 兜底、SHA-256 + 结构校验原子落盘，以及全部 187 个剧本 71,173 条台词提取与零原文泄露校验。 |
 
 ---
 
