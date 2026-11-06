@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -56,6 +57,7 @@ fun SaveLoadScreen(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPi
 /**
  * Grid of the quick slot + 24 slots with thumbnail, timestamp, scene and preview text. LOAD also
  * shows the autosave (`自动 AUTO`) first; SAVE never offers it (autosave is automatic).
+ * Compact ([LocalCompact]): 150 dp cells, 16 dp side padding, no `返回游戏` pill (✕ remains).
  */
 @Composable
 fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPick: suspend (Int) -> Unit, onClose: () -> Unit) {
@@ -75,7 +77,8 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 8.dp)) {
+    val compact = LocalCompact.current
+    Column(Modifier.fillMaxSize().screenSafePadding().padding(horizontal = if (compact) 16.dp else 24.dp, vertical = 8.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -84,20 +87,23 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
             Text(
                 if (mode == SaveLoadMode.SAVE) "保存进度 Save  セーブ" else "读取进度 Load  ロード",
                 color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f),
+                maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
             )
-            Box(
-                Modifier.clip(RoundedCornerShape(8.dp))
-                    .background(Color(0x66203050))
-                    .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(8.dp))
-                    .clickable(onClick = onClose)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-            ) {
-                Text("返回游戏 Back", color = Wa2Colors.Text, fontSize = 13.sp)
+            if (!compact) {
+                Box(
+                    Modifier.clip(RoundedCornerShape(8.dp))
+                        .background(Color(0x66203050))
+                        .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(8.dp))
+                        .clickable(onClick = onClose)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text("返回游戏 Back", color = Wa2Colors.Text, fontSize = 13.sp)
+                }
             }
             CloseButton(onClose)
         }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(190.dp),
+            columns = GridCells.Adaptive(if (compact) 150.dp else 190.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize(),
@@ -203,6 +209,8 @@ private fun SlotCard(
 ) {
     val shape = RoundedCornerShape(8.dp)
     val locked = meta?.locked == true
+    // 🔒/🗑 touch boxes ≥ 36 dp on compact screens (WIDE keeps today's chip size).
+    val touchMin = if (LocalCompact.current) 36.dp else 0.dp
     val borderWidth = if (justSaved) 2.dp else 1.dp
     val borderColor = when {
         justSaved -> Wa2Colors.Accent
@@ -235,7 +243,8 @@ private fun SlotCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Box(
-                        Modifier.clip(RoundedCornerShape(4.dp))
+                        Modifier.sizeIn(minWidth = touchMin, minHeight = touchMin)
+                            .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xB3081020))
                             .clickable(onClick = onToggleLock)
                             .padding(horizontal = 6.dp, vertical = 3.dp),
@@ -245,7 +254,8 @@ private fun SlotCard(
                     }
                     if (onDelete != null) {
                         Box(
-                            Modifier.clip(RoundedCornerShape(4.dp))
+                            Modifier.sizeIn(minWidth = touchMin, minHeight = touchMin)
+                                .clip(RoundedCornerShape(4.dp))
                                 .background(Color(0xB3281018))
                                 .clickable(onClick = onDelete)
                                 .padding(horizontal = 6.dp, vertical = 3.dp),

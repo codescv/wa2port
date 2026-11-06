@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -194,24 +196,23 @@ private fun BgmGalleryContent(
 
     val activeEntry = allTracks.firstOrNull { it.slotNumber == currentSlot }
 
+    val compact = LocalCompact.current
     Column(
         Modifier
             .fillMaxSize()
             .background(Wa2Colors.Night)
-            .padding(horizontal = 24.dp, vertical = 14.dp),
+            .screenSafePadding()
+            .padding(horizontal = if (compact) 16.dp else 24.dp, vertical = 14.dp),
     ) {
-        // ---- Top bar
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
+        val titleBlock: @Composable (Modifier) -> Unit = { m ->
+            Column(m) {
                 Text(
                     "音乐鉴赏  BGM Gallery  ·  音楽モード",
                     color = Wa2Colors.Text,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
+                    maxLines = if (compact) 1 else Int.MAX_VALUE,
+                    overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
                 )
                 Text(
                     "已解锁 $unlockedCount / ${allTracks.size} 曲  ·  当前列表 ${visibleTracks.size} 曲",
@@ -219,45 +220,38 @@ private fun BgmGalleryContent(
                     fontSize = 12.sp,
                 )
             }
-            BgmFilter.entries.forEach { tab ->
-                val active = filter == tab
-                val shape = RoundedCornerShape(8.dp)
-                Box(
-                    Modifier
-                        .heightIn(min = 38.dp)
-                        .clip(shape)
-                        .background(if (active) Wa2Colors.ButtonActive else Wa2Colors.Button)
-                        .border(BorderStroke(1.dp, if (active) Wa2Colors.Accent else Wa2Colors.Border), shape)
-                        .clickable { filter = tab }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        tab.label,
-                        color = if (active) Wa2Colors.Accent else Wa2Colors.Text,
-                        fontSize = 12.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                }
+        }
+        if (compact) {
+            // ---- Compact top bar (§3.8): [title | ✕] / [filters (scroll) | Show All]
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                titleBlock(Modifier.weight(1f))
+                CloseButton(onClose)
             }
-            val toggleShape = RoundedCornerShape(8.dp)
-            Box(
-                Modifier
-                    .heightIn(min = 38.dp)
-                    .clip(toggleShape)
-                    .background(if (showAll) Wa2Colors.ButtonActive else Wa2Colors.Button)
-                    .border(BorderStroke(1.dp, if (showAll) Wa2Colors.Accent else Wa2Colors.Border), toggleShape)
-                    .clickable { onShowAllChange(!showAll) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center,
+            Row(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    if (showAll) "解锁全部 Show All: ON" else "解锁全部 Show All: OFF",
-                    color = if (showAll) Wa2Colors.Accent else Wa2Colors.TextDim,
-                    fontSize = 12.sp,
-                )
+                Row(
+                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    BgmFilter.entries.forEach { tab -> BgmTab(tab.label, filter == tab) { filter = tab } }
+                }
+                BgmShowAllPill(showAll, if (showAll) "解锁全部 ON" else "解锁全部 OFF") { onShowAllChange(!showAll) }
             }
-            CloseButton(onClose)
+        } else {
+            // ---- Top bar
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                titleBlock(Modifier.weight(1f))
+                BgmFilter.entries.forEach { tab -> BgmTab(tab.label, filter == tab) { filter = tab } }
+                BgmShowAllPill(showAll, if (showAll) "解锁全部 Show All: ON" else "解锁全部 Show All: OFF") { onShowAllChange(!showAll) }
+                CloseButton(onClose)
+            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -353,17 +347,8 @@ private fun BgmGalleryContent(
 
         // ---- Bottom Transport Bar
         val barShape = RoundedCornerShape(12.dp)
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(barShape)
-                .background(Wa2Colors.Panel)
-                .border(BorderStroke(1.dp, Wa2Colors.Border), barShape)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
+        val statusText: @Composable (Modifier) -> Unit = { m ->
+            Column(m) {
                 Text(
                     if (activeEntry != null && isPlaying) {
                         val stateTag = if (isPaused) "已暂停 Paused" else "正在播放 Now Playing"
@@ -385,20 +370,134 @@ private fun BgmGalleryContent(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-
-            TransportPill("⏮ 上一曲", onClick = { stepTrack(-1) })
-            TransportPill(
-                label = when {
-                    !isPlaying -> "▶ 播放 Play"
-                    isPaused -> "▶ 继续 Resume"
-                    else -> "⏸ 暂停 Pause"
-                },
-                highlighted = isPlaying && !isPaused,
-                onClick = ::togglePlayPause,
-            )
-            TransportPill("⏹ 停止 Stop", onClick = ::stopPlayback)
-            TransportPill("⏭ 下一曲", onClick = { stepTrack(+1) })
         }
+        if (compact) {
+            // Compact transport (§3.8): status text above four equal 48 dp pills.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(barShape)
+                    .background(Wa2Colors.Panel)
+                    .border(BorderStroke(1.dp, Wa2Colors.Border), barShape)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                statusText(Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CompactTransportPill("⏮", "上一曲", Modifier.weight(1f), onClick = { stepTrack(-1) })
+                    CompactTransportPill(
+                        icon = if (isPlaying && !isPaused) "⏸" else "▶",
+                        caption = when {
+                            !isPlaying -> "播放"
+                            isPaused -> "继续"
+                            else -> "暂停"
+                        },
+                        modifier = Modifier.weight(1f),
+                        highlighted = isPlaying && !isPaused,
+                        onClick = ::togglePlayPause,
+                    )
+                    CompactTransportPill("⏹", "停止", Modifier.weight(1f), onClick = ::stopPlayback)
+                    CompactTransportPill("⏭", "下一曲", Modifier.weight(1f), onClick = { stepTrack(+1) })
+                }
+            }
+        } else {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(barShape)
+                    .background(Wa2Colors.Panel)
+                    .border(BorderStroke(1.dp, Wa2Colors.Border), barShape)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                statusText(Modifier.weight(1f))
+
+                TransportPill("⏮ 上一曲", onClick = { stepTrack(-1) })
+                TransportPill(
+                    label = when {
+                        !isPlaying -> "▶ 播放 Play"
+                        isPaused -> "▶ 继续 Resume"
+                        else -> "⏸ 暂停 Pause"
+                    },
+                    highlighted = isPlaying && !isPaused,
+                    onClick = ::togglePlayPause,
+                )
+                TransportPill("⏹ 停止 Stop", onClick = ::stopPlayback)
+                TransportPill("⏭ 下一曲", onClick = { stepTrack(+1) })
+            }
+        }
+    }
+}
+
+/** Page filter tab of the top bar. */
+@Composable
+private fun BgmTab(label: String, active: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier
+            .heightIn(min = 38.dp)
+            .clip(shape)
+            .background(if (active) Wa2Colors.ButtonActive else Wa2Colors.Button)
+            .border(BorderStroke(1.dp, if (active) Wa2Colors.Accent else Wa2Colors.Border), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (active) Wa2Colors.Accent else Wa2Colors.Text,
+            fontSize = 12.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}
+
+/** `解锁全部 Show All` toggle pill of the top bar. */
+@Composable
+private fun BgmShowAllPill(showAll: Boolean, label: String, onClick: () -> Unit) {
+    val toggleShape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier
+            .heightIn(min = 38.dp)
+            .clip(toggleShape)
+            .background(if (showAll) Wa2Colors.ButtonActive else Wa2Colors.Button)
+            .border(BorderStroke(1.dp, if (showAll) Wa2Colors.Accent else Wa2Colors.Border), toggleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (showAll) Wa2Colors.Accent else Wa2Colors.TextDim,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+/** Compact transport button: 18 sp icon over a 10 sp caption, ≥ 48 dp tall, width from [modifier]. */
+@Composable
+private fun CompactTransportPill(
+    icon: String,
+    caption: String,
+    modifier: Modifier = Modifier,
+    highlighted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    Column(
+        modifier
+            .heightIn(min = 48.dp)
+            .clip(shape)
+            .background(if (highlighted) Wa2Colors.ButtonActive else Wa2Colors.Button)
+            .border(BorderStroke(1.dp, if (highlighted) Wa2Colors.Accent else Wa2Colors.Border), shape)
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(icon, color = if (highlighted) Wa2Colors.Accent else Wa2Colors.Text, fontSize = 18.sp)
+        Text(caption, color = if (highlighted) Wa2Colors.Accent else Wa2Colors.TextDim, fontSize = 10.sp, maxLines = 1)
     }
 }
 

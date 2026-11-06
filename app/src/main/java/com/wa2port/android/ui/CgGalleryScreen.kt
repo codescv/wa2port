@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -55,6 +56,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -166,24 +168,23 @@ fun CgGalleryScreen(
         if (showAll) filteredGroups.size else filteredGroups.count { it.isUnlocked(system) }
     }
 
+    val compact = LocalCompact.current
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 8.dp),
+                .screenSafePadding()
+                .padding(horizontal = if (compact) 16.dp else 24.dp, vertical = 8.dp),
         ) {
-            // Top bar: Title + Filter chips + Show All toggle + Close button
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Column(Modifier.weight(1f)) {
+            val titleBlock: @Composable (Modifier) -> Unit = { m ->
+                Column(m) {
                     Text(
                         "CG 鉴赏 CG Gallery",
                         color = Wa2Colors.Text,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Medium,
+                        maxLines = if (compact) 1 else Int.MAX_VALUE,
+                        overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
                     )
                     Text(
                         "共 ${filteredGroups.size} 组 ($unlockedCount 已解锁 Unlocked)",
@@ -191,24 +192,57 @@ fun CgGalleryScreen(
                         fontSize = 11.sp,
                     )
                 }
+            }
+            if (compact) {
+                // Compact header (§3.7): [title + count | ✕] / [filters (scrolls) | Show All]
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    titleBlock(Modifier.weight(1f))
+                    CloseButton(onClose)
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Segmented(
+                        options = CgFilter.entries.map { it to it.label },
+                        selected = filter,
+                        onSelect = { filter = it },
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    ShowAllToggle(
+                        checked = showAll,
+                        onToggle = { onShowAllChange(!showAll) },
+                        compact = true,
+                    )
+                }
+            } else {
+                // Top bar: Title + Filter chips + Show All toggle + Close button
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    titleBlock(Modifier.weight(1f))
 
-                Segmented(
-                    options = CgFilter.entries.map { it to it.label },
-                    selected = filter,
-                    onSelect = { filter = it },
-                )
+                    Segmented(
+                        options = CgFilter.entries.map { it to it.label },
+                        selected = filter,
+                        onSelect = { filter = it },
+                    )
 
-                ShowAllToggle(
-                    checked = showAll,
-                    onToggle = { onShowAllChange(!showAll) },
-                )
+                    ShowAllToggle(
+                        checked = showAll,
+                        onToggle = { onShowAllChange(!showAll) },
+                    )
 
-                CloseButton(onClose)
+                    CloseButton(onClose)
+                }
             }
 
             // Grid of CG group cards
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(185.dp),
+                columns = GridCells.Adaptive(if (compact) 150.dp else 185.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize(),
@@ -253,11 +287,12 @@ fun CgGalleryScreen(
     }
 }
 
-/** Toggle pill for `解锁全部 Show All` (default ON). */
+/** Toggle pill for `解锁全部 Show All` (default ON). [compact]: short `解锁全部 ON/OFF` label. */
 @Composable
 private fun ShowAllToggle(
     checked: Boolean,
     onToggle: () -> Unit,
+    compact: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
     Box(
@@ -271,7 +306,7 @@ private fun ShowAllToggle(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            "解锁全部 Show All: ${if (checked) "ON" else "OFF"}",
+            if (compact) "解锁全部 ${if (checked) "ON" else "OFF"}" else "解锁全部 Show All: ${if (checked) "ON" else "OFF"}",
             color = if (checked) Wa2Colors.Night else Wa2Colors.Text,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
@@ -528,7 +563,7 @@ fun CgViewer(
                                 val nextScale = (scale * zoomChange).coerceIn(1f, 4f)
                                 scale = nextScale
                                 offset = if (nextScale > 1.01f) {
-                                    clampPanOffset(offset + panChange, nextScale, containerSize)
+                                    clampPanOffset(offset + panChange, nextScale, containerSize.width.toFloat(), containerSize.height.toFloat())
                                 } else {
                                     Offset.Zero
                                 }
@@ -536,7 +571,7 @@ fun CgViewer(
                             } else if (variantUnlocked && scale > 1.05f) {
                                 totalMoved += panChange.getDistance()
                                 if (totalMoved > touchSlop) {
-                                    offset = clampPanOffset(offset + panChange, scale, containerSize)
+                                    offset = clampPanOffset(offset + panChange, scale, containerSize.width.toFloat(), containerSize.height.toFloat())
                                     event.changes.forEach { if (it.positionChanged()) it.consume() }
                                 }
                             } else {
@@ -591,10 +626,14 @@ fun CgViewer(
 
         // Subtle HUD overlay (toggled by center tap)
         if (hudVisible) {
+            val compact = LocalCompact.current
+            // Portrait: lift the HUD above the gesture zone (landscape: 20 dp as before).
+            val hudBottom = 20.dp + if (LocalIsPortrait.current) LocalScreenInsets.current.bottom else 0.dp
             Row(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 20.dp)
+                    .padding(bottom = hudBottom)
+                    .then(if (compact) Modifier.padding(horizontal = 12.dp) else Modifier)
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color(0xCC0B1020))
                     .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(24.dp))
@@ -602,51 +641,79 @@ fun CgViewer(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text(
-                    "◀",
-                    color = Wa2Colors.Accent,
-                    fontSize = 15.sp,
-                    modifier = Modifier.clickable { stepPrev() }.padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+                HudButton("◀", Wa2Colors.Accent, compact) { stepPrev() }
                 Text(
                     if (variantUnlocked) {
                         "$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size}"
                     } else {
-                        "$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size} (未解锁 Locked)"
+                        "$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size} ${if (compact) "(锁)" else "(未解锁 Locked)"}"
                     },
                     color = if (variantUnlocked) Wa2Colors.Text else Wa2Colors.TextDim,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    modifier = if (compact) Modifier.weight(1f, fill = false) else Modifier,
                 )
                 Text(
                     "(${groupIndex + 1}/${groups.size})",
                     color = Wa2Colors.TextDim,
                     fontSize = 12.sp,
                 )
-                Text(
-                    "▶",
-                    color = Wa2Colors.Accent,
-                    fontSize = 15.sp,
-                    modifier = Modifier.clickable { stepNext() }.padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+                HudButton("▶", Wa2Colors.Accent, compact) { stepNext() }
                 Spacer(Modifier.width(4.dp))
-                Text(
-                    "✕",
-                    color = Wa2Colors.TextDim,
-                    fontSize = 15.sp,
-                    modifier = Modifier.clickable { onClose() }.padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+                HudButton("✕", Wa2Colors.TextDim, compact) { onClose() }
             }
         }
     }
 }
 
-/** Clamps pan [offset] so a zoomed-in image cannot be dragged past its scaled edges. */
-private fun clampPanOffset(offset: Offset, scale: Float, size: IntSize): Offset {
-    if (size.width <= 0 || size.height <= 0 || scale <= 1f) return Offset.Zero
-    val maxX = (size.width * (scale - 1f)) / 2f
-    val maxY = (size.height * (scale - 1f)) / 2f
+/** CgViewer HUD glyph button; compact: ≥ 44 dp touch box (WIDE keeps today's text-sized target). */
+@Composable
+private fun HudButton(glyph: String, color: Color, compact: Boolean, onClick: () -> Unit) {
+    if (compact) {
+        Box(
+            Modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp).clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(glyph, color = color, fontSize = 15.sp)
+        }
+    } else {
+        Text(
+            glyph,
+            color = color,
+            fontSize = 15.sp,
+            modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+}
+
+/** Aspect ratio of every WA2 CG (1280×720); the viewer fits the image with [ContentScale.Fit]. */
+internal const val CG_ASPECT = 16f / 9f
+
+/**
+ * Size of the CG as laid out by `ContentScale.Fit` in a [containerW]×[containerH] box at scale 1:
+ * pillarboxed `(ch·16/9, ch)` when the box is wider than 16:9, else letterboxed `(cw, cw·9/16)`.
+ * Returned as `(width, height)` in the container's units.
+ */
+internal fun cgFittedSize(containerW: Float, containerH: Float): Pair<Float, Float> =
+    if (containerW / containerH > CG_ASPECT) {
+        Pair(containerH * CG_ASPECT, containerH)
+    } else {
+        Pair(containerW, containerW / CG_ASPECT)
+    }
+
+/**
+ * Clamps pan [offset] so a zoomed-in CG cannot be dragged past its scaled edges. Uses the 16:9
+ * fitted image rect (not the container): `maxX = max(0, (fitted.w·s − cw)/2)`,
+ * `maxY = max(0, (fitted.h·s − ch)/2)` — the old container-based clamp let a portrait 2× view drag
+ * the picture far off-screen. Pure (unit-agnostic) for `ClampPanTest`.
+ */
+internal fun clampPanOffset(offset: Offset, scale: Float, containerW: Float, containerH: Float): Offset {
+    if (containerW <= 0f || containerH <= 0f || scale <= 1f) return Offset.Zero
+    val (fittedW, fittedH) = cgFittedSize(containerW, containerH)
+    val maxX = maxOf(0f, (fittedW * scale - containerW) / 2f)
+    val maxY = maxOf(0f, (fittedH * scale - containerH) / 2f)
     return Offset(
         x = offset.x.coerceIn(-maxX, maxX),
         y = offset.y.coerceIn(-maxY, maxY),

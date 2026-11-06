@@ -6,6 +6,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,7 +38,11 @@ import com.wa2port.android.AppViewModel
 import com.wa2port.android.data.AssetLocator
 import com.wa2port.android.data.ImportProgress
 
-/** Shows where assets are searched, SAF import with resumable progress, and a manual path field. */
+/**
+ * Shows where assets are searched, SAF import with resumable progress, and a manual path field.
+ * Action buttons wrap ([FlowRow]); compact ([LocalCompact]) uses 16 dp side padding.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AssetSetupScreen(vm: AppViewModel) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -51,7 +57,8 @@ fun AssetSetupScreen(vm: AppViewModel) {
     }
     var path by remember { mutableStateOf(vm.settings.assetPath ?: AssetLocator.TMP_DIR) }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 12.dp)) {
+    val compact = LocalCompact.current
+    Column(Modifier.fillMaxSize().screenSafePadding().padding(horizontal = if (compact) 16.dp else 32.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("资源文件夹 Asset Folder Setup", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
             CloseButton { vm.back() }
@@ -92,7 +99,7 @@ fun AssetSetupScreen(vm: AppViewModel) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MenuButton("从文件夹导入 Import folder…", "SAF 选择游戏根目录", enabled = !running) { picker.launch(null) }
                 if (!running && vm.settings.importTreeUri != null && progress?.phase != ImportProgress.Phase.DONE) {
                     MenuButton("继续导入 Resume import", "跳过已复制文件") { vm.resumeImport() }

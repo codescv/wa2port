@@ -8,8 +8,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -136,94 +139,133 @@ private fun SceneReplayContent(
     val visibleEntries = remember(filter) { SceneReplayGallery.filter(filter.category) }
     val unlockedCount = remember(system) { allEntries.count { it.isUnlocked(system) } }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Wa2Colors.Night)
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-    ) {
-        // ---- Top bar
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+    val compact = LocalCompact.current
+    BoxWithConstraints(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
+        val columns = if (maxWidth < 520.dp) 2 else 3
+        Column(
+            Modifier
+                .fillMaxSize()
+                .screenSafePadding()
+                .padding(horizontal = if (compact) 16.dp else 24.dp, vertical = 14.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "场景回想  Scene Replay  ·  回想モード",
-                    color = Wa2Colors.Text,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    "已解锁 $unlockedCount / ${allEntries.size} 幕  ·  当前分类 ${visibleEntries.size} 幕",
-                    color = Wa2Colors.TextDim,
-                    fontSize = 12.sp,
-                )
-            }
-            ReplayFilter.entries.forEach { tab ->
-                val active = filter == tab
-                val shape = RoundedCornerShape(8.dp)
-                Box(
-                    Modifier
-                        .heightIn(min = 38.dp)
-                        .clip(shape)
-                        .background(if (active) Wa2Colors.ButtonActive else Wa2Colors.Button)
-                        .border(BorderStroke(1.dp, if (active) Wa2Colors.Accent else Wa2Colors.Border), shape)
-                        .clickable { filter = tab }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
+            val titleBlock: @Composable (Modifier) -> Unit = { m ->
+                Column(m) {
                     Text(
-                        tab.label,
-                        color = if (active) Wa2Colors.Accent else Wa2Colors.Text,
+                        "场景回想  Scene Replay  ·  回想モード",
+                        color = Wa2Colors.Text,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = if (compact) 1 else Int.MAX_VALUE,
+                        overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
+                    )
+                    Text(
+                        "已解锁 $unlockedCount / ${allEntries.size} 幕  ·  当前分类 ${visibleEntries.size} 幕",
+                        color = Wa2Colors.TextDim,
                         fontSize = 12.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                     )
                 }
             }
-            val toggleShape = RoundedCornerShape(8.dp)
-            Box(
-                Modifier
-                    .heightIn(min = 38.dp)
-                    .clip(toggleShape)
-                    .background(if (showAll) Wa2Colors.ButtonActive else Wa2Colors.Button)
-                    .border(BorderStroke(1.dp, if (showAll) Wa2Colors.Accent else Wa2Colors.Border), toggleShape)
-                    .clickable { onShowAllChange(!showAll) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center,
+            if (compact) {
+                // ---- Compact top bar (§3.9): [title | ✕] / [filters (scroll) | Show All]
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    titleBlock(Modifier.weight(1f))
+                    CloseButton(onClose)
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ReplayFilter.entries.forEach { tab -> ReplayTab(tab.label, filter == tab) { filter = tab } }
+                    }
+                    ReplayShowAllPill(showAll, if (showAll) "解锁全部 ON" else "解锁全部 OFF") { onShowAllChange(!showAll) }
+                }
+            } else {
+                // ---- Top bar
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    titleBlock(Modifier.weight(1f))
+                    ReplayFilter.entries.forEach { tab -> ReplayTab(tab.label, filter == tab) { filter = tab } }
+                    ReplayShowAllPill(showAll, if (showAll) "解锁全部 Show All: ON" else "解锁全部 Show All: OFF") { onShowAllChange(!showAll) }
+                    CloseButton(onClose)
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // ---- Replay Card Grid (3 columns; 2 below 520 dp)
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    if (showAll) "解锁全部 Show All: ON" else "解锁全部 Show All: OFF",
-                    color = if (showAll) Wa2Colors.Accent else Wa2Colors.TextDim,
-                    fontSize = 12.sp,
-                )
-            }
-            CloseButton(onClose)
-        }
-
-        Spacer(Modifier.height(10.dp))
-
-        // ---- 3-column Replay Card Grid
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(3),
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(visibleEntries, key = { it.slotNumber }) { entry ->
-                val unlocked = showAll || entry.isUnlocked(system)
-                ReplayCard(
-                    entry = entry,
-                    unlocked = unlocked,
-                    lang = lang,
-                    assets = assets,
-                    imageCache = imageCache,
-                    thumbCache = thumbCache,
-                    onClick = { if (unlocked) onLaunchReplay(entry) },
-                )
+                items(visibleEntries, key = { it.slotNumber }) { entry ->
+                    val unlocked = showAll || entry.isUnlocked(system)
+                    ReplayCard(
+                        entry = entry,
+                        unlocked = unlocked,
+                        lang = lang,
+                        assets = assets,
+                        imageCache = imageCache,
+                        thumbCache = thumbCache,
+                        onClick = { if (unlocked) onLaunchReplay(entry) },
+                    )
+                }
             }
         }
+    }
+}
+
+/** Chapter filter tab of the top bar. */
+@Composable
+private fun ReplayTab(label: String, active: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier
+            .heightIn(min = 38.dp)
+            .clip(shape)
+            .background(if (active) Wa2Colors.ButtonActive else Wa2Colors.Button)
+            .border(BorderStroke(1.dp, if (active) Wa2Colors.Accent else Wa2Colors.Border), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (active) Wa2Colors.Accent else Wa2Colors.Text,
+            fontSize = 12.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+        )
+    }
+}
+
+/** `解锁全部 Show All` toggle pill of the top bar. */
+@Composable
+private fun ReplayShowAllPill(showAll: Boolean, label: String, onClick: () -> Unit) {
+    val toggleShape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier
+            .heightIn(min = 38.dp)
+            .clip(toggleShape)
+            .background(if (showAll) Wa2Colors.ButtonActive else Wa2Colors.Button)
+            .border(BorderStroke(1.dp, if (showAll) Wa2Colors.Accent else Wa2Colors.Border), toggleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (showAll) Wa2Colors.Accent else Wa2Colors.TextDim,
+            fontSize = 12.sp,
+        )
     }
 }
 
