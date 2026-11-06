@@ -27,6 +27,10 @@ The APK ships **engine only** (Bring Your Own Assets); players supply their own 
   - Breakdown sheet: interactive furigana sentence (tap a character → its chunk, 0 ms), `▶ 原声` voice replay, register/tone badges, AI / literal / official CK-GAL translation with 对照说明, **📘 课本标准 vs 🔥 口语演变** chunk cards with a formality bar, vocabulary (JLPT, pitch accent, conjugation) and grammar cards, and multi-turn follow-up Q&A with tutor personas (小鳥 / 冬马和纱 / 小木曾雪菜).
   - Providers: **Gemini API key** or **Vertex AI** (service account JSON / access token / Express key), plus **自定义服务器地址** (custom base URL / reverse proxy, with `x-goog-api-key` / Bearer / `?key=` auth styles and extra headers). Explanations are cached (SHA-256 keyed) in app-private storage; `示例预览` and an offline phrase split work without any key.
   - Privacy: API keys and the explained lines are sent only to the endpoint you configure; settings (including secrets) live in the app-private `settings.json`.
+- **Portrait Mode (`竖屏模式`, `横屏 / 竖屏 / 自动`)**:
+  - Switch live from the title `⟳` pill, the in-game MENU Quick Controls or Config → 显示 (default stays landscape). The layout follows the measured window (`height > width`), so foldables, tablets and split-screen work even when the system ignores the orientation request.
+  - "Split-stage theater": quick-bar HUD row under the punch-hole, the full uncropped 16:9 stage, and a reading deck below with CN-above-JP stacked bilingual text at the same glyph size as the phone held sideways (`DeckLayout`, 70%–150%), in-deck scrolling, `🔊 重听`, 点词 tap-to-analyze, choice prompt + cards side by side, and NOVEL pages inside the deck. Rotation keeps the typewriter, transitions, movies and AI drafts.
+  - Every screen and overlay gets compact phone layouts with cutout / gesture-bar / keyboard-safe padding.
 - **Mobile Touch Controls & Save System**:
   - Tap to reveal/advance, long-press (`≥350 ms`) to fast-skip, swipe-up for bilingual Backlog with `▶` voice replay, two-finger tap to hide window, 24 save slots + Quick Save/Load with stage thumbnails, and persistent `既読` bitsets + 1024-entry `GFLAG` system data.
 
@@ -77,7 +81,7 @@ Storage Access Framework (SAF) picker.
 | Package | Contents |
 |---|---|
 | (root), `ui/`, `data/` | `MainActivity`, `AppViewModel`, `TitleScreen`, `CgGalleryScreen`, `BgmGalleryScreen`, `SceneReplayScreen`, `SaveLoadScreen`, `ConfigScreen`, `AssetSetupScreen` (path scan + SAF import), `SaveStore`, `SettingsStore` |
-| `game/` | `GameSession` (frame-driven engine loop, typewriter, auto/skip, quick/slot saves, replay mode guards), `GameScreen`, two-column bilingual `AdvWindow` & `NovelPage`, choices, `BacklogOverlay` with `▶` voice replay, `QuickBar`, touch gestures |
+| `game/` | `GameSession` (frame-driven engine loop, typewriter, auto/skip, quick/slot saves, replay mode guards), `GameScreen` + pure `GameLayout` (landscape letterbox / portrait split-stage geometry), two-column (landscape) / stacked portrait-deck bilingual `AdvWindow` & `NovelPage`, choices, `BacklogOverlay` with `▶` voice replay, `QuickBar` / portrait `QuickBarFill`, touch gestures |
 | `render/` | `StageView` / `StageComposer` (1280×720 letterboxed compositor: `bg → sprites → layers → CG`, `.amp` LUTs, crossfade + `f0%03d.bmp` mask dissolve, `FB`/`F` brightness, snow), `AssetImageCache`, `GlyphAtlasText`, `MoviePlayer` |
 | `audio/` | `AudioEngine` (BGM `_A`→`_B` gapless loop via `setNextMediaPlayer`, 4 ambient SE channels + one-shots, voice) streaming directly from `LAC\0` archive slices |
 | `movie/` + `src/main/cpp` | `NativeMovieDecoder` / `AsfMoviePlayer`: plays original `mvNN0.pak` ASF (`WMV3` + `WMAv2`) via minimal LGPL FFmpeg 7.0.2 (`build_ffmpeg.sh`, prebuilt `.so` for `arm64-v8a` / `x86_64`) |
