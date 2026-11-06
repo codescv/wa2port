@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
@@ -107,9 +109,10 @@ fun UpdateDialog(
         contentAlignment = Alignment.Center,
     ) {
         val shape = RoundedCornerShape(14.dp)
+        val compact = LocalCompact.current
         Column(
             Modifier
-                .padding(24.dp)
+                .padding(horizontal = if (compact) 12.dp else 24.dp, vertical = 24.dp)
                 .widthIn(max = 560.dp)
                 .fillMaxWidth()
                 .clip(shape)
@@ -117,7 +120,7 @@ fun UpdateDialog(
                 .border(BorderStroke(1.dp, Wa2Colors.AccentDim), shape)
                 // Swallow taps so they do not reach the scrim.
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = 12.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("版本更新 App Update", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
@@ -292,7 +295,8 @@ fun AgentFeedbackSection(
     val email = settings.agentFeedbackEmail
     val emailError = if (email.isEmpty()) null else AgentFeedbackHelper.validateEmail(email)
     SectionTitle("Agent 反馈 Agent Feedback")
-    OptionRow("反馈给 Agent") {
+    val compact = LocalCompact.current
+    val status: @Composable (Modifier) -> Unit = { extra ->
         Text(
             when {
                 email.isEmpty() -> "未配置邮箱 Email not set"
@@ -307,9 +311,39 @@ fun AgentFeedbackSection(
             fontSize = 13.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 280.dp).padding(end = 12.dp),
+            modifier = Modifier.widthIn(max = 280.dp).padding(end = 12.dp).then(extra),
         )
-        UpdateButton("撰写反馈 Feedback", primary = true, onClick = onOpenFeedback)
+    }
+    OptionRow("反馈给 Agent") {
+        if (compact) {
+            // Narrow panels: the button wraps below the status instead of being crushed.
+            WrapRow(compact = true, gap = 0.dp) {
+                status(Modifier.align(Alignment.CenterVertically))
+                UpdateButton("撰写反馈 Feedback", primary = true, onClick = onOpenFeedback)
+            }
+        } else {
+            status(Modifier)
+            UpdateButton("撰写反馈 Feedback", primary = true, onClick = onOpenFeedback)
+        }
+    }
+}
+
+/**
+ * Horizontal group that wraps on narrow ([compact]) panels: a [FlowRow] (items wrap to the next line
+ * instead of crushing each other), otherwise today's single centred [Row].
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WrapRow(compact: Boolean, modifier: Modifier = Modifier, gap: Dp = 8.dp, content: @Composable RowScope.() -> Unit) {
+    if (compact) {
+        FlowRow(
+            modifier,
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            content = content,
+        )
+    } else {
+        Row(modifier, horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically, content = content)
     }
 }
 
@@ -441,9 +475,10 @@ fun AgentFeedbackDialog(
         contentAlignment = Alignment.Center,
     ) {
         val shape = RoundedCornerShape(14.dp)
+        val compact = LocalCompact.current
         Column(
             Modifier
-                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .padding(horizontal = if (compact) 12.dp else 24.dp, vertical = 12.dp)
                 .widthIn(max = 640.dp)
                 .fillMaxWidth()
                 .clip(shape)
@@ -451,7 +486,7 @@ fun AgentFeedbackDialog(
                 .border(BorderStroke(1.dp, Wa2Colors.AccentDim), shape)
                 // Swallow taps so they do not reach the scrim.
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-                .padding(horizontal = 20.dp, vertical = 10.dp),
+                .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = 10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Agent 反馈 Agent Feedback", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
@@ -531,11 +566,7 @@ fun AgentFeedbackDialog(
                     colors = feedbackFieldColors(),
                 )
 
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                WrapRow(compact, Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     UpdateButton(
                         if (attachedImageUri == null) "增加图片 Add Image" else "更换图片 Change Image",
                         enabled = !sending,
@@ -554,7 +585,7 @@ fun AgentFeedbackDialog(
                             fontSize = 13.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
+                            modifier = Modifier.weight(1f, fill = false).align(Alignment.CenterVertically),
                         )
                         UpdateButton("移除 Remove", enabled = !sending) {
                             attachedImageUri = null
@@ -566,16 +597,27 @@ fun AgentFeedbackDialog(
 
                 if (gameContext != null && gameContext.scene.isNotBlank()) {
                     OptionRow("场景上下文 Scene context") {
-                        Segmented(
-                            options = listOf(true to "附带 On", false to "不附带 Off"),
-                            selected = includeGameContext,
-                            onSelect = { includeGameContext = it },
-                        )
-                        Text(
-                            "  ${gameContext.summaryBadge()}",
-                            color = Wa2Colors.TextDim,
-                            fontSize = 12.sp,
-                        )
+                        val toggle = @Composable {
+                            Segmented(
+                                options = listOf(true to "附带 On", false to "不附带 Off"),
+                                selected = includeGameContext,
+                                onSelect = { includeGameContext = it },
+                            )
+                        }
+                        if (compact) {
+                            // Narrow: the scene badge becomes a caption below the toggle.
+                            Column {
+                                toggle()
+                                Text(gameContext.summaryBadge(), color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                            }
+                        } else {
+                            toggle()
+                            Text(
+                                "  ${gameContext.summaryBadge()}",
+                                color = Wa2Colors.TextDim,
+                                fontSize = 12.sp,
+                            )
+                        }
                     }
                 }
 

@@ -516,7 +516,11 @@ fun CgViewer(
             .fillMaxSize()
             .background(Color.Black)
             .clipToBounds()
-            .onSizeChanged { containerSize = it }
+            .onSizeChanged {
+                containerSize = it
+                // Re-clamp on resize (e.g. rotated while zoomed: 915×412 → 412×915 has maxY 206 → 0).
+                if (scale > 1.01f) offset = clampPanOffset(offset, scale, it.width.toFloat(), it.height.toFloat())
+            }
             .pointerInput(groupIndex, safeVarIdx, variantUnlocked) {
                 detectTapGestures(
                     onDoubleTap = {
@@ -637,9 +641,9 @@ fun CgViewer(
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color(0xCC0B1020))
                     .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(24.dp))
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .then(if (compact) Modifier.padding(horizontal = 8.dp, vertical = 2.dp) else Modifier.padding(horizontal = 16.dp, vertical = 6.dp)),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 14.dp),
             ) {
                 HudButton("◀", Wa2Colors.Accent, compact) { stepPrev() }
                 Text(
@@ -653,6 +657,7 @@ fun CgViewer(
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = if (compact) Modifier.weight(1f, fill = false) else Modifier,
                 )
                 Text(
@@ -661,7 +666,7 @@ fun CgViewer(
                     fontSize = 12.sp,
                 )
                 HudButton("▶", Wa2Colors.Accent, compact) { stepNext() }
-                Spacer(Modifier.width(4.dp))
+                if (!compact) Spacer(Modifier.width(4.dp))
                 HudButton("✕", Wa2Colors.TextDim, compact) { onClose() }
             }
         }
