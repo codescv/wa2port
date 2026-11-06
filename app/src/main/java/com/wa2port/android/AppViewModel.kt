@@ -80,7 +80,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var session by mutableStateOf<GameSession?>(null)
         private set
 
-    /** AI learning (Kotori-style breakdown); survives sessions, cache in `filesDir/ai_cache`. */
+    /**
+     * AI learning (Kotori-style breakdown); survives sessions, cache in `filesDir/ai_cache`, the
+     * 📦 full-game offline AI pack in `filesDir/ai_pack` ([AiLearningController.packs]).
+     */
     val ai = AiLearningController(File(app.filesDir, "ai_cache"), { settings }, viewModelScope)
 
     /** In-app update check / APK download (manual only); APKs live in `cacheDir/updates`. */
@@ -346,6 +349,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         update.cancelDownload()
+        ai.packs.close()
         closeEngine()
         super.onCleared()
     }

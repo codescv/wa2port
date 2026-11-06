@@ -58,6 +58,7 @@ flowchart TB
 | `com.wa2port.core.script` | `Value`, `FunctionTable`, `LscrProgram`, `LscrVm`, `ScenarioStore` | 逆向自 `WA2_chs.exe` 的 LSCR 脚本引擎：解析 `function.fnc`（含参数签名与默认值）；解析 `.bnr` 字节码并预扫描 `if/elif/else` 块尾与 `for` 步进入口；执行后缀表达式（RPN）与控制流；对齐加载 `script.pak`（日文）与 `ck-gal.pak`（中文）同序号双语词条及 `Global.vrb` / `GFLAG.dat`。 |
 | `com.wa2port.core.engine` | `Wa2Engine`, `Stage`, `StageState`, `EngineEvent`, `SaveData`, `HeadlessRunner` | 游戏主状态机：实现 ~150 个引擎内置函数（`LscrVm.Host`），维护不可变舞台快照 `StageState` 与一次性事件队列 `EngineEvent`，管理计时器（Wait / Transition / Tint / Shake / Choice / Movie / Message）、存读档序列化、全局标志与既读位图 `ReadTracker`。 |
 | `com.wa2port.core.gallery` | `CgGallery`, `BgmGallery`, `SceneReplayGallery` | 鉴赏与回想目录索引器：<br>• `CgGallery`：加载 `WA2.exe` `.data 0x4c01b0` 卡片表（`cg_cards.tsv`，149 张卡片 / 272 个变体），结合 `SystemData.cgFlags` 判定解锁状态；<br>• `BgmGallery`：63 首音乐鉴赏目录（`.data 0x4c1dd0`），处理 `gflags[100 + bgmId]` 解锁、#25 `BGM_021/035` 切换与 #31 完整版主题曲联动解锁，解析 `_A`+`_B` 无缝循环事件；<br>• `SceneReplayGallery`：24 幕场景回想目录（`.data 0x4c1bf0`），提供中日双语标题、女主分类、`tv%06d.tga` 预裁切缩略图解析与 `gflags[80 / 300..322]` 解锁判定。 |
+| `com.wa2port.core.ai` | `GeminiAiClient`, `ExplainJsonCodec`, `SpanAlign`, `RubyBuilder`, `ExplainCache`, `NotebookStore`, `OfflineAiPack`, `AiPackDownloader`, `AiPackCorpus`, `AiPackTool` | Kotori 式逐句 AI 精讲（请求、解析、对齐、注音、缓存、学习记录）；**全剧本离线 AI 解读包（Method 3A）**：`.wa2ai` 随机访问归档、GitHub Release `ai-pack-v1` 一键下载、语料抽取 / 批校验 / 编译 CLI（见 §7）。 |
 
 ### 1.2 `:app` 包职责
 
@@ -70,6 +71,7 @@ flowchart TB
 | `com.wa2port.android.render` | `StageView`, `StageComposer`, `AssetImageCache`, `GlyphAtlasText`, `MoviePlayer` | 1280×720 16:9 舞台渲染器：150 MB 预乘 `ARGB_8888` Bitmap LRU 缓存与异步 `.AMP` 调色缓存；后台合成 `bg → sprites → layers → cg` 单张帧位图；执行 `CUT`/`FADE`/`MASK`（`ColorMatrixColorFilter` 软阈值斜率 + `PorterDuff.Mode.DST_IN`）转场、实时 `FB`/`F` `ColorMatrixColorFilter` 亮度偏移、屏幕震动与 160 片程序化降雪；基于 `本体80.tga` + `袋影80.tga` 的双通道字库图集排版与绘制。 |
 | `com.wa2port.android.audio` | `AudioEngine` | 独立 `HandlerThread("wa2-audio")` 音频引擎：通过文件描述符偏移（`fd, offset, length`）直接从 `LAC\0` 归档播放 Ogg Vorbis；利用 `setNextMediaPlayer` 实现 `_A → _B` 无缝循环 BGM；20 ms 步进音量淡入淡出；支持 4 通道循环环境音效（SE 0..3）、并发短音效池与单通道角色语音（`VI`/`VV`/`VX`）。 |
 | `com.wa2port.android.movie` & `src/main/cpp` | `AsfMoviePlayer`, `NativeMovieDecoder`, `wa2movie.c` | 基于 JNI 与定制编译 LGPL FFmpeg 7.0.2（`libwa2movie.so`）的 `.asf`（WMV3 + WMAv2）软解播放器，通过 `SurfaceView` + `AudioTrack` 同步输出音画。 |
+| `com.wa2port.android.ai` | `AiLearningController`, `AiPackController`, `OfflinePackCards`, `NotebookScreen` | AI 精讲控制器（离线优先：缓存 → 离线包 → 在线模型；学习记录、追问、跳过离线包已覆盖行的预取）；📦 离线包下载 / 断点续传 / 取消 / 检查更新 / 删除与零重启热插拔；设置页与 AI 面板内的一键下载卡片。 |
 
 ---
 
@@ -253,3 +255,45 @@ stateDiagram-v2
    - **原因**：一个典型场景包含 1 张背景 + 1~3 张立绘 + 雨雪/特效叠加层，且转场期间需要同时混合新旧两个完整场景（并使用 BMP 遮罩逐像素插值）。通过 `StageComposer` 在状态变更（`serial` 递增）时一次性将静态层压平为单张 1280×720 `Bitmap`，60 fps 的帧循环只需做 1~2 张全屏 Bitmap 的 Shader/Canvas 绘制，大幅降低了 GPU 带宽与发热。
 5. **从 `LAC\0` 归档直接偏移播放音频（零解压临时文件）**
    - **原因**：`BGM.pak` 与 `VOICE.pak` 体积达数 GB，内部条目均为未压缩的原始 Ogg Vorbis 流。`LacArchive.slice()` 直接返回 `(File, offset, length)`，交由 `MediaPlayer.setDataSource(FileDescriptor, offset, length)` 原地播放，实现了零磁盘拷贝与亚毫秒级语音起播延迟。
+
+## 7. 全剧本离线 AI 解读包 (Offline AI Pack, Method 3A)
+
+目标：**零 API Key、飞行模式下**也能对任意一句台词打开完整的 Kotori 式 ✨ AI 精讲（意群、课本 vs 口语演变、词汇、语法、注音），且分发的数据包**不含任何受版权保护的剧本文本**。
+
+```mermaid
+flowchart LR
+    A["script.pak / ck-gal.pak<br>(玩家本地)"] -->|"AiPackCorpus.extract<br>静态扫描 .bnr SetMessage"| B["occurrences.jsonl<br>71,173 行"]
+    B -->|"按 jpPlain 去重"| C["unique.jsonl / batches/<br>58,913 句"]
+    C -->|"Flash 批量生成<br>紧凑 JSONL"| D["out/batch_XXXX.jsonl"]
+    D -->|"validate<br>ExplainJsonCodec + SpanAlign + RubyBuilder"| E["PackEntry<br>(clean-room)"]
+    E -->|"compile + verify + 泄漏审计"| F["wa2-ai-pack-v1.wa2ai<br>GitHub Release ai-pack-v1"]
+    F -->|"AiPackDownloader"| G["filesDir/ai_pack/"]
+    G -->|"OfflineAiPack.lookup<br>(scene, token, req)"| H["SentenceExplanation<br>fromCache = true"]
+    A -->|"ExplainRequest.sentence / CK-GAL / 说话人 / 剧本注音"| H
+```
+
+### 7.1 语料抽取（`AiPackCorpus`）
+- 对每个 `.bnr` 做与 `LscrVm` 一致的线性静态扫描（常量入栈、运算符元数、`.fnc` 参数个数），把每个调用的字面文本参数归属到其 opcode：`SetMessage/SetMessageE/SetMessage2`（130/131/133）的文本 token 即一条可播放台词，键为 `LineRef(scene, token)`；`WN/WN2`（144/223/145/224）为说话人名 token（不作为台词），`SetSelectMess`（208）为选项。
+- 校验：所有场景的 118,908 个 JP token 中，**未被任何调用引用的含假名/汉字 token 为 0**，非字面量 `SetMessage` 调用为 0 —— 即不会漏掉任何台词。`9999.bnr` 仅分发到回想目标场景，这些场景本身已被扫描。
+- 纯标点行（`「……」`、`――`、`「？」`，无字母/数字/汉字）生成确定性的“无声停顿”条目，不调用模型。
+
+### 7.2 `.wa2ai` 格式（`OfflineAiPack`）
+- `"WA2AIPK1"` + `u32 formatVersion=1` + JSON 元数据（`packVersion, promptVersion, model, createdAt, sceneCount, occurrenceCount, entryCount`）+ DEFLATE 索引 + 数据块。
+- 索引常驻内存（约 12 B/行）：主索引 `(SCENE 大写, token) → entry`（每场景有序 `IntArray` 二分查找），次索引 `sha256_64(jpPlain) → entry`（有序 `LongArray`）。主索引命中但句子哈希不符（版本差异）时自动回退次索引。
+- 每 64 条为一个 DEFLATE 块，`PositionalFile`（`FileChannel.read(buf, pos)`，无锁）随机读取，4 块同步 LRU（< 2 MB）；块偏移相对数据区起点。
+- **Clean-room 存储**：只存 AI 中文（译文 / 直译 / 对照说明 / 语体 / 语气 / 角色 / 释义 / 语法说明）、汉字注音区间、意群与词汇的字符区间 + 读音 + 原形 + 词性等；`sentence`、CK-GAL 译文、说话人、已对齐的意群/词汇表面形、剧本注音、与表面形相同的课本形一律不存（课本形相同记 `""`，原形等于表面形记 `""`，读音等于表面形/其平假名时只记模式位）。对照说明在一句多译时以去空白后的 CK-GAL 文本 32 位哈希限定，仅在玩家本地官方译文匹配时显示。
+- 运行时 `lookup(scene, token, req)`：校验全部 `CharSpan` 满足 `0 ≤ start ≤ end ≤ sentence.length`，从 `req.sentence` 切出表面形，用注音区间 + 空隙 `plainRuns` 重建整句 ruby 后叠加权威 `req.scriptRuby`（`RubyBuilder.overlayScriptRuby`），切片得到意群 ruby，`computeWordRuby` 计算原形注音，并注入 `req` 的官方译文与说话人。
+- `compile` / `verify` 对全语料逐行回查两种索引，并审计所有解压块中不出现任何 ≥ 12 字的日文/中文原句。
+
+### 7.3 下载（`AiPackDownloader` / `AiPackController`）
+- 先查 `https://api.github.com/repos/codescv/wa2port/releases/tags/ai-pack-v1`（取 `size` 与 `digest: sha256:…`）；API 失败（移动网络匿名 403 限流等）时直接走固定资产地址 `https://github.com/codescv/wa2port/releases/download/ai-pack-v1/wa2-ai-pack-v1.wa2ai`。
+- 与 `AppUpdater` 相同的手动重定向（≤ 5 次、跨主机、拒绝 https → http 与非 http(s) 协议）、`Accept-Encoding: identity`、`CancelToken`；`.part` 断点续传（`Range: bytes=n-` → `206` 追加，`200` 覆盖，`416` 判定完成/重来）；网络中断或取消保留 `.part`，校验失败删除。完成后核对大小、SHA-256（release digest 或可选 `.sha256` 旁路文件）并 `OfflineAiPack.open()` 结构校验，最后原子替换。
+- `AiPackController`（Compose 状态在主线程，IO 在 `Dispatchers.IO`，代际号防止过期结果覆盖）：`NotInstalled / Checking / Available / Downloading / Installed / Error`；安装、更新、删除时通过回调把新的 `OfflineAiPack` 热插拔进 `AiLearningController`（`@Volatile`），旧包随即关闭（关闭后的查找返回 `null`，不会崩溃）。
+
+### 7.4 查找顺序（`AiLearningController.explain`）
+1. 缓存开启时先查 `ExplainCache`（用户手动 ↻ 的在线结果优先）；
+2. 离线包 `lookup(cursorRef.scene, cursorRef.token, req)`（在 IO 线程）；命中即写入学习记录并加载已保存的追问线程；
+3. 已配置 AI 时请求在线模型；
+4. 否则 `NOT_CONFIGURED`，AI 面板内显示「📦 离线 AI 解读包一键下载」卡片，安装完成后自动重新解析当前句。
+
+未配置 API Key 时 ↻ 保留离线包结果并提示「当前为离线解读包模式；配置 API Key 后可在线重新生成」；追问提示「离线解读包不含实时对话模型；配置 API Key 后可继续追问」；后台预取永远跳过离线包已覆盖的行。

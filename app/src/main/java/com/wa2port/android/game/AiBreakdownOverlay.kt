@@ -82,8 +82,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ai.AiBreakdownState
 import com.wa2port.android.ai.AiLearningController
+import com.wa2port.android.ai.AiPackState
 import com.wa2port.android.ai.AiStatus
 import com.wa2port.android.ai.NotebookOverlay
+import com.wa2port.android.ai.OfflinePackOfferCard
 import com.wa2port.android.ai.StarButton
 import com.wa2port.android.ui.CloseButton
 import com.wa2port.android.ui.LocalCompact
@@ -93,6 +95,7 @@ import com.wa2port.core.ai.AiErrorCode
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.FollowUpMessage
 import com.wa2port.core.ai.GrammarPoint
+import com.wa2port.core.ai.OfflineAiPack
 import com.wa2port.core.ai.OfflineExplainer
 import com.wa2port.core.ai.RubyBuilder
 import com.wa2port.core.ai.RubyToken
@@ -113,6 +116,10 @@ private val TEXTBOOK = Color(0xFF8FD3A8)
 private val EVOLVED = Color(0xFFFFA36B)
 private val ERROR = Color(0xFFFF8A80)
 private val OK = Color(0xFF8FD3A8)
+private val PACK_TAG = Color(0xFFB79CFF)
+
+/** Errors for which the in-sheet 📦 offline pack download card is offered (pack not installed). */
+private val PACK_OFFER_CODES = setOf(AiErrorCode.NOT_CONFIGURED, AiErrorCode.NETWORK, AiErrorCode.TIMEOUT)
 
 private val JP_LOCALE_LIST = LocaleList(Locale("ja"))
 private val JP_TEXT_STYLE = TextStyle(localeList = JP_LOCALE_LIST)
@@ -159,6 +166,12 @@ fun AiBreakdownOverlay(
     // A lazy list state can serve one list at a time; the skeleton list (alive during the crossfade) has its own.
     val skeletonListState = remember(state) { LazyListState() }
     val leftListState = remember(state) { LazyListState() }
+    // 📦 The instant an offline pack finishes installing, an errored sentence blooms into the full
+    // breakdown (no API key, no reopen).
+    val packState = ai.packs.state
+    LaunchedEffect(packState is AiPackState.Installed, state) {
+        if (packState is AiPackState.Installed && !state.isSample && state.status is AiStatus.Error) ai.explain()
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -438,13 +451,16 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
                 expl.register?.let { Tag("语体 ${it.labelCn}", Wa2Colors.Accent) }
                 expl.tone?.let { Tag("语气 $it", EVOLVED) }
                 if (state.isSample) Tag("示例 Sample", TEXTBOOK)
+                val fromPack = OfflineAiPack.isPackExplanation(expl)
+                if (fromPack) Tag("📦 离线包", PACK_TAG)
                 if (expl.model == OfflineExplainer.MODEL) Tag("离线 Offline", TEXTBOOK)
-                if (expl.fromCache) Tag("已缓存 Cached")
-                if (!state.isSample && expl.model != OfflineExplainer.MODEL && expl.model.isNotBlank()) {
+                if (expl.fromCache && !fromPack) Tag("已缓存 Cached")
+                if (!state.isSample && !fromPack && expl.model != OfflineExplainer.MODEL && expl.model.isNotBlank()) {
                     Tag(expl.model, Color(0x33FFFFFF), Wa2Colors.TextDim)
                 }
             }
         }
+        state.notice?.let { Text("ℹ $it", color = Wa2Colors.Accent, fontSize = 12.sp) }
         // While loading, the detail pane's skeleton card carries the translation (shown once, not twice).
         if (!state.isSkeleton) TranslationCard(state, expl)
         if (expl != null && expl.chunks.isNotEmpty()) {
@@ -718,6 +734,9 @@ private fun FullDetailList(
     ) {
         if (header != null) item(key = "header") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { header() } }
         (state.status as? AiStatus.Error)?.let { err -> item(key = "error") { ErrorCard(state, err, ai, onOpenSettings) } }
+        (state.status as? AiStatus.Error)?.takeIf { !state.isSample && it.code in PACK_OFFER_CODES && !ai.packs.isInstalled }?.let {
+            item(key = "pack-offer") { OfflinePackOfferCard(ai.packs) }
+        }
         if (expl != null) {
             item(key = "chunks-title") { SectionHeader("逐块解析 · 📘 课本标准 vs 🔥 口语演变") }
             val active = state.activeChunk

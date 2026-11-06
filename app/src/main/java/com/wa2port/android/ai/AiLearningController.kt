@@ -13,6 +13,8 @@ import com.wa2port.core.ai.AiConnectionTestResult
 import com.wa2port.core.ai.AiEndpoints
 import com.wa2port.core.ai.AiErrorCode
 import com.wa2port.core.ai.AiException
+import com.wa2port.core.ai.AiPackDownloader
+import com.wa2port.core.ai.AiPackEndpointConfig
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.AiProviderSettings
 import com.wa2port.core.ai.AiSampleExplanation
@@ -26,6 +28,7 @@ import com.wa2port.core.ai.GrammarPoint
 import com.wa2port.core.ai.JpSentence
 import com.wa2port.core.ai.NotebookSentenceEntry
 import com.wa2port.core.ai.NotebookStore
+import com.wa2port.core.ai.OfflineAiPack
 import com.wa2port.core.ai.OfflineExplainer
 import com.wa2port.core.ai.SemanticChunk
 import com.wa2port.core.ai.SentenceExplanation
@@ -97,7 +100,12 @@ class AiBreakdownState(
     var followUpError by mutableStateOf<String?>(null)
     /** Question to put back into the input after a failure. */
     var failedQuestion by mutableStateOf<String?>(null)
+    /** Non-destructive info line in the sheet (e.g. ↻ pressed in offline-pack mode without an API key). */
+    var notice by mutableStateOf<String?>(null)
     val followUpPending: Boolean get() = pendingQuestion != null
+
+    /** True when the shown breakdown comes from the installed offline AI pack. */
+    val isFromOfflinePack: Boolean get() = OfflineAiPack.isPackExplanation(explanation)
 
     val explanation: SentenceExplanation? get() = (status as? AiStatus.Ready)?.expl
 
@@ -148,12 +156,46 @@ class AiLearningController(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val now: () -> Long = System::currentTimeMillis,
     private val prefetchDebounceMs: Long = PREFETCH_DEBOUNCE_MS,
+    packDownloader: AiPackDownloader = AiPackDownloader(),
+    packEndpoint: () -> AiPackEndpointConfig = { AiPackEndpointConfig() },
 ) {
     val cache = ExplainCache(cacheDir)
     /** Independent learner notebook in `filesDir/notebook/` (never wiped by [clearCache]). */
     val notebook = NotebookStore(
         if (cacheDir.name == "ai_cache" && cacheDir.parentFile != null) File(cacheDir.parentFile, "notebook") else File(cacheDir, "notebook"),
     )
+
+    /**
+     * Installed full-game offline AI pack (null = none). Swapped atomically by [packs] on
+     * download / delete (zero restart); read on [io] by [explain] and the prefetch filter.
+     */
+    @Volatile
+    var offlinePack: OfflineAiPack? = null
+        private set
+
+    /** Bumped whenever [offlinePack] is plugged in / removed (Compose observers). */
+    var offlinePackRevision by mutableIntStateOf(0)
+        private set
+
+    /** 📦 Offline pack download / update / delete (`filesDir/ai_pack/`). */
+    val packs = AiPackController(
+        packDir = if (cacheDir.name == "ai_cache" && cacheDir.parentFile != null) File(cacheDir.parentFile, "ai_pack") else File(cacheDir, "ai_pack"),
+        scope = scope,
+        downloader = packDownloader,
+        io = io,
+        endpoint = packEndpoint,
+        onPackChanged = { installOfflinePack(it) },
+    )
+
+    /** Plugs in (or removes, with null) the offline pack used by [explain]; thread-safe. */
+    fun installOfflinePack(pack: OfflineAiPack?) {
+        offlinePack = pack
+        scope.launch { offlinePackRevision++ }
+    }
+
+    /** True when the installed offline pack covers [sentence] (scene/token = the line's [LineRef]). */
+    fun offlinePackCovers(scene: String?, token: Int?, sentence: String): Boolean =
+        offlinePack?.contains(scene, token, sentence) == true
     private val client = clientFactory { settings().ai }
     private val testClientFactory = clientFactory
 
@@ -588,6 +630,8 @@ class AiLearningController(
 
         val req = buildRequest(session, line, focusCharIndex = null, persona = persona, forceRefresh = false)
         if (req.sentence.isBlank()) return
+        // The offline pack already explains this line: never spend online tokens on it.
+        if (offlinePackCovers(line.ref.scene, line.ref.token, req.sentence)) return
         enqueuePrefetch(req) {
             !session.skipping && !session.autoMode && !session.inReplayMode && session.movie == null && !session.ended
         }
@@ -600,6 +644,7 @@ class AiLearningController(
      *   [cache] so already-generated tokens are never wasted.
      */
     fun enqueuePrefetch(req: ExplainRequest, stillValid: () -> Boolean = { true }) {
+        if (offlinePackCovers(null, null, req.sentence)) return
         queuedPrefetchToken?.cancel()
         queuedPrefetchJob?.cancel()
         val qToken = CancelToken()
@@ -705,7 +750,16 @@ class AiLearningController(
 
     // ------------------------------------------------------------------------------- explain
 
-    /** (Re)requests the breakdown of the open sentence. NOT_CONFIGURED is reported without any I/O. */
+    /**
+     * (Re)requests the breakdown of the open sentence, offline-first. Lookup order for a normal
+     * open (`force = false`), which works with NO API key and fully offline:
+     * 1. the explanation cache (when enabled) — explicit online ↻ regenerations win;
+     * 2. the installed offline AI pack ([offlinePack], by the line's `(scene, token)` then by sentence);
+     * 3. the online model when configured;
+     * 4. otherwise [AiErrorCode.NOT_CONFIGURED] (reported without I/O when neither pack nor cache can help).
+     * `force = true` (↻) regenerates online; without an API key the pack breakdown stays and
+     * [AiBreakdownState.notice] explains how to regenerate.
+     */
     fun explain(force: Boolean = false) {
         val st = breakdown ?: return
         if (st.isSample) {
@@ -716,15 +770,80 @@ class AiLearningController(
         explainJob?.cancel()
         // A follow-up about the old breakdown must not land on the new one.
         if (force) cancelFollowUp()
+        st.notice = null
         val ai = settings().ai
+        val pack = offlinePack
+        val req = st.request(persona, force = false)
+        val ref = st.cursorRef
         if (!ai.isConfigured) {
-            st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, ai.validationError() ?: "尚未配置 AI 服务")
+            if (force && (st.isFromOfflinePack || pack?.contains(ref?.scene, ref?.token, req.sentence) == true)) {
+                st.notice = PACK_REGENERATE_NOTICE
+                // Keep the pack breakdown on screen; only (re)load it when it is not shown yet.
+                if (st.isFromOfflinePack) return
+            } else if (pack == null && !ai.cacheEnabled) {
+                st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, ai.validationError() ?: "尚未配置 AI 服务")
+                return
+            }
+        }
+        if (!force || !ai.isConfigured) {
+            loadOfflineFirst(st, req, ai.isConfigured, ai.cacheEnabled, AiEndpoints.sanitizeModel(ai.model), ai.validationError())
             return
         }
+        startOnline(st, req, force = true)
+    }
+
+    /** Cache → offline pack → online / NOT_CONFIGURED (see [explain]). */
+    private fun loadOfflineFirst(
+        st: AiBreakdownState,
+        req: ExplainRequest,
+        configured: Boolean,
+        cacheEnabled: Boolean,
+        model: String,
+        validationError: String?,
+    ) {
+        val token = CancelToken()
+        explainToken = token
+        val pack = offlinePack
+        val ref = st.cursorRef
+        val key = ExplainCache.key(req, model)
+        // Progressive loading: the local skeleton (< 1 ms, no I/O) fills the sheet immediately.
+        if (st.explanation == null) st.status = AiStatus.Loading(OfflineExplainer.build(req, now()))
+        explainJob = scope.launch {
+            val local: Pair<SentenceExplanation, List<FollowUpMessage>>? = withContext(io) {
+                val cached = if (cacheEnabled && !inFlight.containsKey(key)) runCatching { cache.get(key) }.getOrNull() else null
+                val e = cached ?: runCatching { pack?.lookup(ref?.scene, ref?.token, req) }.getOrNull()
+                e?.let { it to recordAndLoadThread(st, it) }
+            }
+            if (breakdown !== st || token.isCancelled) return@launch
+            when {
+                local != null -> {
+                    if (!OfflineAiPack.isPackExplanation(local.first)) recordPrefetchHitIfAny(key, joinedExisting = false)
+                    st.status = AiStatus.Ready(local.first)
+                    st.thread = local.second
+                    notebookRevision++
+                }
+                configured -> startOnline(st, req, force = false)
+                else -> st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, validationError ?: "尚未配置 AI 服务")
+            }
+        }
+    }
+
+    /** Records [e] in the notebook and loads its follow-up thread (cache, else notebook). Runs on [io]. */
+    private fun recordAndLoadThread(st: AiBreakdownState, e: SentenceExplanation): List<FollowUpMessage> {
+        runCatching { notebook.recordSentence(st.cursorRef, e, now()) }
+        val th = runCatching { cache.thread(e.id) }.getOrDefault(emptyList())
+            .ifEmpty { runCatching { notebook.loadThread(e.id) }.getOrDefault(emptyList()) }
+        if (th.isNotEmpty()) runCatching { notebook.saveThread(e.id, th) }
+        return th
+    }
+
+    /** Online request (single-flight with background prefetch unless [force]); see [explain]. */
+    private fun startOnline(st: AiBreakdownState, reqIn: ExplainRequest, force: Boolean) {
+        val ai = settings().ai
         if (force) st.thread = emptyList()
         val token = CancelToken()
         explainToken = token
-        val req = st.request(persona, force)
+        val req = reqIn.copy(force = force)
         val key = ExplainCache.key(req, AiEndpoints.sanitizeModel(ai.model))
         val useSingleFlight = !force && ai.cacheEnabled
         // Progressive loading: the local skeleton (< 1 ms, no I/O) fills the sheet immediately.
@@ -746,11 +865,7 @@ class AiLearningController(
             val outcome: Result<Pair<SentenceExplanation, List<FollowUpMessage>>> = try {
                 withContext(io) {
                     val e = def.await()
-                    runCatching { notebook.recordSentence(st.cursorRef, e, now()) }
-                    val th = runCatching { cache.thread(e.id) }.getOrDefault(emptyList())
-                        .ifEmpty { runCatching { notebook.loadThread(e.id) }.getOrDefault(emptyList()) }
-                    if (th.isNotEmpty()) runCatching { notebook.saveThread(e.id, th) }
-                    Result.success(e to th)
+                    Result.success(e to recordAndLoadThread(st, e))
                 }
             } catch (c: CancellationException) {
                 if (!joined) token.cancel()
@@ -810,7 +925,7 @@ class AiLearningController(
         val q = question.trim()
         if (q.isEmpty() || st.followUpPending) return
         if (!isConfigured) {
-            st.followUpError = "追问需要先配置 AI 服务（设置 → AI 学习）"
+            st.followUpError = if (OfflineAiPack.isPackExplanation(expl)) PACK_FOLLOW_UP_NOTICE else "追问需要先配置 AI 服务（设置 → AI 学习）"
             st.failedQuestion = q
             return
         }
@@ -911,6 +1026,12 @@ class AiLearningController(
 
         /** Default debounce before a newly displayed line enters the background prefetch slot. */
         const val PREFETCH_DEBOUNCE_MS = 600L
+
+        /** ↻ pressed on an offline-pack breakdown without an API key. */
+        const val PACK_REGENERATE_NOTICE = "当前为离线解读包模式；配置 API Key 后可在线重新生成"
+
+        /** Follow-up asked on an offline-pack breakdown without an API key. */
+        const val PACK_FOLLOW_UP_NOTICE = "离线解读包不含实时对话模型；配置 API Key 后可继续追问"
 
         /**
          * Pure request builder shared by [open] and background prefetch so their [ExplainCache.key]

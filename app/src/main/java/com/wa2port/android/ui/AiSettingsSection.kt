@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ai.AiLearningController
+import com.wa2port.android.ai.OfflinePackSettingsCard
 import com.wa2port.android.data.Settings
 import com.wa2port.android.game.GameSession
 import com.wa2port.core.ai.AiEndpoints
@@ -45,7 +46,8 @@ private val OK_GREEN = Color(0xFF8FD3A8)
 private val ERR_RED = Color(0xFFFF8A80)
 
 /**
- * 设置 → AI 学习: provider (Gemini API Key / Vertex AI), API key, 自定义服务器地址 (custom base URL /
+ * 设置 → AI 学习: 📦 full-game offline AI pack (1-click download, no API key needed), then provider
+ * (Gemini API Key / Vertex AI), API key, 自定义服务器地址 (custom base URL /
  * reverse proxy) with proxy auth style and extra headers, Vertex project / location / auth, model,
  * tutor persona, tap-to-analyze & cache switches, generation tuning, 测试连接 / 清除缓存 / 示例预览.
  * Every edit is saved immediately through [onChange], except the multi-line secrets (SA JSON, extra
@@ -64,6 +66,8 @@ fun AiSettingsSection(
     LaunchedEffect(Unit) { ai.refreshCacheStats() }
 
     SectionTitle("AI 学习 AI Learning")
+    // 📦 Full-game offline pack first: works with no API key at all.
+    OfflinePackSettingsCard(ai.packs)
     OptionRow("服务 Provider") {
         Segmented(
             listOf(AiProviderSettings.PROVIDER_GEMINI_API to "Gemini API Key", AiProviderSettings.PROVIDER_VERTEX_AI to "Vertex AI"),

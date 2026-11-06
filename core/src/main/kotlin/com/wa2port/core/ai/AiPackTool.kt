@@ -304,17 +304,23 @@ object AiPackTool {
         var okCount = 0
         var items = 0
         var passed = 0
+        var notStarted = 0
         val pending = ArrayList<String>()
         for (b in batches) {
             val name = b.nameWithoutExtension
             val out = File(dir, "out/$name.jsonl")
+            if (!out.isFile) {
+                notStarted++
+                items += b.readLines().count { it.isNotBlank() }
+                continue
+            }
             val r = validateBatch(units, b, out, name)
             items += r.total
             passed += r.passed
             if (r.ok) okCount++ else pending += "$name(${r.passed}/${r.total})"
         }
-        println("batches OK: $okCount/${batches.size}   items pass: $passed/$items")
-        if (pending.isNotEmpty()) println("pending: ${pending.joinToString(" ")}")
+        println("batches OK: $okCount/${batches.size}   items pass: $passed/$items   not started: $notStarted")
+        if (pending.isNotEmpty()) println("incomplete (${pending.size}): ${pending.take(60).joinToString(" ")}${if (pending.size > 60) " …" else ""}")
         return if (okCount == batches.size) 0 else 1
     }
 

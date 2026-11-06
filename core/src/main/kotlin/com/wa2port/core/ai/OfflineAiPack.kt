@@ -35,7 +35,7 @@ import java.util.zip.Inflater
  * ```
  * Index section: `u32 sceneCount { UTF name(upper), u32 n, i32 token[n] (sorted), i32 entry[n] }`,
  * `u32 hashCount, i64 hash[hashCount] (sorted), i32 entry[hashCount]`,
- * `u32 blockCount, u32 entriesPerBlock { u64 offset, u32 compLen, u32 rawLen }`.
+ * `u32 blockCount, u32 entriesPerBlock { u64 offset (relative to the first data byte), u32 compLen, u32 rawLen }`.
  * Block payload: `varint n, varint len[n], entry bytes…` (see [PackCodec]).
  */
 
@@ -544,45 +544,32 @@ object OfflineAiPackWriter {
 
         val metaBytes = AiJson.encodeToString(AiPackMeta.serializer(), meta).toByteArray(Charsets.UTF_8)
 
-        fun indexBytes(blockBase: Long): ByteArray {
-            val bos = ByteArrayOutputStream()
-            DataOutputStream(bos).use { d ->
-                d.writeInt(byScene.size)
-                for ((scene, rows) in byScene) {
-                    val sorted = rows.sortedBy { it.token }
-                    for (j in 1 until sorted.size) require(sorted[j].token != sorted[j - 1].token) { "duplicate token $scene/${sorted[j].token}" }
-                    d.writeUTF(scene)
-                    d.writeInt(sorted.size)
-                    sorted.forEach { d.writeInt(it.token) }
-                    sorted.forEach { d.writeInt(it.entry) }
-                }
-                d.writeInt(hashes.size)
-                hashes.forEach { d.writeLong(it.first) }
-                hashes.forEach { d.writeInt(it.second) }
-                d.writeInt(blocks.size)
-                d.writeInt(per)
-                var off = blockBase
-                for ((comp, rawLen) in blocks) {
-                    d.writeLong(off); d.writeInt(comp.size); d.writeInt(rawLen)
-                    off += comp.size
-                }
+        // Block offsets are relative to the first data byte (right after the index blob), so the
+        // index never depends on its own compressed size.
+        val bos = ByteArrayOutputStream()
+        DataOutputStream(bos).use { d ->
+            d.writeInt(byScene.size)
+            for ((scene, rows) in byScene) {
+                val sorted = rows.sortedBy { it.token }
+                for (j in 1 until sorted.size) require(sorted[j].token != sorted[j - 1].token) { "duplicate token $scene/${sorted[j].token}" }
+                d.writeUTF(scene)
+                d.writeInt(sorted.size)
+                sorted.forEach { d.writeInt(it.token) }
+                sorted.forEach { d.writeInt(it.entry) }
             }
-            return bos.toByteArray()
+            d.writeInt(hashes.size)
+            hashes.forEach { d.writeLong(it.first) }
+            hashes.forEach { d.writeInt(it.second) }
+            d.writeInt(blocks.size)
+            d.writeInt(per)
+            var off = 0L
+            for ((comp, rawLen) in blocks) {
+                d.writeLong(off); d.writeInt(comp.size); d.writeInt(rawLen)
+                off += comp.size
+            }
         }
-
-        // The index embeds absolute block offsets, which depend on the compressed index size:
-        // iterate until the compressed length is stable (DEFLATE of fixed-width fields converges fast).
-        val headBase = 8L + 4 + 4 + metaBytes.size + 4 + 4
-        var compIndex = PackCodec.deflate(indexBytes(headBase))
-        var rawIndex: ByteArray
-        var guard = 0
-        while (true) {
-            rawIndex = indexBytes(headBase + compIndex.size)
-            val again = PackCodec.deflate(rawIndex)
-            if (again.size == compIndex.size) { compIndex = again; break }
-            compIndex = again
-            check(guard++ < 16) { "index size did not converge" }
-        }
+        val rawIndex = bos.toByteArray()
+        val compIndex = PackCodec.deflate(rawIndex)
 
         file.parentFile?.mkdirs()
         val tmp = File(file.parentFile, file.name + ".tmp")
@@ -817,9 +804,10 @@ class OfflineAiPack private constructor(
                 val bc = d.readInt()
                 val per = d.readInt()
                 require(bc in 0..1_000_000 && per in 1..4096) { "bad block table" }
+                val dataBase = idxPos + 8 + compLen
                 val bo = LongArray(bc); val bcl = IntArray(bc); val brl = IntArray(bc)
                 for (b in 0 until bc) {
-                    bo[b] = d.readLong(); bcl[b] = d.readInt(); brl[b] = d.readInt()
+                    bo[b] = dataBase + d.readLong(); bcl[b] = d.readInt(); brl[b] = d.readInt()
                     require(bo[b] >= 0 && bcl[b] >= 0 && bo[b] + bcl[b] <= pf.length) { "离线包数据块越界 Block $b out of file" }
                 }
                 val entryCount = hc
