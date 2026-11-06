@@ -44,10 +44,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.intl.LocaleList
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ui.CloseButton
+import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.android.ui.screenSafePadding
 import com.wa2port.android.ui.sceneLabel
 import com.wa2port.core.ai.NotebookQaEntry
 import com.wa2port.core.ai.NotebookSentenceEntry
@@ -87,6 +90,7 @@ fun NotebookOverlay(
     onClose: () -> Unit = { ai.closeNotebook() },
 ) {
     val context = LocalContext.current
+    val compact = LocalCompact.current
     val rev = ai.notebookRevision
     var tab by remember { mutableStateOf(NotebookTab.VOCAB) }
     var onlyStarred by remember { mutableStateOf(false) }
@@ -169,25 +173,33 @@ fun NotebookOverlay(
                 .align(Alignment.Center)
                 .widthIn(max = 1100.dp)
                 .fillMaxSize()
+                .screenSafePadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Top bar
+            val starCount = stars.vocab.size + stars.grammar.size + stars.sentences.size
+            val exportTsv = {
+                val tsv = ai.notebook.exportAnkiTsv(onlyStarred = onlyStarred)
+                val rows = tsv.lines().count { it.isNotBlank() }
+                exportAnkiTsv(context, tsv)
+                exportNotice = "已复制并导出 $rows 条卡片（Anki 7 列 TSV）"
+            }
+            // Top bar (compact: short title; the export chip moves into the scrollable chip row).
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "📒 学习记录 Notebook (${sentences.size} 句 · ★ ${stars.vocab.size + stars.grammar.size + stars.sentences.size})",
+                    if (compact) "📒 学习记录 (${sentences.size}句 · ★$starCount)"
+                    else "📒 学习记录 Notebook (${sentences.size} 句 · ★ $starCount)",
                     color = Wa2Colors.Text,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
+                    maxLines = if (compact) 1 else Int.MAX_VALUE,
+                    overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
                     modifier = Modifier.weight(1f),
                 )
-                NbChip("📤 导出 Anki TSV", color = NB_TEXTBOOK) {
-                    val tsv = ai.notebook.exportAnkiTsv(onlyStarred = onlyStarred)
-                    val rows = tsv.lines().count { it.isNotBlank() }
-                    exportAnkiTsv(context, tsv)
-                    exportNotice = "已复制并导出 $rows 条卡片（Anki 7 列 TSV）"
+                if (!compact) {
+                    NbChip("📤 导出 Anki TSV", color = NB_TEXTBOOK, onClick = exportTsv)
+                    Spacer(Modifier.width(8.dp))
                 }
-                Spacer(Modifier.width(8.dp))
                 CloseButton(onClose)
             }
 
@@ -210,6 +222,10 @@ fun NotebookOverlay(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (compact) {
+                    NbChip("📤 导出 Anki", color = NB_TEXTBOOK, onClick = exportTsv)
+                    Spacer(Modifier.width(4.dp))
+                }
                 NotebookTab.entries.forEach { t ->
                     val count = when (t) {
                         NotebookTab.VOCAB -> filteredVocab.size

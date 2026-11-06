@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.paddingFromBaseline
 import androidx.compose.foundation.layout.size
@@ -37,7 +36,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,16 +47,19 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -74,6 +75,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -84,7 +86,9 @@ import com.wa2port.android.ai.AiStatus
 import com.wa2port.android.ai.NotebookOverlay
 import com.wa2port.android.ai.StarButton
 import com.wa2port.android.ui.CloseButton
+import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.android.ui.screenSafePadding
 import com.wa2port.core.ai.AiErrorCode
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.FollowUpMessage
@@ -98,6 +102,8 @@ import com.wa2port.core.ai.SpanAlign
 import com.wa2port.core.ai.SpanAlignment
 import com.wa2port.core.ai.VocabEntry
 import com.wa2port.core.ai.partOfSpeechLabel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 private val SCRIM = Color(0xFF060B18) // opaque: bright text underneath must not bleed through
@@ -145,6 +151,14 @@ fun AiBreakdownOverlay(
     onOpenSettings: (() -> Unit)?,
     onClose: () -> Unit,
 ) {
+    val compact = LocalCompact.current
+    // Hoisted to the overlay root, keyed by the sentence: fresh per sentence (openPrev / openNext start
+    // at the top with an empty draft) but kept across live rotation and the wide ↔ narrow switch.
+    val input = remember(state) { mutableStateOf("") }
+    val listState = remember(state) { LazyListState() }
+    // A lazy list state can serve one list at a time; the skeleton list (alive during the crossfade) has its own.
+    val skeletonListState = remember(state) { LazyListState() }
+    val leftListState = remember(state) { LazyListState() }
     Box(
         Modifier
             .fillMaxSize()
@@ -156,13 +170,13 @@ fun AiBreakdownOverlay(
     ) {
         Column(
             Modifier.align(Alignment.Center).widthIn(max = 1100.dp).fillMaxSize()
+                .screenSafePadding()
                 .padding(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            HeaderRow(state, ai, persona, onPersona, onClose)
+            HeaderRow(state, ai, persona, onPersona, onClose, compact)
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val panes = DetailListStates(listState, skeletonListState, input.value) { input.value = it }
                 if (maxWidth >= 640.dp) {
-                    val leftListState = rememberLazyListState()
-                    LaunchedEffect(state) { leftListState.scrollToItem(0) }
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         LazyColumn(
                             Modifier.weight(0.42f).fillMaxHeight(),
@@ -173,10 +187,10 @@ fun AiBreakdownOverlay(
                             item(key = "sentence") { SentenceHeader(state, ai, onReplayVoice) }
                             item(key = "summary") { SummaryBlock(state, ai, onOpenSettings) }
                         }
-                        DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(0.58f).fillMaxHeight(), header = null)
+                        DetailPane(state, ai, persona, onOpenSettings, Modifier.weight(0.58f).fillMaxHeight(), panes, compact, header = null)
                     }
                 } else {
-                    DetailPane(state, ai, persona, onOpenSettings, Modifier.fillMaxSize()) {
+                    DetailPane(state, ai, persona, onOpenSettings, Modifier.fillMaxSize(), panes, compact) {
                         SentenceHeader(state, ai, onReplayVoice)
                         SummaryBlock(state, ai, onOpenSettings)
                     }
@@ -197,8 +211,49 @@ fun AiBreakdownOverlay(
 
 // ------------------------------------------------------------------------------------- header
 
+/**
+ * Wide: one row `[title | ◀ ▶ personas ↻ 📒 (scroll) | ✕]`. Compact: two rows —
+ * `[title (ellipsis) | 📒 | ✕]` over a full-width scrolling `[◀ 上一句 | 下一句 ▶ | personas… | ↻]`.
+ */
 @Composable
-private fun HeaderRow(state: AiBreakdownState, ai: AiLearningController, persona: AiPersonaSettings, onPersona: (String) -> Unit, onClose: () -> Unit) {
+private fun HeaderRow(
+    state: AiBreakdownState,
+    ai: AiLearningController,
+    persona: AiPersonaSettings,
+    onPersona: (String) -> Unit,
+    onClose: () -> Unit,
+    compact: Boolean = false,
+) {
+    if (compact) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "✨ AI 解说 · ${persona.shortName}", color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                )
+                Chip("📒 笔记本") { ai.openNotebook() }
+                CloseButton(onClose)
+            }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (!state.isSample) {
+                    Chip("◀ 上一句", enabled = ai.canPrev()) { ai.openPrev() }
+                    Chip("下一句 ▶", enabled = ai.canNext()) { ai.openNext() }
+                    Spacer(Modifier.width(4.dp))
+                }
+                ai.personas.forEach { p ->
+                    val label = if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName
+                    Chip(label, selected = p.id == persona.id) { onPersona(p.id) }
+                }
+                Spacer(Modifier.width(6.dp))
+                val loading = state.status is AiStatus.Loading
+                Chip(if (state.isSample) "↻ 示例" else "↻ 重新生成", enabled = !loading) { ai.regenerate() }
+            }
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("✨ AI 解说 · ${persona.shortName}", color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.width(12.dp))
@@ -559,6 +614,18 @@ private fun ErrorCard(state: AiBreakdownState, err: AiStatus.Error, ai: AiLearni
  * speaker, context, script furigana) over shimmer placeholders, and a 300 ms [Crossfade] swaps in the
  * real breakdown. The follow-up input is only offered for a real (non-offline) breakdown.
  */
+/**
+ * Lazy-list states and the follow-up draft, hoisted to the [AiBreakdownOverlay] root (`remember(state)`)
+ * so they survive rotation and the wide ↔ narrow branch switch. [input] is kept outside the lazy
+ * item so a draft survives the input scrolling out of composition.
+ */
+private class DetailListStates(
+    val listState: LazyListState,
+    val skeletonListState: LazyListState,
+    val input: String,
+    val onInput: (String) -> Unit,
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DetailPane(
@@ -567,23 +634,34 @@ private fun DetailPane(
     persona: AiPersonaSettings,
     onOpenSettings: (() -> Unit)?,
     modifier: Modifier,
+    panes: DetailListStates,
+    compact: Boolean,
     header: (@Composable () -> Unit)?,
 ) {
-    val listState = rememberLazyListState()
-    // A lazy list state can serve one list at a time; the skeleton list (alive during the crossfade) has its own.
-    val skeletonListState = rememberLazyListState()
+    val listState = panes.listState
+    val skeletonListState = panes.skeletonListState
     val headerCount = if (header != null) 1 else 0
-    // Hoisted out of the lazy item so a draft survives the input scrolling out of composition.
-    var input by remember(state) { mutableStateOf("") }
+    val revealMarginPx = with(LocalDensity.current) { 8.dp.roundToPx() }
     // Scroll the active card into view when the focus changes from the sentence header / chunk strip.
     LaunchedEffect(state.focusFromSentence) {
         if (state.focusFromSentence == 0) return@LaunchedEffect
         val e = state.explanation ?: return@LaunchedEffect
         val active = state.activeChunk ?: return@LaunchedEffect
         val idx = e.chunks.indexOfFirst { it.id == active.id }
+        if (idx < 0) return@LaunchedEffect
         // Items before the cards: [header], [error], "chunks-title".
         val errorCount = if (state.status is AiStatus.Error) 1 else 0
-        if (idx >= 0 && header == null) listState.animateScrollToItem(headerCount + errorCount + 1 + idx)
+        val target = headerCount + errorCount + 1 + idx
+        if (compact || header != null) {
+            // Stacked layout (sentence header in the list): move only when the card is not fully visible,
+            // leaving an 8 dp margin above it.
+            val info = listState.layoutInfo
+            val item = info.visibleItemsInfo.firstOrNull { it.index == target }
+            val fullyVisible = item != null && item.offset >= 0 && item.offset + item.size <= info.viewportEndOffset - info.afterContentPadding
+            if (!fullyVisible) listState.animateScrollToItem(target, -revealMarginPx)
+        } else {
+            listState.animateScrollToItem(target)
+        }
     }
     Crossfade(targetState = state.isSkeleton, modifier = modifier, animationSpec = tween(durationMillis = 300), label = "ai-skeleton") { skeleton ->
         if (skeleton) {
@@ -600,7 +678,7 @@ private fun DetailPane(
                 item(key = "followup-locked") { FollowUpLockedBar("AI 解析完成后即可向助教追问") }
             }
         } else {
-            FullDetailList(state, ai, persona, onOpenSettings, header, listState, input, onInput = { input = it })
+            FullDetailList(state, ai, persona, onOpenSettings, header, listState, panes.input, onInput = panes.onInput)
         }
     }
 }
@@ -619,6 +697,19 @@ private fun FullDetailList(
 ) {
     val scope = rememberCoroutineScope()
     val expl = state.explanation
+    // Scrolling to the last item clamps at the end of the list: newest Q&A + input.
+    suspend fun scrollToEnd(animate: Boolean) {
+        val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+        if (animate) listState.animateScrollToItem(last) else listState.scrollToItem(last)
+    }
+    // While the follow-up field is focused, keep it above the keyboard: scroll on focus, then again
+    // whenever the viewport shrinks / grows (IME insets animating in).
+    var inputFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(inputFocused) {
+        if (!inputFocused) return@LaunchedEffect
+        scrollToEnd(animate = true)
+        snapshotFlow { listState.layoutInfo.viewportSize.height }.drop(1).collectLatest { scrollToEnd(animate = false) }
+    }
     LazyColumn(
         Modifier.fillMaxSize(),
         state = listState,
@@ -666,9 +757,8 @@ private fun FullDetailList(
             val canAsk = state.status !is AiStatus.Loading && state.shownExplanation?.model != OfflineExplainer.MODEL
             if (canAsk) {
                 item(key = "followup-input") {
-                    FollowUpInput(state, ai, input, onInput) {
-                        // Scrolling to the last item clamps at the end of the list: newest Q&A + input.
-                        scope.launch { listState.animateScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+                    FollowUpInput(state, ai, input, onInput, onFocusChange = { inputFocused = it }) {
+                        scope.launch { scrollToEnd(animate = true) }
                     }
                 }
             } else {
@@ -759,19 +849,22 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
             ) {
                 Text("${index + 1}", color = Wa2Colors.Night, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-            RubyLine(chunkRuby, c.surface, 18.sp)
-            if (RubyBuilder.cleanReading(c.reading, c.surface) != null) {
-                Text(
-                    c.reading,
-                    color = Wa2Colors.TextDim,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    softWrap = false,
-                    style = TIGHT_JP_TEXT_STYLE,
-                    modifier = Modifier.padding(top = topPad).paddingFromBaseline(top = 19.sp, bottom = 5.sp),
-                )
+            // The ruby line may shrink (fill = false) so a long chunk never pushes the reading / role tag
+            // off the card; the inner row fills the free space, keeping the tag right-aligned.
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RubyLine(chunkRuby, c.surface, 18.sp, Modifier.weight(1f, fill = false))
+                if (RubyBuilder.cleanReading(c.reading, c.surface) != null) {
+                    Text(
+                        c.reading,
+                        color = Wa2Colors.TextDim,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TIGHT_JP_TEXT_STYLE,
+                        modifier = Modifier.padding(top = topPad).paddingFromBaseline(top = 19.sp, bottom = 5.sp),
+                    )
+                }
             }
-            Spacer(Modifier.weight(1f))
             if (c.role.isNotBlank()) Tag(c.role, modifier = Modifier.padding(top = topPad))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -837,7 +930,7 @@ private fun FormalityBar(level: Int) {
 
 /** Inline furigana line (non-interactive). */
 @Composable
-private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit) {
+private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val rubyBoxH = with(density) { 13.sp.toDp() }
     val baseTop = (size.value + 1f).sp
@@ -845,7 +938,7 @@ private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit) 
     val baseBoxH = with(density) { (size.value + 6f).sp.toDp() }
     val lineH = (size.value + 2f).sp
     if (tokens.none { !it.ruby.isNullOrBlank() }) {
-        Box(Modifier.height(baseBoxH)) {
+        Box(modifier.height(baseBoxH)) {
             Text(
                 fallback,
                 color = Wa2Colors.Text,
@@ -859,7 +952,7 @@ private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit) 
         }
         return
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         tokens.forEach { t ->
             val r = t.ruby
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -1022,10 +1115,19 @@ private fun markdownLight(text: String): AnnotatedString = buildAnnotatedString 
     }
 }
 
-/** Quick-question chips + text field; the draft [input] is owned by [DetailPane]. */
+/** Quick-question chips + text field; the draft [input] is owned by [AiBreakdownOverlay]. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FollowUpInput(state: AiBreakdownState, ai: AiLearningController, input: String, onInput: (String) -> Unit, onSent: () -> Unit) {
+private fun FollowUpInput(
+    state: AiBreakdownState,
+    ai: AiLearningController,
+    input: String,
+    onInput: (String) -> Unit,
+    onFocusChange: (Boolean) -> Unit = {},
+    onSent: () -> Unit,
+) {
+    // The item may leave composition while focused (scrolled away): report the focus as lost.
+    DisposableEffect(Unit) { onDispose { onFocusChange(false) } }
     LaunchedEffect(state.failedQuestion) {
         val f = state.failedQuestion
         if (f != null && input.isBlank()) onInput(f)
@@ -1044,7 +1146,7 @@ private fun FollowUpInput(state: AiBreakdownState, ai: AiLearningController, inp
             OutlinedTextField(
                 value = input,
                 onValueChange = onInput,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).onFocusChanged { onFocusChange(it.isFocused) },
                 singleLine = true,
                 placeholder = { Text("向${ai.persona.shortName}追问… Ask a follow-up", fontSize = 13.sp) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

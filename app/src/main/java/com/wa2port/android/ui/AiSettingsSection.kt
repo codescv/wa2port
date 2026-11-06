@@ -32,10 +32,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.wa2port.android.ai.AiLearningController
-import com.wa2port.android.ai.NotebookOverlay
 import com.wa2port.android.data.Settings
 import com.wa2port.android.game.GameSession
 import com.wa2port.core.ai.AiEndpoints
@@ -97,7 +94,6 @@ fun AiSettingsSection(
                         AiProviderSettings.AUTH_STYLE_QUERY to "?key= 查询参数",
                     ),
                     p.proxyAuthStyle, { v -> set { it.copy(proxyAuthStyle = v) } },
-                    Modifier.horizontalScroll(rememberScrollState()),
                 )
             }
         }
@@ -106,7 +102,6 @@ fun AiSettingsSection(
         OptionRow("区域 Location") {
             Segmented(
                 AiProviderSettings.VERTEX_LOCATION_PRESETS.map { it to it }, p.vertexLocation, { v -> set { it.copy(vertexLocation = v) } },
-                Modifier.horizontalScroll(rememberScrollState()),
             )
         }
         AiTextField("区域 Location（可自定义）", p.vertexLocation, { v -> set { it.copy(vertexLocation = v.trim()) } }, placeholder = "global / us-east5 …")
@@ -118,7 +113,6 @@ fun AiSettingsSection(
                     AiProviderSettings.VERTEX_AUTH_EXPRESS to "Express API Key",
                 ),
                 p.vertexAuthMode, { v -> set { it.copy(vertexAuthMode = v) } },
-                Modifier.horizontalScroll(rememberScrollState()),
             )
         }
         when (p.vertexAuthMode) {
@@ -150,7 +144,6 @@ fun AiSettingsSection(
     OptionRow("模型 Model") {
         Segmented(
             AiProviderSettings.MODEL_PRESETS.map { it to it }, p.model, { v -> set { it.copy(model = v) } },
-            Modifier.horizontalScroll(rememberScrollState()),
         )
     }
     AiTextField("自定义模型 Custom model", p.model, { v -> set { it.copy(model = AiEndpoints.sanitizeModel(v)) } }, placeholder = AiProviderSettings.DEFAULT_MODEL)
@@ -201,7 +194,6 @@ fun AiSettingsSection(
         Segmented(
             listOf(-1 to "默认", 0 to "关闭 0", 512 to "512", 2048 to "2048", 8192 to "8192"),
             p.thinkingBudget, { v -> set { it.copy(thinkingBudget = v) } },
-            Modifier.horizontalScroll(rememberScrollState()),
         )
     }
     LabeledSlider("超时 Timeout", p.timeoutMs / 1000, 10..180, "${p.timeoutMs / 1000} s") { v -> set { it.copy(timeoutMs = v * 1000) } }
@@ -241,17 +233,7 @@ fun AiSettingsSection(
             ai.openNotebook(session)
         }
     }
-    if (ai.notebookOpen && ai.breakdown == null) {
-        Dialog(
-            onDismissRequest = { ai.closeNotebook(session) },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-        ) {
-            NotebookOverlay(
-                ai = ai,
-                onClose = { ai.closeNotebook(session) },
-            )
-        }
-    }
+    // 📒 NotebookOverlay is rendered in-layout by MainActivity / GameScreen (no window Dialog here).
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },

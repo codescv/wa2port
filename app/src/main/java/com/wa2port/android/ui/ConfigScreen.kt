@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ai.AiLearningController
 import com.wa2port.android.data.DisplayLang
+import com.wa2port.android.data.OrientationMode
 import com.wa2port.android.data.Settings
 import com.wa2port.android.data.WindowMode
 import com.wa2port.android.game.AiBreakdownOverlay
@@ -132,8 +133,11 @@ fun ConfigPanel(
     // 撰写反馈: the in-layout AgentFeedbackDialog overlays the whole panel (not the scrolled list).
     var showFeedbackDialog by rememberSaveable { mutableStateOf(false) }
 
+    val compact = LocalCompact.current
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 10.dp)) {
+        // Safe-area / IME padding exactly once here (not on the outer Box hosting AgentFeedbackDialog,
+        // which pads itself, and not again on the scroll Column below).
+        Column(Modifier.fillMaxSize().screenSafePadding().padding(horizontal = if (compact) 16.dp else 32.dp, vertical = 10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("设置 Config  コンフィグ", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
                 CloseButton(onClose)
@@ -191,6 +195,16 @@ fun ConfigPanel(
                     LabeledSlider("窗口透明度 Window", settings.windowOpacity, 0..100, "${settings.windowOpacity}%") { v -> onChange { it.copy(windowOpacity = v) } }
 
                     SectionTitle("显示 Display")
+                    OptionRow("屏幕方向 Orientation") {
+                        Segmented(
+                            OrientationMode.entries.map { it to it.label },
+                            settings.orientation, { v -> onChange { it.copy(orientation = v) } },
+                        )
+                    }
+                    Text(
+                        "竖屏：画面保持 16:9，台词显示在下方阅读区",
+                        color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                    )
                     OptionRow("显示语言 Language") {
                         Segmented(
                             listOf(DisplayLang.BOTH to "双语 中+日", DisplayLang.CN to "中文", DisplayLang.JP to "日本語"),
@@ -254,11 +268,13 @@ private fun FontSizeSection(textScale: Int, lang: DisplayLang, onSet: (Int) -> U
     OptionRow("字号预设 Presets") {
         Segmented(
             TextScale.PRESETS.map { (p, label) -> p to "$label $p%" }, current, onSet,
-            Modifier.horizontalScroll(rememberScrollState()),
         )
     }
+    val compact = LocalCompact.current
+    // Compact: label above a `[−][slider][+][%]` row; wide: label inline (unchanged).
+    if (compact) Text("文字大小 Text size", color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("文字大小 Text size", color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.width(150.dp))
+        if (!compact) Text("文字大小 Text size", color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.width(150.dp))
         StepButton("−", enabled = current > TextScale.MIN) { onSet(TextScale.step(current, up = false)) }
         Slider(
             value = current.toFloat(),
@@ -269,9 +285,9 @@ private fun FontSizeSection(textScale: Int, lang: DisplayLang, onSet: (Int) -> U
             colors = SliderDefaults.colors(thumbColor = Wa2Colors.Accent, activeTrackColor = Wa2Colors.Accent),
         )
         StepButton("+", enabled = current < TextScale.MAX) { onSet(TextScale.step(current, up = true)) }
-        Text("$current%", color = Wa2Colors.TextDim, fontSize = 13.sp, textAlign = TextAlign.End, modifier = Modifier.width(56.dp))
+        Text("$current%", color = Wa2Colors.TextDim, fontSize = 13.sp, textAlign = TextAlign.End, modifier = Modifier.width(if (compact) 48.dp else 56.dp))
     }
-    FontPreviewCard(current, lang)
+    FontPreviewCard(current, lang, LocalIsPortrait.current)
 }
 
 /** 48 dp square − / + button. */
@@ -297,7 +313,11 @@ private fun StepButton(label: String, enabled: Boolean, onClick: () -> Unit) {
  * `Text` (no glyph-atlas painter exists on the title screen), so it shows the relative size.
  */
 @Composable
-private fun FontPreviewCard(percent: Int, lang: DisplayLang) {
+private fun FontPreviewCard(percent: Int, lang: DisplayLang, portrait: Boolean = false) {
+    if (portrait) {
+        PortraitFontPreviewCard(percent, lang)
+        return
+    }
     val t = TextScale.factor(percent)
     val density = LocalDensity.current
     val twoCol = lang == DisplayLang.BOTH
@@ -357,12 +377,103 @@ private fun FontPreviewCard(percent: Int, lang: DisplayLang) {
     }
 }
 
+/** Portrait deck scale: dp per stage px (the deck renders as if the stage were 412 dp tall). */
+private const val PREVIEW_DECK_SCALE = 412f / 720f
+
+/** Gap (dp) between the stacked CN and JP blocks of the portrait deck. */
+private const val PREVIEW_STACKED_GAP_DP = 18f
+
+/**
+ * Portrait 实时预览: the reading deck at 1:1 true size. Glyph em = stage px × (412 / 720) × scale
+ * dp (`dp.toSp()`, no system fontScale compounding), chrome (pad, name box, radius) likewise; the
+ * card is as wide as the deck (screen − 2 × 16 dp). 双语 is stacked (CN above, JP below, 18 dp
+ * gap) unless two 19-char columns fit; 中文 / 日本語 use one 30 px × scale block.
+ */
+@Composable
+private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
+    val t = TextScale.factor(percent)
+    val density = LocalDensity.current
+    val s = PREVIEW_DECK_SCALE
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
+        Text("实时预览 Preview · 实际大小 1:1", color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            fun spOfDp(v: Float) = with(density) { v.dp.toSp() }
+            val bilingual = lang == DisplayLang.BOTH
+            val pad = MessageLayout.ADV_PAD * s
+            val textW = maxWidth.value - 2 * pad
+            val em = (if (bilingual) MessageLayout.TWO_COL_PX else MessageLayout.MAIN_PX) * s * t
+            val colGap = MessageLayout.advColumnGap(t) * s
+            val twoCol = bilingual && (textW - colGap) / 2f >= MessageLayout.TWO_COL_MAX_CHARS * em
+            val capChars = if (twoCol) {
+                MessageLayout.lineCap((textW - colGap) / 2f, em, MessageLayout.TWO_COL_MAX_CHARS)
+            } else {
+                MessageLayout.lineCap(textW - maxOf(0f, em - pad), em, MessageLayout.SINGLE_MAX_CHARS)
+            }.toInt()
+            val textSp = spOfDp(em)
+            val lineSp = spOfDp(em * MessageLayout.LINE_PITCH)
+            val nameH = MessageLayout.NAME_PX * s * t * 1.5f
+            val nameAbove = nameH * 0.55f
+            val shape = RoundedCornerShape((14f * s).dp)
+            Column(Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = nameAbove.dp)
+                            .clip(shape).background(Color(0xFF0A1428)).border(1.dp, Wa2Colors.AccentDim, shape)
+                            .padding(start = pad.dp, end = pad.dp, top = (pad * 1.25f).dp, bottom = (pad * 0.6f).dp),
+                    ) {
+                        when {
+                            twoCol -> Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                                Text(PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp, modifier = Modifier.weight(1f))
+                                Box(Modifier.width(colGap.dp).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                                    Box(Modifier.width(1.dp).fillMaxHeight().background(Wa2Colors.AccentDim.copy(alpha = 0.45f)))
+                                }
+                                Text(PREVIEW_JP, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp, modifier = Modifier.weight(1f))
+                            }
+                            bilingual -> {
+                                Text(PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
+                                Box(Modifier.fillMaxWidth().height(PREVIEW_STACKED_GAP_DP.dp), contentAlignment = Alignment.Center) {
+                                    Box(Modifier.fillMaxWidth().height(1.dp).background(Wa2Colors.AccentDim.copy(alpha = 0.45f)))
+                                }
+                                Text(PREVIEW_JP, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
+                            }
+                            else -> Text(if (lang == DisplayLang.JP) PREVIEW_JP else PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
+                        }
+                    }
+                    // Speaker name box overlapping the deck top, as in AdvWindow.
+                    Box(
+                        Modifier.padding(start = pad.dp).height(nameH.dp).clip(RoundedCornerShape((8f * s).dp))
+                            .background(Color(0xFF16284A)).padding(horizontal = pad.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(PREVIEW_NAME, color = Wa2Colors.Name, fontSize = spOfDp(MessageLayout.NAME_PX * s * t))
+                    }
+                }
+                Text(
+                    "$percent%${TextScale.presetLabel(percent)?.let { " · $it" } ?: ""} · " +
+                        (if (twoCol) "双栏" else if (bilingual) "中日上下排" else "单语") + " · ≤${capChars}字/行",
+                    color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
 private const val PREVIEW_NAME = "雪菜"
 private const val PREVIEW_CN = "「……啊，下雪了呢。今年的冬天，好像也会很冷吧。」"
 private const val PREVIEW_JP = "「……あ、雪だね。今年の冬も、きっと寒くなるね」"
 
 @Composable
 internal fun OptionRow(label: String, content: @Composable () -> Unit) {
+    if (LocalCompact.current) {
+        // Compact: label above the control row; no scroll modifier here (Segmented owns its scroll).
+        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Text(label, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                content()
+            }
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.widthIn(min = 150.dp).padding(end = 12.dp))
         content()

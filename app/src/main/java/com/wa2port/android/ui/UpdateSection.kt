@@ -19,16 +19,16 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -88,6 +88,7 @@ private val UPDATE_OK = Color(0xFF8FD3A8)
  * In-layout update overlay for the title screen (no window `Dialog`: a new window would steal focus
  * and flash the hidden system bars). Tapping the scrim dismisses it, except while downloading.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UpdateDialog(
     update: UpdateController,
@@ -101,7 +102,8 @@ fun UpdateDialog(
             .background(Color(0xAA000000))
             .clickable(interactionSource = noRipple, indication = null) {
                 if (update.state !is UpdateState.Downloading) onDismiss()
-            },
+            }
+            .screenSafePadding(),
         contentAlignment = Alignment.Center,
     ) {
         val shape = RoundedCornerShape(14.dp)
@@ -125,7 +127,7 @@ fun UpdateDialog(
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 UpdateStatusBlock(update, compact = false, onDismiss = onDismiss)
                 if (onOpenFeedback != null) {
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         UpdateButton("发送反馈给 Agent", onClick = onOpenFeedback)
                     }
                 }
@@ -166,6 +168,7 @@ fun UpdatePill(update: UpdateController, onClick: () -> Unit) {
  * The per-state body shared by the dialog and the config section: progress, release notes and the
  * actions available in that state. [compact] (config) omits the long release notes.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (() -> Unit)? = null) {
     val context = LocalContext.current
@@ -179,24 +182,26 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val actions = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp)
+    // Action rows wrap (FlowRow) instead of scrolling sideways, so no button hides off-screen.
+    val actions = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+    val rowGap = Arrangement.spacedBy(6.dp)
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         when (val s = update.state) {
             UpdateState.Idle -> if (!compact) {
                 Text("点击「检查更新」从 GitHub 获取最新版本\nTap Check to look for a newer release", color = Wa2Colors.TextDim, fontSize = 13.sp)
-                Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
                     UpdateButton("检查更新 Check", primary = true) { update.checkForUpdates() }
                 }
             }
             UpdateState.Checking -> {
                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 6.dp), color = Wa2Colors.Accent, trackColor = Wa2Colors.Button)
                 Text("正在检查更新… Checking for updates", color = Wa2Colors.TextDim, fontSize = 13.sp)
-                Row(actions) { UpdateButton("取消 Cancel") { update.cancelDownload() } }
+                FlowRow(actions, verticalArrangement = rowGap) { UpdateButton("取消 Cancel") { update.cancelDownload() } }
             }
             is UpdateState.UpToDate -> {
                 Text("✓ 已是最新版本 v${update.currentVersion} Up to date", color = UPDATE_OK, fontSize = 14.sp)
                 Text("最新发布 Latest release: ${s.latest.tagName}", color = Wa2Colors.TextDim, fontSize = 12.sp)
-                Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
                     UpdateButton("重新检查 Check again") { update.checkForUpdates() }
                     UpdateButton("浏览器打开 GitHub") { update.openInBrowser(context) }
                 }
@@ -208,7 +213,7 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                 if (s.latest.apkAsset == null) {
                     Text("该版本没有 APK 附件 This release has no APK", color = UPDATE_ERR, fontSize = 13.sp)
                 }
-                Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
                     if (s.latest.apkAsset != null) {
                         UpdateButton(if (compact) "下载并安装 Download & Install" else "立即下载并安装 Download & Install", primary = true) {
                             update.downloadUpdate(context)
@@ -231,7 +236,7 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                         (f?.let { " · ${Math.round(it * 100)}%" } ?: ""),
                     color = Wa2Colors.Text, fontSize = 13.sp,
                 )
-                Row(actions) { UpdateButton("取消下载 Cancel") { update.cancelDownload() } }
+                FlowRow(actions, verticalArrangement = rowGap) { UpdateButton("取消下载 Cancel") { update.cancelDownload() } }
             }
             is UpdateState.Downloaded -> {
                 Text("✓ v${s.latest.version} 已下载并校验 Downloaded & verified", color = UPDATE_OK, fontSize = 14.sp)
@@ -240,7 +245,7 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                     color = Wa2Colors.TextDim, fontSize = 12.sp,
                 )
                 if (!compact) ReleaseNotes(s.latest)
-                Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
                     UpdateButton("重新安装 Install", primary = true) { update.installApk(context) }
                     if (s.latest.apkAsset != null) {
                         UpdateButton("重新下载 Re-download") { update.downloadUpdate(context) }
@@ -251,7 +256,7 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
             }
             is UpdateState.Error -> {
                 Text("✗ ${s.message}", color = UPDATE_ERR, fontSize = 13.sp)
-                Row(actions, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
                     UpdateButton("重试 Retry", primary = true) {
                         if (s.lastRelease?.apkAsset != null) update.downloadUpdate(context) else update.checkForUpdates()
                     }
@@ -320,6 +325,7 @@ fun AgentFeedbackSection(
  *
  * Tapping the scrim dismisses only while the draft is empty, so a half-written report is not lost.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AgentFeedbackDialog(
     settings: Settings,
@@ -431,7 +437,7 @@ fun AgentFeedbackDialog(
                 focusManager.clearFocus()
                 if (!hasDraft && !sending) onDismiss()
             }
-            .imePadding(),
+            .screenSafePadding(),
         contentAlignment = Alignment.Center,
     ) {
         val shape = RoundedCornerShape(14.dp)
@@ -595,10 +601,10 @@ fun AgentFeedbackDialog(
                 )
             }
             val canSend = emailError == null && (title.isNotBlank() || feedbackText.isNotBlank()) && !sending
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+            FlowRow(
+                Modifier.fillMaxWidth().padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 UpdateButton(
                     when {
