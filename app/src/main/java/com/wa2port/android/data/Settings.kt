@@ -79,6 +79,8 @@ data class Settings(
     val aiPrefetchDailyLimit: Int = 300,
     /** Locally configured Agent feedback email address (stored on device only; default empty). */
     val agentFeedbackEmail: String = "",
+    /** Requested screen orientation (横屏 default = unchanged for upgrades; 竖屏 / 自动 opt-in). */
+    val orientation: OrientationMode = OrientationMode.LANDSCAPE,
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 

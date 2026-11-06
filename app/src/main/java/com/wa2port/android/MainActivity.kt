@@ -9,12 +9,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,6 +25,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.wa2port.android.ai.NotebookOverlay
+import com.wa2port.android.data.OrientationMode
 import com.wa2port.android.game.AiBreakdownOverlay
 import com.wa2port.android.game.GameScreen
 import com.wa2port.android.ui.AssetSetupScreen
@@ -30,14 +33,19 @@ import com.wa2port.android.ui.BgmGalleryScreen
 import com.wa2port.android.ui.CgGalleryScreen
 import com.wa2port.android.ui.ConfigCategory
 import com.wa2port.android.ui.ConfigScreen
+import com.wa2port.android.ui.LocalCompact
+import com.wa2port.android.ui.LocalIsPortrait
+import com.wa2port.android.ui.LocalScreenInsets
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadScreen
 import com.wa2port.android.ui.SceneReplayScreen
+import com.wa2port.android.ui.ScreenClass
 import com.wa2port.android.ui.TitleScreen
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.Wa2Theme
+import com.wa2port.android.ui.rememberScreenInsets
 
-/** Single activity: landscape, immersive full-screen, Compose UI. */
+/** Single activity: landscape by default (portrait / auto via [OrientationMode]), immersive full-screen, Compose UI. */
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
 
@@ -50,7 +58,17 @@ class MainActivity : ComponentActivity() {
             }
         }
         hideSystemBars()
-        setContent { Wa2Theme { Wa2App(vm) } }
+        applyOrientation(vm.settings.orientation)
+        setContent {
+            LaunchedEffect(vm.settings.orientation) { applyOrientation(vm.settings.orientation) }
+            Wa2Theme { Wa2App(vm) }
+        }
+    }
+
+    /** Requests the Activity orientation for [mode] (only when it differs; never recreates: `configChanges`). */
+    private fun applyOrientation(mode: OrientationMode) {
+        val wanted = mode.activityOrientation
+        if (requestedOrientation != wanted) requestedOrientation = wanted
     }
 
     override fun onResume() {
@@ -77,10 +95,27 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Root composable: routes [AppViewModel.screen] and shows global busy/error UI. */
+/**
+ * Root composable: routes [AppViewModel.screen] and shows global busy/error UI. Provides
+ * [LocalIsPortrait] / [LocalCompact] from the measured window constraints and the floored
+ * [LocalScreenInsets]; each leaf screen / overlay applies them once via `screenSafePadding()`.
+ */
 @Composable
 fun Wa2App(vm: AppViewModel) {
-    Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
+        val portrait = ScreenClass.isPortrait(maxWidth.value, maxHeight.value)
+        val compact = ScreenClass.isCompact(portrait, maxWidth.value)
+        CompositionLocalProvider(
+            LocalIsPortrait provides portrait,
+            LocalCompact provides compact,
+            LocalScreenInsets provides rememberScreenInsets(),
+        ) { Wa2Routes(vm) }
+    }
+}
+
+@Composable
+private fun Wa2Routes(vm: AppViewModel) {
+    Box(Modifier.fillMaxSize()) {
         when (vm.screen) {
             Screen.Title -> TitleScreen(vm, onNotebook = { vm.ai.openNotebook(null) })
             Screen.Game -> {

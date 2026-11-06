@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -56,9 +58,16 @@ fun Wa2Theme(content: @Composable () -> Unit) {
     )
 }
 
-/** Large bilingual menu button (≥48 dp). */
+/** Large bilingual menu button (≥48 dp). [compact]: 12 dp horizontal padding and 15 sp title (narrow 2-per-row grids). */
 @Composable
-fun MenuButton(title: String, subtitle: String? = null, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun MenuButton(
+    title: String,
+    subtitle: String? = null,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(10.dp)
     Column(
         modifier
@@ -67,20 +76,24 @@ fun MenuButton(title: String, subtitle: String? = null, enabled: Boolean = true,
             .background(if (enabled) Color(0x66203050) else Color(0x33202030))
             .border(BorderStroke(1.dp, if (enabled) Wa2Colors.AccentDim else Color(0x33FFFFFF)), shape)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+            .padding(horizontal = if (compact) 12.dp else 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(title, color = if (enabled) Wa2Colors.Text else Wa2Colors.TextDim, fontSize = 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
+        Text(title, color = if (enabled) Wa2Colors.Text else Wa2Colors.TextDim, fontSize = if (compact) 15.sp else 18.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
         if (subtitle != null) Text(subtitle, color = Wa2Colors.TextDim, fontSize = 11.sp, textAlign = TextAlign.Center)
     }
 }
 
-/** Row of mutually exclusive options. */
+/**
+ * Row of mutually exclusive options. Owns its horizontal scroll (border on the viewport, the options
+ * scroll inside it), so callers never add `horizontalScroll` themselves; `fillMaxWidth()` callers
+ * keep their width.
+ */
 @Composable
 fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
-    Row(modifier.clip(shape).border(1.dp, Wa2Colors.AccentDim, shape)) {
+    Row(modifier.clip(shape).border(1.dp, Wa2Colors.AccentDim, shape).horizontalScroll(rememberScrollState())) {
         options.forEach { (value, label) ->
             val on = value == selected
             Box(
@@ -97,9 +110,25 @@ fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> 
     }
 }
 
-/** Label + slider + value text. */
+/** Label + slider + value text. Compact ([LocalCompact]): `[label … value]` row above a full-width slider. */
 @Composable
 fun LabeledSlider(label: String, value: Int, range: IntRange, valueText: String, onChange: (Int) -> Unit) {
+    if (LocalCompact.current) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Text(valueText, color = Wa2Colors.TextDim, fontSize = 13.sp, textAlign = TextAlign.End)
+            }
+            Slider(
+                value = value.toFloat(),
+                onValueChange = { onChange(it.toInt()) },
+                valueRange = range.first.toFloat()..range.last.toFloat(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                colors = SliderDefaults.colors(thumbColor = Wa2Colors.Accent, activeTrackColor = Wa2Colors.Accent),
+            )
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.width(150.dp))
         Slider(
