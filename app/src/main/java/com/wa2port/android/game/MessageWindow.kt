@@ -32,6 +32,7 @@ import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.text.BilingualTextDecoder
+import com.wa2port.core.text.DeckLayout
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.MessageLayout.MAIN_PX
 import com.wa2port.core.text.MessageLayout.NAME_PX
@@ -211,6 +212,44 @@ private fun DrawScope.drawAdvScrollbar(
 }
 
 /**
+ * Portrait reading-deck frame for [AdvWindow] / [NovelPage], in canvas (content-box) px. [scale] =
+ * px per stage px (`DeckLayout.DECK_SCALE × density`): every stage-px constant (pad, glyph sizes,
+ * name box, voice pill, stroke) renders at that scale. `null` frame = today's landscape geometry
+ * (`w·ADV_LEFT … h·advTop`, `scale = h / 720`).
+ */
+data class AdvFrame(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val scale: Float,
+    val bothMode: DeckLayout.BothMode,
+) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+}
+
+/** Pure portrait-deck text geometry shared by [AdvWindow] and [NovelPage] (canvas px). */
+internal object DeckText {
+    /** First text line top inside a frame starting at [frameTop] (pinned like the landscape window). */
+    fun textTop(frameTop: Float, pad: Float): Float = frameTop + pad * 1.25f
+
+    /** Visible text height between [textTop] and the frame [frameBottom]. */
+    fun avail(frameBottom: Float, pad: Float, textTop: Float): Float = frameBottom - pad * 0.6f - textTop
+
+    /** Top of the stacked JP block: CN block height [hCn] + [gapPx] below [textTop], scrolled by [scrollY]. */
+    fun jpTop(textTop: Float, hCn: Float, gapPx: Float, scrollY: Float): Float = textTop + hCn + gapPx - scrollY
+
+    /** Auto-follow height of a stacked CN + JP pair revealing in parallel. */
+    fun stackedRevealedHeight(hCn: Float, gapPx: Float, revealedCn: Float, revealedJp: Float, visibleJp: Int): Float =
+        if (visibleJp > 0) hCn + gapPx + revealedJp else revealedCn
+
+    /** Portrait ▼ wait mark centre y: [markGapPx] below the text end, never below the frame padding. */
+    fun waitMarkY(contentEnd: Float, markGapPx: Float, frameBottom: Float, pad: Float): Float =
+        minOf(contentEnd + markGapPx, frameBottom - pad * 0.36f)
+}
+
+/**
  * Geometry of the Japanese text block last drawn by [AdvWindow] (stage-box px), captured during draw
  * for tap-to-analyze, plus the `🔊 重听` button's touch target ([voiceRect], null when the line has no
  * voice) and direct in-window vertical scroll state for 5+ line monologues at large font scales.
@@ -242,6 +281,10 @@ class AdvHitBox {
     /** Minimum horizontal glyph hit tolerance (px; 12 dp, set during draw). */
     @Volatile
     var minTolPx: Float = 0f
+
+    /** True while the geometry belongs to a portrait deck frame ([AdvFrame]; content-box px, NOVEL scroll allowed). */
+    @Volatile
+    var frameMode: Boolean = false
 
     /** Bounds of the ADV window box in stage-box px (`left, top, right, bottom`). */
     @Volatile
@@ -294,6 +337,8 @@ class AdvHitBox {
         maxScrollPx = maxScroll
         if (maxScroll <= 0.5f) {
             nearBottomWhileTyping = false
+            // Nothing to scroll (e.g. after a rotation gave the line more room): resume auto-follow.
+            userScrolled = false
             if (scrollY != 0f) scrollY = 0f
             return 0f
         }
@@ -338,6 +383,7 @@ class AdvHitBox {
         voiceRect = null
         windowRect = Rect.Zero
         maxScrollPx = 0f
+        frameMode = false
     }
 
     /** Glyph index ([RichText.baseCodes] order) of the JP glyph under [p] (stage-box px), or −1. */
@@ -360,6 +406,10 @@ class AdvHitBox {
  *   capacity); tries [Reflow.KEEP_ALL] → [Reflow.SENTENCE] → [Reflow.JOIN_ALL].
  * * When a long monologue at 115 %–150 % still exceeds the window height, [AdvHitBox] enables
  *   direct vertical touch scrolling inside the window with typewriter auto-follow and a scrollbar.
+ * * Portrait ([frame] != null): the window is the reading deck below the stage at
+ *   [AdvFrame.scale]; 双语 is STACKED (CN block above JP block, full width, cap
+ *   `DeckLayout.lineCap`, [Reflow.SENTENCE] → [Reflow.JOIN_ALL]) unless the deck is wide enough for
+ *   TWO_COL; single language starts at [Reflow.SENTENCE].
  */
 @Composable
 fun AdvWindow(
@@ -373,6 +423,7 @@ fun AdvWindow(
     textScale: Float,
     modifier: Modifier,
     hitBox: AdvHitBox? = null,
+    frame: AdvFrame? = null,
 ) {
     val state = hitBox ?: remember { AdvHitBox() }
     DisposableEffect(state) {
@@ -383,14 +434,16 @@ fun AdvWindow(
         state.syncLine(line, lang, textScale)
         state.jp = null
         state.voiceRect = null
+        state.frameMode = frame != null
         state.minTolPx = 12.dp.toPx()
-        val scale = size.height / 720f * textScale
-        val stageScale = size.height / 720f
+        val stageScale = frame?.scale ?: (size.height / 720f)
+        val scale = stageScale * textScale
         val twoCol = lang == DisplayLang.BOTH && line.cn?.isEmpty == false
-        val left = size.width * MessageLayout.ADV_LEFT
-        val right = size.width * MessageLayout.ADV_RIGHT
-        val top = size.height * MessageLayout.advTop(textScale, twoCol)
-        val bottom = size.height * MessageLayout.ADV_BOTTOM
+        val stacked = frame != null && twoCol && frame.bothMode == DeckLayout.BothMode.STACKED
+        val left = frame?.left ?: (size.width * MessageLayout.ADV_LEFT)
+        val right = frame?.right ?: (size.width * MessageLayout.ADV_RIGHT)
+        val top = frame?.top ?: (size.height * MessageLayout.advTop(textScale, twoCol))
+        val bottom = frame?.bottom ?: (size.height * MessageLayout.ADV_BOTTOM)
         val pad = MessageLayout.ADV_PAD * stageScale
         state.windowRect = Rect(left, top, right, bottom)
         drawRoundRect(
@@ -418,18 +471,65 @@ fun AdvWindow(
             }
         }
         // Pin Line 0 origin unconditionally so spoken dialogue and narration never jump vertically.
-        val textTop = top + pad * 1.25f
+        val textTop = DeckText.textTop(top, pad)
         // 🔊 重听: pill at the right end of the nameplate row; 1 tap replays the voice (no advance).
         if (line.ref.voice != null) {
             val r = drawVoicePill(right - pad, top, textTop, stageScale, opacity)
             state.voiceRect = r
         }
-        val avail = bottom - pad * 0.6f - textTop
+        val avail = DeckText.avail(bottom, pad, textTop)
         state.availHeight = avail
         val width = right - left - pad * 2
         val gap = 8f * stageScale
+        // Portrait: bottom of the drawn text (canvas px) for the ▼ wait mark.
+        var contentEnd = textTop
         val cols = twoColumns(line, lang, TWO_COL_PX * scale, TWO_COL_MAX_CHARS, visibleJp, visibleCn)
-        if (cols != null) {
+        if (cols != null && stacked) {
+            val em = cols.first.size
+            val cap = DeckLayout.lineCap(width, em, stageScale)
+            val gapPx = DeckLayout.STACKED_GAP_DP.dp.toPx()
+            val cnSent = cols.first.copy(maxChars = cap, reflow = Reflow.SENTENCE)
+            val jpSent = cols.second.copy(maxChars = cap, reflow = Reflow.SENTENCE)
+            val hCnSent = measureBlock(painter, cnSent, width)
+            val hJpSent = measureBlock(painter, jpSent, width)
+            val join = hCnSent + gapPx + hJpSent > avail
+            val cn = if (join) cnSent.copy(reflow = Reflow.JOIN_ALL) else cnSent
+            val jp = if (join) jpSent.copy(reflow = Reflow.JOIN_ALL) else jpSent
+            val hCn = if (join) measureBlock(painter, cn, width) else hCnSent
+            val hJp = if (join) measureBlock(painter, jp, width) else hJpSent
+            val contentH = hCn + gapPx + hJp
+            state.contentHeight = contentH
+            val maxScroll = if (contentH > avail + 0.5f) (contentH - avail).coerceAtLeast(0f) else 0f
+            val revealedH = if (maxScroll > 0.5f && !state.userScrolled) {
+                DeckText.stackedRevealedHeight(
+                    hCn, gapPx,
+                    painter.measureRevealedHeight(cn.rich, TextLang.CN, width, cn.size, cn.visible, cn.maxChars, cn.reflow),
+                    painter.measureRevealedHeight(jp.rich, TextLang.JP, width, jp.size, jp.visible, jp.maxChars, jp.reflow),
+                    visibleJp,
+                )
+            } else {
+                0f
+            }
+            val curScroll = state.resolveScrollY(maxScroll, avail, revealedH, waiting, stageScale)
+            val clipBottom = if (maxScroll > 0.5f) bottom - pad * 0.55f else bottom - pad * 0.3f
+            val clipTop = if (curScroll > 0.5f) textTop else textTop - 3f * stageScale
+            val cnY = textTop - curScroll
+            val jpY = DeckText.jpTop(textTop, hCn, gapPx, curScroll)
+            clipRect(left, clipTop, right, clipBottom) {
+                drawBlock(painter, cn, left + pad, cnY, width)
+                val divY = cnY + hCn + gapPx / 2f
+                drawLine(
+                    Wa2Colors.AccentDim.copy(alpha = 0.45f), Offset(left + pad, divY), Offset(right - pad, divY),
+                    strokeWidth = 1.2f * stageScale,
+                )
+                drawBlock(painter, jp, left + pad, jpY, width)
+            }
+            state.jp = AdvHitBox.JpBox(jp.rich, left + pad, jpY, width, jp.size, jp.maxChars, jp.reflow, jp.visible, clipTop, clipBottom)
+            if (maxScroll > 0.5f) {
+                drawAdvScrollbar(right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
+            }
+            contentEnd = cnY + contentH
+        } else if (cols != null) {
             val colGap = MessageLayout.advColumnGap(textScale) * stageScale
             val colW = (width - colGap) / 2f
             val cap = MessageLayout.lineCap(colW, cols.first.size, TWO_COL_MAX_CHARS)
@@ -473,12 +573,21 @@ fun AdvWindow(
             if (maxScroll > 0.5f) {
                 drawAdvScrollbar(right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
             }
+            contentEnd = textTop - curScroll + contentH
         } else {
-            val base = blocksFor(line, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.KEEP_ALL)
+            // Portrait: full-width deck cap (one hanging closer allowed) and no KEEP_ALL step (PC
+            // 34-char breaks would leave orphans at caps 18–21).
+            val base = if (frame == null) {
+                blocksFor(line, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.KEEP_ALL)
+            } else {
+                blocksFor(line, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.SENTENCE)
+                    .map { it.copy(maxChars = DeckLayout.lineCap(width, it.size, stageScale)) }
+            }
             var blocks = base
             var contentH = measureBlocks(painter, blocks, width, gap)
             if (contentH > avail) {
-                for (policy in listOf(Reflow.SENTENCE, Reflow.JOIN_ALL)) {
+                val ladder = if (frame == null) listOf(Reflow.SENTENCE, Reflow.JOIN_ALL) else listOf(Reflow.JOIN_ALL)
+                for (policy in ladder) {
                     blocks = base.map { it.copy(reflow = policy) }
                     contentH = measureBlocks(painter, blocks, width, gap)
                     if (contentH <= avail) break
@@ -509,8 +618,12 @@ fun AdvWindow(
             if (maxScroll > 0.5f) {
                 drawAdvScrollbar(right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
             }
+            contentEnd = textTop - blockScrollY + contentH
         }
-        if (waiting) drawWaitMark(right - pad * 0.45f, bottom - pad * 0.36f, 6.5f * stageScale, blink)
+        if (waiting) {
+            val markY = if (frame == null) bottom - pad * 0.36f else DeckText.waitMarkY(contentEnd, 10.dp.toPx(), bottom, pad)
+            drawWaitMark(right - pad * 0.45f, markY, 6.5f * stageScale, blink)
+        }
     }
 }
 
@@ -560,19 +673,36 @@ private fun DrawScope.drawVoicePill(pillRight: Float, top: Float, textTop: Float
         val fm = VOICE_LABEL_PAINT.fontMetrics
         c.nativeCanvas.drawText(label, l + 44f * stageScale, cy - (fm.ascent + fm.descent) / 2f, VOICE_LABEL_PAINT)
     }
-    // Touch target ≥ 48 dp in both directions, never reaching the first text line.
-    val minPx = 48.dp.toPx()
+    return voiceTouchRect(pillRight, top, textTop, stageScale, 48.dp.toPx(), size.width)
+}
+
+/**
+ * Touch target of the `🔊 重听` pill drawn by [drawVoicePill]: ≥ [minPx] (48 dp) in both directions,
+ * bottom-aligned 2 stage px above [textTop] (never reaching the first text line), growing upwards,
+ * horizontally centred on the pill and kept inside `0 … canvasWidth`.
+ */
+internal fun voiceTouchRect(pillRight: Float, top: Float, textTop: Float, stageScale: Float, minPx: Float, canvasWidth: Float): Rect {
+    val h = 36f * stageScale
+    val w = 92f * stageScale
+    val l = pillRight - w
+    val t = top - h * 0.55f
     val tw = maxOf(w + 16f * stageScale, minPx)
     val bottom = textTop - 2f * stageScale
     val th = maxOf(bottom - (t - 8f * stageScale), minPx)
     val cx = l + w / 2f
-    val rl = (cx - tw / 2f).coerceAtMost(size.width - tw).coerceAtLeast(0f)
+    val rl = (cx - tw / 2f).coerceAtMost(canvasWidth - tw).coerceAtLeast(0f)
     return Rect(rl, bottom - th, rl + tw, bottom)
 }
 
 /**
  * NOVEL mode: full-stage translucent page accumulating [page] lines (last one is typing).
  * Calls [onOverflow] when the page no longer fits so the session starts a new page.
+ *
+ * Portrait ([frame] != null): the page lives in the reading deck below the stage — round-rect
+ * panel inside [frame] only (the stage stays clean), text clipped to the frame, 双语 STACKED
+ * paragraphs (CN block then JP block at `NOVEL_TWO_COL_PX`, deck cap, [Reflow.SENTENCE] →
+ * [Reflow.JOIN_ALL]), a single paragraph taller than the frame scrolls through [hitBox], and the
+ * `🔊 重听` pill sits on the frame top (sets [AdvHitBox.voiceRect]).
  */
 @Composable
 fun NovelPage(
@@ -588,7 +718,14 @@ fun NovelPage(
     heightPx: Float,
     onOverflow: () -> Unit,
     modifier: Modifier,
+    frame: AdvFrame? = null,
+    hitBox: AdvHitBox? = null,
 ) {
+    if (hitBox != null) {
+        DisposableEffect(hitBox) {
+            onDispose { hitBox.clearGeometry() }
+        }
+    }
     val blink = rememberBlink()
     val stageScale = heightPx / 720f
     val scale = stageScale * textScale
@@ -599,8 +736,12 @@ fun NovelPage(
     val gap = 6f * stageScale
     val paraGap = 18f * stageScale
     // Measure the full page (all lines fully revealed) to detect overflow.
-    val overflow = remember(page, lang, widthPx, heightPx, textScale) {
-        if (page.size <= 1) false else {
+    val overflow = remember(page, lang, widthPx, heightPx, textScale, frame) {
+        if (page.size <= 1) {
+            false
+        } else if (frame != null) {
+            NovelDeck(painter, lang, textScale, frame).overflows(page)
+        } else {
             val total = page.sumOf { l ->
                 val names = nameBlocks(l, lang, scale * 0.8f)
                 val nameH = if (names.isNotEmpty()) NAME_PX * scale * 0.8f * 1.3f else 0f
@@ -611,6 +752,14 @@ fun NovelPage(
     }
     LaunchedEffect(overflow, page) { if (overflow) onOverflow() }
     Canvas(modifier) {
+        if (frame != null) {
+            // Until trimPage() lands, show only the newest line so the overflowing frame never flashes.
+            val shown = if (overflow && page.size > 1) listOf(page.last()) else page
+            drawNovelDeck(NovelDeck(painter, lang, textScale, frame), shown, visibleJp, visibleCn, waiting, opacity, hitBox, blink)
+            return@Canvas
+        }
+        // Landscape NOVEL keeps no hit geometry (e.g. left over from a portrait deck before a rotation).
+        if (hitBox != null && (hitBox.frameMode || hitBox.voiceRect != null)) hitBox.clearGeometry()
         drawRect(Color(0xFF050A16).copy(alpha = 0.35f + 0.55f * opacity))
         var y = top
         page.forEachIndexed { i, l ->
@@ -641,6 +790,191 @@ fun NovelPage(
         }
         if (waiting) drawWaitMark(left + width, (y - paraGap * 0.5f).coerceAtMost(size.height - 20f * stageScale), 9f * stageScale, blink)
     }
+}
+
+/** One portrait NOVEL paragraph: speaker name blocks + text blocks (STACKED / single) or 双语 TWO_COL columns. */
+private class DeckParagraph(val names: List<Block>, val blocks: List<Block>, val cols: Pair<Block, Block>?)
+
+/**
+ * Portrait NOVEL page metrics inside the reading-deck [frame] (canvas px): 双语 + STACKED → CN block
+ * then JP block at `NOVEL_TWO_COL_PX` with the deck cap; single language → one block at `MAIN_PX`
+ * with the deck cap; 双语 + TWO_COL → [novelColumns]. Each paragraph uses [Reflow.SENTENCE], or
+ * [Reflow.JOIN_ALL] when it alone is taller than the frame.
+ */
+private class NovelDeck(val painter: TextPainter, val lang: DisplayLang, val textScale: Float, val frame: AdvFrame) {
+    val stageScale = frame.scale
+    val scale = stageScale * textScale
+    val pad = MessageLayout.ADV_PAD * stageScale
+    val left = frame.left + pad
+    val width = frame.width - 2f * pad
+    val textTop = DeckText.textTop(frame.top, pad)
+    val avail = DeckText.avail(frame.bottom, pad, textTop)
+    val gap = 6f * stageScale
+    val paraGap = 18f * stageScale
+    val nameH = NAME_PX * scale * 0.8f * 1.3f
+    val colW = MessageLayout.novelColumnWidth(width, scale)
+
+    private fun build(l: DialogueLine, visJp: Int, visCn: Int, reflow: Reflow): DeckParagraph {
+        val names = nameBlocks(l, lang, scale * 0.8f)
+        val cn = l.cn?.takeIf { !it.isEmpty }
+        if (lang == DisplayLang.BOTH && cn != null) {
+            if (frame.bothMode == DeckLayout.BothMode.TWO_COL) return DeckParagraph(names, emptyList(), novelColumns(l, lang, scale, width, visJp, visCn))
+            val em = MessageLayout.NOVEL_TWO_COL_PX * scale
+            val cap = DeckLayout.lineCap(width, em, stageScale)
+            return DeckParagraph(
+                names,
+                listOf(
+                    Block(cn, TextLang.CN, em, TEXT_COLOR, visCn, cap, reflow),
+                    Block(l.jp, TextLang.JP, em, TEXT_COLOR, visJp, cap, reflow),
+                ),
+                null,
+            )
+        }
+        val em = MAIN_PX * scale
+        val cap = DeckLayout.lineCap(width, em, stageScale)
+        val block = if (lang == DisplayLang.CN && cn != null) {
+            Block(cn, TextLang.CN, em, TEXT_COLOR, visCn, cap, reflow)
+        } else {
+            Block(l.jp, TextLang.JP, em, TEXT_COLOR, visJp, cap, reflow)
+        }
+        return DeckParagraph(names, listOf(block), null)
+    }
+
+    fun paragraph(l: DialogueLine, visJp: Int, visCn: Int): DeckParagraph {
+        val sentence = build(l, visJp, visCn, Reflow.SENTENCE)
+        if (sentence.cols != null) return sentence
+        val full = measureBlocks(painter, sentence.blocks, width, gap)
+        return if (full <= avail) sentence else build(l, visJp, visCn, Reflow.JOIN_ALL)
+    }
+
+    fun textHeight(p: DeckParagraph): Float = if (p.cols != null) {
+        maxOf(measureBlock(painter, p.cols.first, colW), measureBlock(painter, p.cols.second, colW))
+    } else {
+        measureBlocks(painter, p.blocks, width, gap)
+    }
+
+    fun height(p: DeckParagraph): Float = (if (p.names.isNotEmpty()) nameH else 0f) + textHeight(p)
+
+    /** Auto-follow height of the (last, typing) paragraph [p]: name + revealed text. */
+    fun revealedHeight(p: DeckParagraph): Float {
+        val nh = if (p.names.isNotEmpty()) nameH else 0f
+        val rev = when {
+            p.cols != null -> maxOf(
+                painter.measureRevealedHeight(p.cols.first.rich, p.cols.first.lang, colW, p.cols.first.size, p.cols.first.visible, p.cols.first.maxChars, p.cols.first.reflow),
+                painter.measureRevealedHeight(p.cols.second.rich, p.cols.second.lang, colW, p.cols.second.size, p.cols.second.visible, p.cols.second.maxChars, p.cols.second.reflow),
+            )
+            p.blocks.size == 2 -> {
+                val (cn, jp) = p.blocks
+                DeckText.stackedRevealedHeight(
+                    measureBlock(painter, cn, width), gap,
+                    painter.measureRevealedHeight(cn.rich, cn.lang, width, cn.size, cn.visible, cn.maxChars, cn.reflow),
+                    painter.measureRevealedHeight(jp.rich, jp.lang, width, jp.size, jp.visible, jp.maxChars, jp.reflow),
+                    jp.visible,
+                )
+            }
+            else -> measureRevealedBlocks(painter, p.blocks, width, gap)
+        }
+        return nh + rev
+    }
+
+    /** True when the fully revealed [page] no longer fits the frame (session starts a new page). */
+    fun overflows(page: List<DialogueLine>): Boolean {
+        val total = page.sumOf { l -> height(paragraph(l, Int.MAX_VALUE, Int.MAX_VALUE)).toDouble() } + paraGap * (page.size - 1)
+        return total > avail
+    }
+}
+
+/** Draws the portrait NOVEL [shown] lines into [deck] (panel, clipped text, scroll, 🔊 pill, ▼). */
+private fun DrawScope.drawNovelDeck(
+    deck: NovelDeck,
+    shown: List<DialogueLine>,
+    visibleJp: Int,
+    visibleCn: Int,
+    waiting: Boolean,
+    opacity: Float,
+    hitBox: AdvHitBox?,
+    blink: Float,
+) {
+    val frame = deck.frame
+    val stageScale = deck.stageScale
+    val pad = deck.pad
+    val textTop = deck.textTop
+    val avail = deck.avail
+    val painter = deck.painter
+    val lastLine = shown.last()
+    hitBox?.let {
+        it.syncLine(lastLine, deck.lang, deck.textScale)
+        it.jp = null
+        it.voiceRect = null
+        it.frameMode = true
+        it.minTolPx = 12.dp.toPx()
+        it.windowRect = Rect(frame.left, frame.top, frame.right, frame.bottom)
+        it.availHeight = avail
+    }
+    // Deck panel inside the frame only: the stage above stays clean.
+    drawRoundRect(
+        Color(0xFF0A1428).copy(alpha = opacity), Offset(frame.left, frame.top), Size(frame.width, frame.height),
+        CornerRadius(14f * stageScale),
+    )
+    drawRoundRect(
+        Wa2Colors.AccentDim.copy(alpha = 0.6f * opacity + 0.2f), Offset(frame.left, frame.top), Size(frame.width, frame.height),
+        CornerRadius(14f * stageScale), style = Stroke(1.5f * stageScale),
+    )
+    val paragraphs = shown.mapIndexed { i, l ->
+        val last = i == shown.lastIndex
+        deck.paragraph(l, if (last) visibleJp else Int.MAX_VALUE, if (last) visibleCn else Int.MAX_VALUE)
+    }
+    val heights = paragraphs.map { deck.height(it) }
+    val gaps = deck.paraGap * (heights.size - 1).coerceAtLeast(0)
+    val contentH = heights.sum() + gaps
+    val maxScroll = if (contentH > avail + 0.5f) (contentH - avail).coerceAtLeast(0f) else 0f
+    val curScroll = if (hitBox != null) {
+        hitBox.contentHeight = contentH
+        val revealedH = if (maxScroll > 0.5f && !hitBox.userScrolled) {
+            heights.dropLast(1).sum() + gaps + deck.revealedHeight(paragraphs.last())
+        } else {
+            0f
+        }
+        hitBox.resolveScrollY(maxScroll, avail, revealedH, waiting, stageScale)
+    } else {
+        0f
+    }
+    val clipBottom = if (maxScroll > 0.5f) frame.bottom - pad * 0.55f else frame.bottom - pad * 0.3f
+    val clipTop = if (curScroll > 0.5f) textTop else textTop - 3f * stageScale
+    var y = textTop - curScroll
+    clipRect(frame.left, clipTop, frame.right, clipBottom) {
+        paragraphs.forEachIndexed { i, p ->
+            if (i > 0) y += deck.paraGap
+            if (p.names.isNotEmpty()) {
+                drawIntoCanvas { c ->
+                    var nx = deck.left
+                    p.names.forEach { b ->
+                        painter.draw(c.nativeCanvas, b.rich, b.lang, nx, y, deck.width, b.size, b.color, Int.MAX_VALUE)
+                        nx += painter.glyphCount(b.rich) * b.size + 10f * stageScale
+                    }
+                }
+                y += deck.nameH
+            }
+            y += if (p.cols != null) {
+                val colGap = deck.width - deck.colW * 2f
+                maxOf(
+                    drawBlock(painter, p.cols.first, deck.left, y, deck.colW),
+                    drawBlock(painter, p.cols.second, deck.left + deck.colW + colGap, y, deck.colW),
+                )
+            } else {
+                drawBlocks(painter, p.blocks, deck.left, y, deck.width, deck.gap)
+            }
+        }
+    }
+    if (maxScroll > 0.5f) {
+        drawAdvScrollbar(frame.right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
+    }
+    // 🔊 重听 on the frame top (the quick bar never adds 🔊 in portrait).
+    if (lastLine.ref.voice != null) {
+        val r = drawVoicePill(frame.right - pad, frame.top, textTop, stageScale, opacity)
+        hitBox?.voiceRect = r
+    }
+    if (waiting) drawWaitMark(frame.right - pad * 0.45f, DeckText.waitMarkY(y, 10.dp.toPx(), frame.bottom, pad), 6.5f * stageScale, blink)
 }
 
 /**

@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,16 +46,20 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
+import com.wa2port.android.data.OrientationMode
 import com.wa2port.android.data.Settings
 import com.wa2port.android.ui.CloseButton
+import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.MenuButton
 import com.wa2port.android.ui.Segmented
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.sceneLabel
+import com.wa2port.android.ui.screenSafePadding
 import com.wa2port.core.engine.ChoiceOption
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.engine.LineRef
@@ -91,13 +99,27 @@ private fun BilingualText(painter: TextPainter, parts: List<Part>, widthPx: Floa
     }
 }
 
-/** Full-width tappable choice cards (≥ 56 dp), both languages, centred on the stage. */
+/**
+ * Full-width tappable choice cards (≥ 56 dp), both languages, centred on the stage. Portrait passes
+ * [cardWidth] (deck width) and [scalePx] (px per stage px × text scale of the reading deck); the
+ * defaults keep the landscape `maxWidth × 0.78` cards at the stage scale.
+ */
 @Composable
-fun ChoiceCards(painter: TextPainter, choices: List<ChoiceOption>, lang: DisplayLang, stageHeightPx: Float, textScale: Float, onChoose: (Int) -> Unit, modifier: Modifier) {
-    val scale = stageHeightPx / 720f * textScale
+fun ChoiceCards(
+    painter: TextPainter,
+    choices: List<ChoiceOption>,
+    lang: DisplayLang,
+    stageHeightPx: Float,
+    textScale: Float,
+    onChoose: (Int) -> Unit,
+    modifier: Modifier,
+    cardWidth: Dp? = null,
+    scalePx: Float? = null,
+) {
+    val scale = scalePx ?: (stageHeightPx / 720f * textScale)
     BoxWithConstraints(modifier.background(Color(0x55000000)), contentAlignment = Alignment.Center) {
         val density = LocalDensity.current
-        val cardWidth = maxWidth * 0.78f
+        val cardWidth = cardWidth?.coerceAtMost(maxWidth) ?: (maxWidth * 0.78f)
         val innerPx = with(density) { (cardWidth - 32.dp).toPx() }
         Column(
             modifier = Modifier.verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
@@ -146,7 +168,8 @@ fun BacklogOverlay(
             // Taps on empty margins must not fall through to the stage (no MOVE consumption, so the
             // list still scrolls).
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-            .padding(horizontal = 24.dp, vertical = 8.dp),
+            .screenSafePadding()
+            .padding(horizontal = if (LocalCompact.current) 16.dp else 24.dp, vertical = 8.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("回想 Backlog  バックログ", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
@@ -198,6 +221,7 @@ fun BacklogOverlay(
  * 中文, ADV ⇄ NOVEL, font size presets, `✨ 点词` toggle, `👁 隐藏窗口`, and `Q.LOAD 快速读档`) at the top
  * of the card so the primary QuickBar stays at 7 high-frequency keys.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun GameMenu(
     scene: String,
@@ -216,13 +240,16 @@ fun GameMenu(
 ) {
     var confirmTitle by remember { mutableStateOf(false) }
     val exitLabel = if (inReplayMode) "结束回想 Exit Replay" else "返回标题 Title"
+    val compact = LocalCompact.current
     Box(
-        Modifier.fillMaxSize().background(Color(0xCC050A16)).clickable(onClick = onResume),
+        Modifier.fillMaxSize().background(Color(0xCC050A16)).clickable(onClick = onResume).screenSafePadding(),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             Modifier
-                .width(460.dp)
+                .padding(horizontal = 12.dp)
+                .widthIn(max = 460.dp)
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(vertical = 12.dp)
                 .clip(RoundedCornerShape(14.dp))
@@ -241,6 +268,13 @@ fun GameMenu(
                 CloseButton(onResume)
             }
 
+            // Screen orientation (横屏 / 竖屏 / 自动).
+            Segmented(
+                options = OrientationMode.entries.map { it to it.label },
+                selected = settings.orientation,
+                onSelect = { mode -> onUpdateSettings { it.copy(orientation = mode) } },
+                modifier = Modifier.fillMaxWidth(),
+            )
             // Secondary QuickBar controls: 3-way language (incl. single 中文), window mode, font size,
             // tap-to-analyze toggle, and hide window.
             Segmented(
@@ -253,58 +287,91 @@ fun GameMenu(
                 onSelect = { lang -> onUpdateSettings { it.copy(lang = lang) } },
                 modifier = Modifier.fillMaxWidth(),
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickControlChip(
-                    label = "窗口: ${settings.windowMode.label} ⇄",
-                    active = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onUpdateSettings { it.copy(windowMode = it.windowMode.next()) } },
-                )
-                QuickControlChip(
-                    label = "字号: ${TextScale.clamp(settings.textScale)}%",
-                    active = settings.textScale != TextScale.DEFAULT,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onUpdateSettings { it.withTextScale(it.nextTextScale()) } },
-                )
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickControlChip(
-                    label = if (settings.aiTapToAnalyze) "✨ 点词: 开 ON" else "✨ 点词: 关 OFF",
-                    active = settings.aiTapToAnalyze,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onUpdateSettings { it.copy(aiTapToAnalyze = !it.aiTapToAnalyze) } },
-                )
-                QuickControlChip(
-                    label = "📒 学习记录",
-                    active = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onNotebook?.invoke() },
-                )
-                QuickControlChip(
-                    label = "👁 隐藏窗口",
-                    active = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = onHideWindow,
-                )
+            // Chips: WIDE keeps today's [窗口][字号] / [点词][📒][👁] rows; compact wraps 2 per row.
+            val chips: List<@Composable (Modifier) -> Unit> = listOf(
+                { m ->
+                    QuickControlChip(
+                        label = "窗口: ${settings.windowMode.label} ⇄",
+                        active = false,
+                        modifier = m,
+                        onClick = { onUpdateSettings { it.copy(windowMode = it.windowMode.next()) } },
+                    )
+                },
+                { m ->
+                    QuickControlChip(
+                        label = "字号: ${TextScale.clamp(settings.textScale)}%",
+                        active = settings.textScale != TextScale.DEFAULT,
+                        modifier = m,
+                        onClick = { onUpdateSettings { it.withTextScale(it.nextTextScale()) } },
+                    )
+                },
+                { m ->
+                    QuickControlChip(
+                        label = if (settings.aiTapToAnalyze) "✨ 点词: 开 ON" else "✨ 点词: 关 OFF",
+                        active = settings.aiTapToAnalyze,
+                        modifier = m,
+                        onClick = { onUpdateSettings { it.copy(aiTapToAnalyze = !it.aiTapToAnalyze) } },
+                    )
+                },
+                { m -> QuickControlChip(label = "📒 学习记录", active = false, modifier = m, onClick = { onNotebook?.invoke() }) },
+                { m -> QuickControlChip(label = "👁 隐藏窗口", active = false, modifier = m, onClick = onHideWindow) },
+            )
+            if (compact) {
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = 2,
+                ) {
+                    chips.forEach { chip -> chip(Modifier.weight(1f)) }
+                }
+            } else {
+                listOf(chips.take(2), chips.drop(2)).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { chip -> chip(Modifier.weight(1f)) }
+                    }
+                }
             }
 
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x22FFFFFF)))
 
-            if (!inReplayMode) {
+            if (compact) {
+                // Narrow: 2 per row — [保存][读取] / [快读 Q.LOAD][回想 Log] / [设置 Config][返回标题] / [返回游戏].
+                val exit: () -> Unit = { if (inReplayMode) onTitle() else confirmTitle = true }
+                val buttons = buildList<Pair<String, () -> Unit>> {
+                    if (!inReplayMode) {
+                        add("保存 Save" to onSave)
+                        add("读取 Load" to onLoad)
+                        add("快读 Q.LOAD" to onQuickLoad)
+                    }
+                    add("回想 Log" to onLog)
+                    add("设置 Config" to onConfig)
+                    add(exitLabel to exit)
+                }
+                buttons.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { (label, action) -> MenuButton(label, modifier = Modifier.weight(1f), compact = true, onClick = action) }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+                MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), compact = true, onClick = onResume)
+            } else {
+                if (!inReplayMode) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MenuButton("保存 Save", modifier = Modifier.weight(1f), onClick = onSave)
+                        MenuButton("读取 Load", modifier = Modifier.weight(1f), onClick = onLoad)
+                        MenuButton("快读 Q.LOAD", modifier = Modifier.weight(1f), onClick = onQuickLoad)
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MenuButton("保存 Save", modifier = Modifier.weight(1f), onClick = onSave)
-                    MenuButton("读取 Load", modifier = Modifier.weight(1f), onClick = onLoad)
-                    MenuButton("快读 Q.LOAD", modifier = Modifier.weight(1f), onClick = onQuickLoad)
+                    MenuButton("回想 Log", modifier = Modifier.weight(1f), onClick = onLog)
+                    MenuButton("设置 Config", modifier = Modifier.weight(1f), onClick = onConfig)
+                    MenuButton(exitLabel, modifier = Modifier.weight(1f)) {
+                        if (inReplayMode) onTitle() else confirmTitle = true
+                    }
                 }
+                MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), onClick = onResume)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuButton("回想 Log", modifier = Modifier.weight(1f), onClick = onLog)
-                MenuButton("设置 Config", modifier = Modifier.weight(1f), onClick = onConfig)
-                MenuButton(exitLabel, modifier = Modifier.weight(1f)) {
-                    if (inReplayMode) onTitle() else confirmTitle = true
-                }
-            }
-            MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), onClick = onResume)
         }
     }
     if (confirmTitle) {

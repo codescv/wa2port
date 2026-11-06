@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,7 +44,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.min
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,23 +56,28 @@ import com.wa2port.android.movie.LocalMovieSkipGate
 import com.wa2port.android.movie.MovieSkipGate
 import com.wa2port.android.movie.MovieSkipPill
 import com.wa2port.android.ui.ConfigPanel
+import com.wa2port.android.ui.LocalIsPortrait
+import com.wa2port.android.ui.LocalScreenInsets
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadPanel
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.ai.JpSentence
+import com.wa2port.core.text.DeckLayout
 import com.wa2port.core.text.MessageLayout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-private enum class BarPlacement { SIDE, TOP, OVERLAY }
-
 private const val TAG = "Wa2Game"
 
 /**
  * The game screen: letterboxed 16:9 stage + ADV/NOVEL text + choices + gesture layer + quick bar
  * (in the letterbox when there is room) + overlays (menu, backlog, save/load, config, movie).
+ *
+ * Portrait windows (measured `maxHeight > maxWidth`) use the same composition tree with a different
+ * [GameLayout] geometry: quick-bar HUD row, full 16:9 stage at the top of the content box and the
+ * reading deck (ADV / NOVEL / choice prompt + cards) below it.
  */
 @Composable
 fun GameScreen(vm: AppViewModel, session: GameSession) {
@@ -178,18 +183,20 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     fun act(f: () -> Unit): () -> Unit = { barInteraction++; f() }
 
     val isNovelMode = settings.windowMode == WindowMode.NOVEL || session.stage.novelMode
+    val isPortrait = LocalIsPortrait.current
     val leftActions = buildList {
-        add(QuickAction("AUTO", session.autoMode, act { session.toggleAuto() }))
-        add(QuickAction("SKIP", session.skipToggle, act { session.toggleSkip() }))
-        add(QuickAction("LOG", false, act { session.overlay = Overlay.BACKLOG }))
-        if (isNovelMode && session.line?.ref?.voice != null) {
-            add(QuickAction("🔊", false, act { session.replayCurrentVoice() }))
+        add(QuickAction("AUTO", session.autoMode, onClick = act { session.toggleAuto() }))
+        add(QuickAction("SKIP", session.skipToggle, onClick = act { session.toggleSkip() }))
+        add(QuickAction("LOG", false, onClick = act { session.overlay = Overlay.BACKLOG }))
+        // Landscape NOVEL only: the portrait deck draws its own 🔊 重听 pill.
+        if (QuickBarLayout.showsVoiceKey(isNovelMode, session.line?.ref?.voice != null, isPortrait)) {
+            add(QuickAction("🔊", false, onClick = act { session.replayCurrentVoice() }))
         }
     }
     val rightActions = buildList {
         // AI breakdown of the current line (stacks above whatever overlay is open).
         add(
-            QuickAction("✨ AI", vm.ai.breakdown != null, act {
+            QuickAction("✨ AI", vm.ai.breakdown != null, onClick = act {
                 val l = session.line
                 if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
             }),
@@ -207,30 +214,42 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             ),
         )
         if (!session.inReplayMode) {
-            add(QuickAction("Q.SAVE", false, act { scope.launch { session.quickSave() } }))
+            add(QuickAction("Q.SAVE", false, onClick = act { scope.launch { session.quickSave() } }))
         } else {
-            add(QuickAction("结束回想", false, act { vm.exitToTitle() }))
+            add(QuickAction("结束回想", false, shortLabel = "退出", onClick = act { vm.exitToTitle() }))
         }
-        add(QuickAction("MENU", false, act { session.overlay = Overlay.MENU }))
+        add(QuickAction("MENU", false, onClick = act { session.overlay = Overlay.MENU }))
     }
     val actions = leftActions + rightActions
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
-        val stageW = min(maxWidth, maxHeight * 16f / 9f)
-        val stageH = stageW * 9f / 16f
-        val side = (maxWidth - stageW) / 2
-        val topBox = (maxHeight - stageH) / 2
-        val placement = when {
-            side >= 60.dp -> BarPlacement.SIDE
-            topBox >= 56.dp -> BarPlacement.TOP
-            else -> BarPlacement.OVERLAY
+        val insets = LocalScreenInsets.current
+        val textScale = settings.textScaleFactor
+        val hasChoices = session.choices.isNotEmpty()
+        val hasLine = session.line != null
+        // Landscape: today's letterbox formulas; portrait: HUD row + stage + reading deck (R1: by measured size).
+        val g = remember(maxWidth, maxHeight, insets, textScale, settings.lang, hasChoices, hasLine) {
+            GameLayout.compute(maxWidth.value, maxHeight.value, insets.top.value, insets.bottom.value, textScale, settings.lang, hasChoices, hasLine)
         }
+        val placement = g.placement
+        val stageW = g.stageWidth.dp
+        val stageH = g.stageHeight.dp
+        val side = g.side.dp
+        val topBox = g.topBox.dp
         val screenWpx = with(density) { maxWidth.toPx() }
         val screenHpx = with(density) { maxHeight.toPx() }
         val stageWpx = with(density) { stageW.toPx() }
         val stageHpx = with(density) { stageH.toPx() }
-        val stageOrigin = Offset((screenWpx - stageWpx) / 2f, (screenHpx - stageHpx) / 2f)
+        // Origin of the content box (stage box in landscape) in window px, for the edge shields.
+        val contentOrigin = with(density) { Offset(g.content.left.dp.toPx(), g.content.top.dp.toPx()) }
+        // Portrait reading-deck frame in content-box px (null in landscape → legacy window geometry).
+        val advFrame = remember(g, density) {
+            g.advFrame?.let { r ->
+                val d = density.density
+                AdvFrame(r.left * d, r.top * d, r.right * d, r.bottom * d, DeckLayout.DECK_SCALE * d, g.bothMode)
+            }
+        }
         val edgeSide = with(density) { 24.dp.toPx() }
         val edgeTop = with(density) { 32.dp.toPx() }
         val edgeBottom = with(density) { 56.dp.toPx() }
@@ -251,7 +270,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 canScrollWindow = { p ->
                     val s = vm.settings
                     val isNovel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
-                    !isNovel && !session.windowHidden && session.line != null &&
+                    // Portrait NOVEL pages scroll in the deck too (frameMode); landscape NOVEL never does.
+                    (!isNovel || advHit.frameMode) && !session.windowHidden && session.line != null &&
                         session.overlay == Overlay.NONE && vm.ai.breakdown == null &&
                         advHit.maxScrollPx > 0.5f && advHit.windowRect.contains(p) &&
                         advHit.voiceRect?.contains(p) != true
@@ -260,22 +280,30 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             )
         }
 
-        // ---------------------------------------------------------------- stage
-        Box(Modifier.size(stageW, stageH).align(Alignment.Center)) {
-            session.backend.Stage(session.stage, handle, Modifier.fillMaxSize())
+        // ---------------------------------------------------------------- stage (+ portrait deck)
+        // One content box in both orientations (R3): only its modifiers and the text frame change, so
+        // the stage view, text canvases, hit box and movie state survive a rotation.
+        val contentModifier = if (g.portrait) {
+            Modifier.fillMaxSize().padding(top = g.content.top.dp).background(Wa2Colors.Night)
+        } else {
+            Modifier.size(stageW, stageH).align(Alignment.Center)
+        }
+        Box(contentModifier) {
+            val stageModifier = if (g.portrait) Modifier.align(Alignment.TopCenter).size(stageW, stageH) else Modifier.fillMaxSize()
+            session.backend.Stage(session.stage, handle, stageModifier)
             val line = session.line
             val novel = settings.windowMode == WindowMode.NOVEL || session.stage.novelMode
             val waiting = session.revealDone && session.engine.isWaitingForClick && session.choices.isEmpty()
             val opacity = settings.windowOpacity / 100f
-            val textScale = settings.textScaleFactor
             if (line != null && !session.windowHidden) {
                 if (novel) {
                     NovelPage(
                         painter, session.page.ifEmpty { listOf(line) }, settings.lang, session.visibleJp, session.visibleCn,
                         waiting, opacity, textScale, stageWpx, stageHpx, onOverflow = { session.trimPage() }, modifier = Modifier.fillMaxSize(),
+                        frame = advFrame, hitBox = advHit,
                     )
                 } else {
-                    AdvWindow(painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale, Modifier.fillMaxSize(), advHit)
+                    AdvWindow(painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale, Modifier.fillMaxSize(), advHit, advFrame)
                 }
             }
             // Gesture layer above text, below interactive controls. Inert while any overlay or the AI
@@ -285,8 +313,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 Modifier.fillMaxSize().then(
                     if (stageInteractive) {
                         Modifier.stageGestures(gestureHandler) { p ->
-                            val x = p.x + stageOrigin.x
-                            val y = p.y + stageOrigin.y
+                            val x = p.x + contentOrigin.x
+                            val y = p.y + contentOrigin.y
                             x < edgeSide || x > screenWpx - edgeSide || y < edgeTop || y > screenHpx - edgeBottom
                         }
                     } else {
@@ -295,19 +323,31 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 ),
             )
             if (session.choices.isNotEmpty() && !session.windowHidden) {
-                val twoColAdv = settings.lang == DisplayLang.BOTH && line?.cn?.isEmpty == false
-                ChoiceCards(
-                    painter, session.choices, settings.lang, stageHpx, textScale, onChoose = { session.choose(it) },
-                    // Above the ADV window, which grows upwards with large text and 4-line bilingual mode.
-                    modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale, twoColAdv) - 0.015f),
-                )
+                val choiceRect = g.choiceRect
+                if (choiceRect != null) {
+                    // Portrait: cards in the deck below the prompt frame (stage and prompt never covered).
+                    ChoiceCards(
+                        painter, session.choices, settings.lang, stageHpx, textScale, onChoose = { session.choose(it) },
+                        modifier = Modifier.offset(choiceRect.left.dp, choiceRect.top.dp).size(choiceRect.width.dp, choiceRect.height.dp),
+                        cardWidth = choiceRect.width.dp,
+                        scalePx = DeckLayout.DECK_SCALE * density.density * textScale,
+                    )
+                } else {
+                    val twoColAdv = settings.lang == DisplayLang.BOTH && line?.cn?.isEmpty == false
+                    ChoiceCards(
+                        painter, session.choices, settings.lang, stageHpx, textScale, onChoose = { session.choose(it) },
+                        // Above the ADV window, which grows upwards with large text and 4-line bilingual mode.
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale, twoColAdv) - 0.015f),
+                    )
+                }
             }
             // Mode indicators (+ ✨ 点词 while tap-to-analyze changes the meaning of taps on JP text;
             // the 点词 badge is itself the off switch).
             val mode = if (session.skipping) "SKIP ▶▶" else if (session.autoMode) "AUTO ▶" else null
             val tapBadge = settings.aiTapToAnalyze && !novel
             if (mode != null || tapBadge) {
-                Row(Modifier.align(Alignment.TopStart).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Stage top-left in both orientations (portrait stage may be pillarboxed).
+                Row(Modifier.align(Alignment.TopStart).padding(start = g.stage.left.dp).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (mode != null) {
                         Text(
                             mode, color = Wa2Colors.Accent, fontSize = 13.sp,
@@ -338,7 +378,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             if (placement == BarPlacement.OVERLAY && !session.windowHidden && session.overlay == Overlay.NONE) {
                 Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
                     if (barExpanded) {
-                        QuickRow(actions + QuickAction("✕", false) { barExpanded = false })
+                        QuickRow(actions + QuickAction("✕", false, onClick = { barExpanded = false }))
                     } else {
                         Box(
                             Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(Color(0x66101A30))
@@ -362,6 +402,10 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 QuickRow(actions, Modifier.padding(horizontal = 8.dp))
             }
             BarPlacement.OVERLAY -> {}
+            BarPlacement.PORTRAIT_BAR -> QuickBarFill(
+                actions,
+                Modifier.align(Alignment.TopCenter).padding(top = g.hudTop.dp).height(g.hudHeight.dp).alpha(barAlpha),
+            )
         }
 
         // ---------------------------------------------------------------- overlays
@@ -454,7 +498,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val undo = session.undoAction
         if (undo != null) {
             Row(
-                Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                Modifier.align(Alignment.TopCenter).padding(top = if (g.portrait) (g.hudTop + 56f).dp else 12.dp)
                     .background(Color(0xE6101A30), RoundedCornerShape(24.dp))
                     .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(24.dp))
                     .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
@@ -475,7 +519,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         session.toast?.let {
             Text(
                 it, color = Wa2Colors.Text, fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = if (undo != null) 68.dp else 16.dp)
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .padding(top = if (g.portrait) (g.hudTop + 56f + if (undo != null) 56f else 0f).dp else if (undo != null) 68.dp else 16.dp)
                     .background(Color(0xCC101A30), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
@@ -488,19 +533,18 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             if (movieGate.isFirstView && !movieGate.hintVisible) {
                 Box(Modifier.fillMaxSize().pointerInput(movieGate) { detectTapGestures(onTap = { movieGate.requestSkip() }) })
             }
-            MovieSkipPill(movieGate)
+            MovieSkipPill(movieGate, if (g.portrait) Modifier.padding(bottom = insets.bottom) else Modifier)
         }
     }
 }
 
 /**
- * ADV `🔊 重听`: a tap inside [AdvHitBox.voiceRect] replays the current line's voice without
+ * ADV / portrait NOVEL `🔊 重听`: a tap inside [AdvHitBox.voiceRect] replays the current line's voice without
  * advancing and returns true. Checked before tap-to-analyze and the normal advance tap.
  */
 private fun tryVoiceTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, p: Offset): Boolean {
-    val s = vm.settings
-    val novel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
-    if (novel || session.windowHidden || session.line == null || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
+    // No NOVEL guard: landscape NOVEL never sets voiceRect; the portrait NOVEL deck draws a 🔊 pill.
+    if (session.windowHidden || session.line == null || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
     if (advHit.voiceRect?.contains(p) != true) return false
     return session.replayCurrentVoice()
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -93,7 +94,8 @@ fun MoviePlayer(
                     }
                 },
                 onRelease = { it.stopPlayback() },
-                modifier = Modifier.fillMaxSize(),
+                // AT_MOST × AT_MOST: VideoView.onMeasure keeps the video's own aspect in both orientations.
+                modifier = Modifier.wrapContentSize(),
             )
             // VideoView consumes touches; keep a transparent layer on top for tap-to-skip.
             Box(Modifier.fillMaxSize().pointerInput(stem) { detectTapGestures(onTap = { complete() }) })
