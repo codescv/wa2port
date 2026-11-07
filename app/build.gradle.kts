@@ -83,4 +83,16 @@ dependencies {
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+    // Real game assets live outside git (`-Dwa2.root=…` / WA2_ROOT); corpus tests skip when absent.
+    val defaultWa2Root = listOf(
+        rootProject.file("resource/WA2"),
+        rootProject.file("../../resource/WA2"),
+    ).firstOrNull { it.isDirectory } ?: rootProject.file("resource/WA2")
+    systemProperty(
+        "wa2.root",
+        System.getProperty("wa2.root")
+            ?: System.getenv("WA2_ROOT")
+            ?: defaultWa2Root.absolutePath,
+    )
+    maxHeapSize = "3g"
 }

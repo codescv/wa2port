@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Portrait deck hit-testing: content-box px, stacked JP block, 🔊 touch target, scroll state (spec §2.4). */
+/** Portrait deck hit-testing: content-box px, stacked JP block, 🔊 / ✨ touch targets, scroll state (spec §2.4). */
 class AdvHitBoxPortraitTest {
     /** Monospace fake: glyph `i` of line `L` at (`i·em`, `L·1.5·em`), [cap] glyphs per line. */
     private class FakePainter : TextPainter {
@@ -102,7 +102,8 @@ class AdvHitBoxPortraitTest {
             val top = frame.top * density
             val pad = MessageLayout.ADV_PAD * s
             val textTop = DeckText.textTop(top, pad)
-            val r = voiceTouchRect(right - pad, top, textTop, s, 48f * density, 412f * density)
+            val r = AdvPills.layout(right - pad, top, textTop, s, showAi = false, showVoice = true, shortAi = false, 48f * density, 412f * density)
+                .voiceTouch!!
             assertTrue(r.width >= 48f * density - 1e-3f, "w density=$density")
             assertTrue(r.height >= 48f * density - 1e-3f, "h density=$density")
             assertTrue(r.bottom <= textTop, "never covers the first text line (density=$density t=$t)")
@@ -128,9 +129,12 @@ class AdvHitBoxPortraitTest {
     fun clearGeometryLeavesFrameMode() {
         val hit = AdvHitBox()
         hit.frameMode = true
+        hit.voiceRect = androidx.compose.ui.geometry.Rect(0f, 0f, 48f, 48f)
+        hit.aiRect = androidx.compose.ui.geometry.Rect(0f, 0f, 48f, 48f)
         hit.clearGeometry()
         assertFalse(hit.frameMode)
         assertEquals(null, hit.voiceRect)
+        assertEquals(null, hit.aiRect)
     }
 
     @Test

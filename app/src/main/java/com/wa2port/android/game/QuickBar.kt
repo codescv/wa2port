@@ -67,6 +67,17 @@ object QuickBarLayout {
      * so the portrait bar always holds the same 7 keys.
      */
     fun showsVoiceKey(isNovelMode: Boolean, hasVoice: Boolean, portrait: Boolean): Boolean = isNovelMode && hasVoice && !portrait
+
+    /**
+     * Order of a horizontal quick row built from the side-column halves [left] + [right]: when the
+     * [voice] key (`🔊`, end of [left]) and the [ai] key (`✨ AI`, in [right]) are both present, `✨ AI`
+     * moves immediately to the left of `🔊` (`… LOG, ✨ AI, 🔊, 日⇄双 …`), like the message-window
+     * `[✨ AI解读] [🔊 重听]` pills. Otherwise `left + right` unchanged. Keys are matched by identity.
+     */
+    fun <T : Any> rowOrder(left: List<T>, right: List<T>, voice: T?, ai: T?): List<T> {
+        if (voice == null || ai == null || left.none { it === voice } || right.none { it === ai }) return left + right
+        return left.filterNot { it === voice } + ai + voice + right.filterNot { it === ai }
+    }
 }
 
 @Composable

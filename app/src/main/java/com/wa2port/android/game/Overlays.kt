@@ -147,7 +147,7 @@ fun ChoiceCards(
 }
 
 /**
- * Scrollable bilingual backlog with ▶ voice replay; opens scrolled to the newest line. Line and
+ * Scrollable bilingual backlog with per-line ✨ AI breakdown and ▶ voice replay; opens scrolled to the newest line. Line and
  * speaker-name sizes follow the font size setting ([textScale], 1.0 = 100 %).
  */
 @Composable
@@ -191,19 +191,20 @@ fun BacklogOverlay(
                             if (nameParts.isNotEmpty()) BilingualText(painter, nameParts.take(1), textWidthPx, 0f)
                             BilingualText(painter, parts(line.jp, line.cn, lang, main, sub), textWidthPx, 4f * textScale)
                         }
-                        // ▶ voice replay and ✨ AI breakdown of this line.
+                        // ✨ AI breakdown, then ▶ voice replay of this line (same order as the window's
+                        // `[✨ AI解读] [🔊 重听]` pills; one compact 56 dp column keeps 360 dp text width).
                         Column(Modifier.width(56.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (ref.voice != null) {
-                                Box(
-                                    Modifier.size(48.dp).clip(CircleShape).background(Color(0x553060A0)).clickable { onReplay(ref) },
-                                    contentAlignment = Alignment.Center,
-                                ) { Text("▶", color = Wa2Colors.Accent, fontSize = 18.sp) }
-                            }
                             if (onAi != null && !line.jp.isEmpty) {
                                 Box(
                                     Modifier.size(48.dp).clip(CircleShape).background(Color(0x55A06030)).clickable { onAi(ref) },
                                     contentAlignment = Alignment.Center,
                                 ) { Text("✨", fontSize = 16.sp) }
+                            }
+                            if (ref.voice != null) {
+                                Box(
+                                    Modifier.size(48.dp).clip(CircleShape).background(Color(0x553060A0)).clickable { onReplay(ref) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("▶", color = Wa2Colors.Accent, fontSize = 18.sp) }
                             }
                         }
                     }

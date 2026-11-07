@@ -48,4 +48,37 @@ class QuickBarLayoutTest {
         assertEquals("退出", if (narrow) exit.shortLabel ?: exit.label else exit.label)
         assertEquals("Q.SAVE", if (narrow) save.shortLabel ?: save.label else save.label)
     }
+
+    /** The left / right halves exactly as `GameScreen` builds them. */
+    private fun halves(voiceKey: Boolean): Triple<List<QuickAction>, List<QuickAction>, Pair<QuickAction?, QuickAction>> {
+        val voice = if (voiceKey) QuickAction("🔊") {} else null
+        val ai = QuickAction("✨ AI") {}
+        val left = listOfNotNull(QuickAction("AUTO") {}, QuickAction("SKIP") {}, QuickAction("LOG") {}, voice)
+        val right = listOf(ai, QuickAction("日⇄双") {}, QuickAction("Q.SAVE") {}, QuickAction("MENU") {})
+        return Triple(left, right, voice to ai)
+    }
+
+    @Test
+    fun landscapeNovelRowPutsAiImmediatelyLeftOfVoice() {
+        val voiced = QuickBarLayout.showsVoiceKey(isNovelMode = true, hasVoice = true, portrait = false)
+        val (left, right, keys) = halves(voiced)
+        val row = QuickBarLayout.rowOrder(left, right, voice = keys.first, ai = keys.second).map { it.label }
+        assertEquals(listOf("AUTO", "SKIP", "LOG", "✨ AI", "🔊", "日⇄双", "Q.SAVE", "MENU"), row)
+        assertEquals(row.indexOf("🔊") - 1, row.indexOf("✨ AI"))
+        // Side columns keep their halves untouched (🔊 last on the left, ✨ AI first on the right).
+        assertEquals("🔊", left.last().label)
+        assertEquals("✨ AI", right.first().label)
+    }
+
+    @Test
+    fun rowWithoutVoiceKeyIsUnchanged() {
+        for (portrait in listOf(false, true)) for (novel in listOf(false, true)) {
+            val (left, right, keys) = halves(QuickBarLayout.showsVoiceKey(novel, hasVoice = false, portrait = portrait))
+            assertEquals(left + right, QuickBarLayout.rowOrder(left, right, voice = keys.first, ai = keys.second))
+            assertEquals(7, (left + right).size)
+        }
+        // A voice key not present in the left half is ignored (identity match only).
+        val (left, right, keys) = halves(false)
+        assertEquals(left + right, QuickBarLayout.rowOrder(left, right, voice = QuickAction("🔊") {}, ai = keys.second))
+    }
 }

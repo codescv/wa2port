@@ -184,23 +184,25 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
 
     val isNovelMode = settings.windowMode == WindowMode.NOVEL || session.stage.novelMode
     val isPortrait = LocalIsPortrait.current
+    // Landscape NOVEL only: the portrait deck draws its own 🔊 重听 pill.
+    val voiceAction = if (QuickBarLayout.showsVoiceKey(isNovelMode, session.line?.ref?.voice != null, isPortrait)) {
+        QuickAction("🔊", false, onClick = act { session.replayCurrentVoice() })
+    } else {
+        null
+    }
+    // AI breakdown of the current line (stacks above whatever overlay is open).
+    val aiAction = QuickAction("✨ AI", vm.ai.breakdown != null, onClick = act {
+        val l = session.line
+        if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
+    })
     val leftActions = buildList {
         add(QuickAction("AUTO", session.autoMode, onClick = act { session.toggleAuto() }))
         add(QuickAction("SKIP", session.skipToggle, onClick = act { session.toggleSkip() }))
         add(QuickAction("LOG", false, onClick = act { session.overlay = Overlay.BACKLOG }))
-        // Landscape NOVEL only: the portrait deck draws its own 🔊 重听 pill.
-        if (QuickBarLayout.showsVoiceKey(isNovelMode, session.line?.ref?.voice != null, isPortrait)) {
-            add(QuickAction("🔊", false, onClick = act { session.replayCurrentVoice() }))
-        }
+        if (voiceAction != null) add(voiceAction)
     }
     val rightActions = buildList {
-        // AI breakdown of the current line (stacks above whatever overlay is open).
-        add(
-            QuickAction("✨ AI", vm.ai.breakdown != null, onClick = act {
-                val l = session.line
-                if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
-            }),
-        )
+        add(aiAction)
         // 2-state core learner toggle: 日本語 ⇄ 中/日双语 (single 中文 lives in MENU Quick Controls).
         add(
             QuickAction(
@@ -220,7 +222,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         }
         add(QuickAction("MENU", false, onClick = act { session.overlay = Overlay.MENU }))
     }
-    val actions = leftActions + rightActions
+    // Horizontal rows (TOP / OVERLAY / portrait bar): `… LOG, ✨ AI, 🔊, 日⇄双 …`, matching the rim pills.
+    val actions = QuickBarLayout.rowOrder(leftActions, rightActions, voice = voiceAction, ai = aiAction)
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
@@ -261,8 +264,12 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val advHit = remember(session) { AdvHitBox() }
         val gestureHandler = remember(session) {
             StageGestureHandler(
-                // 🔊 重听 first, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
-                onTap = { p -> if (!tryVoiceTap(vm, session, advHit, p) && !tryAiTap(vm, session, advHit, p)) session.onTap() },
+                // Rim pills (🔊 重听 / ✨ AI解读) first, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
+                onTap = { p ->
+                    if (!tryVoiceTap(vm, session, advHit, p) && !tryAiPillTap(vm, session, advHit, p) && !tryAiTap(vm, session, advHit, p)) {
+                        session.onTap()
+                    }
+                },
                 onLongPressStart = { if (!session.windowHidden && session.choices.isEmpty()) session.holdSkip(true) },
                 onLongPressEnd = { session.holdSkip(false) },
                 onSwipeUp = { session.overlay = Overlay.BACKLOG },
@@ -274,7 +281,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     (!isNovel || advHit.frameMode) && !session.windowHidden && session.line != null &&
                         session.overlay == Overlay.NONE && vm.ai.breakdown == null &&
                         advHit.maxScrollPx > 0.5f && advHit.windowRect.contains(p) &&
-                        advHit.voiceRect?.contains(p) != true
+                        advHit.voiceRect?.contains(p) != true && advHit.aiRect?.contains(p) != true
                 },
                 onScrollWindow = { dy -> advHit.scrollBy(dy) },
             )
@@ -547,6 +554,20 @@ private fun tryVoiceTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBo
     if (session.windowHidden || session.line == null || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
     if (advHit.voiceRect?.contains(p) != true) return false
     return session.replayCurrentVoice()
+}
+
+/**
+ * ADV / portrait NOVEL `✨ AI解读`: a tap inside [AdvHitBox.aiRect] opens the AI breakdown of the
+ * current line (no focus character) without advancing and returns true. Works on unvoiced narration
+ * too; checked after `🔊 重听` (their touch targets never overlap) and before tap-to-analyze.
+ */
+private fun tryAiPillTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, p: Offset): Boolean {
+    val line = session.line ?: return false
+    if (session.windowHidden || line.jp.isEmpty || session.overlay != Overlay.NONE) return false
+    if (vm.ai.breakdown != null || vm.ai.notebookOpen) return false
+    if (advHit.aiRect?.contains(p) != true) return false
+    vm.ai.open(session, line, null, Overlay.NONE)
+    return true
 }
 
 /**
