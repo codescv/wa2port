@@ -62,6 +62,7 @@ export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 | `GameLayoutTest` / `AdvHitBoxPortraitTest` | 验证横屏信箱公式不变，以及 v1.4.12 竖屏单手布局：快捷栏底边贴合底部安全区（`hudTop + 48 = h − insetBottom`）、内容框止于快捷栏顶边、A–D 四档设备 × 70%–150% × 日/双语 × 24/48 dp 导航条下阅读区高度与旧顶栏布局恒等且整体位于 56 dp 底部边缘区之外，以及竖屏阅读区点词命中换算。 |
 | `PullDismissLogicTest` | 验证 v1.4.12 下拉返回状态机（`PullDismissLogic` / `PullDismissState`）：距离阈值 `min(120 dp, 0.22·高度)`（高度未知时 120 dp）、≥24 dp 位移 + ≥1000 dp/s 速度关闭、列表顶部 1:1 下拉与上拖先复位、惯性 `SideEffect` 永不下拉/关闭、慢速松手弹簧复位且不越过 0、滑出动画被取消时绝不关闭、指针取消时的空闲兜底复位、键盘打开时单次手势只收起键盘一次，以及密度变化后阈值同步。 |
 | `NamePlateTest` / `RubyFlowTest` | 验证 v1.4.11 竖屏名牌与 AI 解说流式注音几何不变式：竖屏角色名牌基于字形实际墨迹上沿（`glyphInkTop`）在标签框内严格垂直居中、主外框顶边对名牌与 `[✨ AI解读] [🔊 重听]` 胶囊进行挖空防穿字、超长双语角色名与胶囊组协同退让，以及 AI 解说页长词块/长振假名流式换行、跨行注音间距防重叠与真实剧本义训超长 `RubyToken` 回退零裁剪。 |
+| `OrientationModeTest` / `SettingsStoreTest` | 验证 v1.4.13 默认竖屏与一次性升级迁移：`AndroidManifest.xml` `.MainActivity` 默认 `portrait` 与 `Settings().orientation` 一致、`竖屏 · 横屏 · 自动` 排序与标题栏 `⟳` 胶囊翻转，以及 `settings.json` 全路径升级迁移（新装/损坏回退竖屏、pre-v1.4.8 无 `orientation`、v1.4.8–v1.4.12 旧默认 `LANDSCAPE` 一次性迁移至 `PORTRAIT` 并写盘 `portraitDefaultMigrated=true`、`AUTO` 保留、迁移后用户手动切换 `LANDSCAPE` 持久保留）。 |
 
 ---
 
