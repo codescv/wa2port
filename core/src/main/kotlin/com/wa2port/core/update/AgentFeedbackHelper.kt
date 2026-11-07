@@ -85,14 +85,14 @@ data class AgentFeedbackMail(
 )
 
 /**
- * Pure-JVM builder and validator for one-click Agent feedback emails (`wa2port: [v1.4.13] <title>`).
+ * Pure-JVM builder and validator for one-click Agent feedback emails (`wa2port: [v1.4.14] <title>`).
  *
  * The recipient address is configured exclusively on-device by the user (default `""`) and never
  * hardcoded in source or resources.
  */
 object AgentFeedbackHelper {
     const val APP_ALIAS = "wa2port"
-    const val DEFAULT_APP_VERSION = "1.4.13"
+    const val DEFAULT_APP_VERSION = "1.4.14"
     const val PLACEHOLDER_EMAIL = "agent@example.com"
     const val PREFS_NAME = "wa2port_agent_feedback"
     const val PREF_KEY_EMAIL = "agent_feedback_email"
@@ -202,7 +202,7 @@ object AgentFeedbackHelper {
     }
 
     /**
-     * Builds the Vibe Coding dispatcher subject: **`wa2port: [v1.4.13] <title>`**. The summary is
+     * Builds the Vibe Coding dispatcher subject: **`wa2port: [v1.4.14] <title>`**. The summary is
      * [title] when non-blank, else [summaryOverride], else the first non-blank line of [feedbackText].
      */
     fun buildSubject(
