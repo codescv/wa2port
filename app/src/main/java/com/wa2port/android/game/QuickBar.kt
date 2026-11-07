@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ui.Wa2Colors
+import kotlin.math.roundToInt
 
 /**
  * One quick-bar action. [active] highlights toggles (AUTO/SKIP). [shortLabel] replaces [label] in
@@ -82,18 +83,45 @@ object QuickBarLayout {
     /** Label font size (dp, never compounded with the system font scale). */
     fun fontDp(buttonWidthDp: Float): Float = if (buttonWidthDp < SMALL_FONT_BELOW_DP) 11f else 12f
 
-    /** Room for the label inside a button [buttonWidthDp] wide. */
-    fun labelRoom(buttonWidthDp: Float): Float = buttonWidthDp - 2f * INNER_PAD_DP
+    /** `Dp.roundToPx()`: Compose rounds every padding side to whole px (half up). */
+    private fun px(dp: Float, density: Float): Int = (dp * density).roundToInt()
 
     /**
-     * The label drawn on [a]'s button: [QuickAction.label] when its measured width ([textWidthDp], in
-     * dp at [fontDp]) fits [labelRoom], otherwise [QuickAction.shortLabel] (if any). Decided per key,
-     * so e.g. PKX110 (412 dp, 7 keys) keeps `Q.SAVE` while a 360 dp phone shows `快存`.
+     * Narrowest touch cell (px) of [count] `weight(1f)` cells in a bar [barWidthPx] wide at [density]:
+     * the row is inset `round(SIDE_PAD_DP − GAP_DP / 2)` px per side and Compose hands every weighted
+     * child `floor` or `ceil` of the remaining px / [count].
      */
-    fun displayLabel(a: QuickAction, buttonWidthDp: Float, textWidthDp: (String) -> Float): String {
-        val short = a.shortLabel ?: return a.label
-        return if (textWidthDp(a.label) <= labelRoom(buttonWidthDp)) a.label else short
+    fun touchCellMinPx(barWidthPx: Int, count: Int, density: Float): Int {
+        if (count <= 0) return 0
+        val inner = barWidthPx - 2 * px(SIDE_PAD_DP - GAP_DP / 2f, density)
+        return Math.floorDiv(inner.coerceAtLeast(0), count)
     }
+
+    /**
+     * Worst-case label constraint (px) exactly as Compose lays the key out: [touchCellMinPx] minus the
+     * per-side rounded half gap and [INNER_PAD_DP]. A label whose measured width is ≤ this never clips.
+     */
+    fun labelRoomPx(barWidthPx: Int, count: Int, density: Float): Int {
+        if (count <= 0) return 0
+        return touchCellMinPx(barWidthPx, count, density) - 2 * px(GAP_DP / 2f, density) - 2 * px(INNER_PAD_DP, density)
+    }
+
+    /**
+     * The label drawn on [a]'s button: [QuickAction.label] when its measured width ([textWidthPx], px
+     * at [fontDp]) fits [roomPx] ([labelRoomPx]), otherwise [QuickAction.shortLabel] (if any). Decided
+     * per key, so e.g. PKX110 (412 dp @ 3.5×, 7 keys) keeps `Q.SAVE` while a 360 dp phone shows `快存`.
+     */
+    fun displayLabel(a: QuickAction, roomPx: Int, textWidthPx: (String) -> Int): String {
+        val short = a.shortLabel ?: return a.label
+        return if (textWidthPx(a.label) <= roomPx) a.label else short
+    }
+
+    /**
+     * Last-resort glyph scale for a shown label [widthPx] wide in [roomPx] (e.g. an OEM font much wider
+     * than Roboto): 1 when it fits, else shrinks it to `roomPx − 1` px (1 px for `ceil` rounding).
+     */
+    fun labelScale(widthPx: Int, roomPx: Int): Float =
+        if (widthPx <= roomPx || widthPx <= 0) 1f else (roomPx - 1).coerceAtLeast(0).toFloat() / widthPx
 
     /**
      * The NOVEL-mode `🔊` key is a landscape-only extra: the portrait deck (ADV + NOVEL) carries the
@@ -167,8 +195,10 @@ fun QuickColumn(actions: List<QuickAction>, width: Dp, modifier: Modifier = Modi
 /**
  * Portrait bottom thumb bar: every action as an equal-weight ≥ 48 dp button filling the width
  * (3 dp visual gaps, 8 dp side padding, one line, 11/12 dp labels). Each touch cell absorbs half a gap
- * on either side ([QuickBarLayout.touchWidth] ≥ 48 dp on a 360 dp phone with 7 keys); a key whose
- * label does not fit (measured with the real font) shows its [QuickAction.shortLabel].
+ * on either side ([QuickBarLayout.touchWidth] ≥ 48 dp on a 360 dp phone with 7 keys). Labels are
+ * measured with the real font against the pixel-exact worst-case room ([QuickBarLayout.labelRoomPx]):
+ * a key whose label does not fit shows its [QuickAction.shortLabel], and a label that still does not
+ * fit (unusually wide OEM font) is shrunk ([QuickBarLayout.labelScale]) rather than clipped.
  */
 @Composable
 fun QuickBarFill(actions: List<QuickAction>, modifier: Modifier = Modifier) {
@@ -187,9 +217,8 @@ fun QuickBarFill(actions: List<QuickAction>, modifier: Modifier = Modifier) {
             )
         }
         val measurer = rememberTextMeasurer(cacheSize = 16)
-        val textWidthDp: (String) -> Float = { s ->
-            with(density) { measurer.measure(s, style, softWrap = false, maxLines = 1).size.width.toDp().value }
-        }
+        val roomPx = QuickBarLayout.labelRoomPx(constraints.maxWidth, actions.size, density.density)
+        val textWidthPx: (String) -> Int = { s -> measurer.measure(s, style, softWrap = false, maxLines = 1).size.width }
         val halfGap = QuickBarLayout.GAP_DP / 2f
         Row(
             Modifier.fillMaxSize().padding(horizontal = (QuickBarLayout.SIDE_PAD_DP - halfGap).dp),
@@ -217,10 +246,13 @@ fun QuickBarFill(actions: List<QuickAction>, modifier: Modifier = Modifier) {
                             .padding(horizontal = QuickBarLayout.INNER_PAD_DP.dp),
                         contentAlignment = Alignment.Center,
                     ) {
+                        val label = QuickBarLayout.displayLabel(a, roomPx, textWidthPx)
+                        val k = QuickBarLayout.labelScale(textWidthPx(label), roomPx)
                         Text(
-                            QuickBarLayout.displayLabel(a, buttonW, textWidthDp),
+                            label,
                             color = if (a.active) Wa2Colors.Night else Wa2Colors.Text,
-                            style = style, textAlign = TextAlign.Center,
+                            style = if (k < 1f) style.copy(fontSize = style.fontSize * k, letterSpacing = style.letterSpacing * k) else style,
+                            textAlign = TextAlign.Center,
                             maxLines = 1, softWrap = false,
                         )
                     }

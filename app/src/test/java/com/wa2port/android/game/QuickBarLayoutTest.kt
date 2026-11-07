@@ -1,11 +1,14 @@
 package com.wa2port.android.game
 
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.roundToInt
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Portrait [QuickBarFill] sizing, label fit and key sets / order ([QuickBarLayout]). */
+/** Portrait [QuickBarFill] sizing, pixel-exact label fit and key sets / order ([QuickBarLayout]). */
 class QuickBarLayoutTest {
     /**
      * Advance widths (em) of every glyph used by the bar labels: Roboto Medium (Android's default
@@ -20,16 +23,29 @@ class QuickBarLayoutTest {
     )
 
     /**
-     * Rendered label width (dp) at [QuickBarLayout.fontDp] for a button [buttonW] wide, letter spacing
-     * included; [slack] inflates the glyph advances (e.g. 1.1 = an OEM font 10 % wider than Roboto).
+     * Rendered label width (dp) at [fontDp], letter spacing included; [slack] inflates the glyph
+     * advances (e.g. 1.1 = an OEM font 10 % wider than Roboto).
      */
-    private fun widthDp(label: String, buttonW: Float, slack: Float = 1f): Float {
-        val font = QuickBarLayout.fontDp(buttonW)
+    private fun widthDp(label: String, fontDp: Float, slack: Float = 1f): Float {
         val em = label.sumOf { (advanceEm[it] ?: error("no advance for '$it' in \"$label\"")).toDouble() }.toFloat()
-        return em * font * slack + QuickBarLayout.LETTER_SPACING_DP * label.length
+        return em * fontDp * slack + QuickBarLayout.LETTER_SPACING_DP * label.length
     }
 
-    private fun shown(a: QuickAction, w: Float, slack: Float = 1f): String = QuickBarLayout.displayLabel(a, w) { widthDp(it, w, slack) }
+    private val densities = listOf(1f, 1.5f, 2f, 2.625f, 2.75f, 3f, 3.5f)
+
+    /** A [count]-key portrait bar on a [wDp]-wide window at [density], as `QuickBarFill` sees it. */
+    private class Bar(wDp: Float, val density: Float, count: Int = 7) {
+        val barPx = floor(wDp * density + 1e-3f).toInt()
+        val buttonW = QuickBarLayout.buttonWidth(barPx / density, count)
+        val font = QuickBarLayout.fontDp(buttonW)
+        val roomPx = QuickBarLayout.labelRoomPx(barPx, count, density)
+        val touchPx = QuickBarLayout.touchCellMinPx(barPx, count, density)
+    }
+
+    /** `TextMeasurer` width (px, rounded up) of [label] on [bar]. */
+    private fun textPx(label: String, bar: Bar, slack: Float = 1f): Int = ceil(widthDp(label, bar.font, slack) * bar.density - 1e-3f).toInt()
+
+    private fun shown(a: QuickAction, bar: Bar, slack: Float = 1f): String = QuickBarLayout.displayLabel(a, bar.roomPx) { textPx(it, bar, slack) }
 
     private data class Halves(val left: List<QuickAction>, val right: List<QuickAction>, val keys: Triple<QuickAction?, QuickAction?, QuickAction>)
 
@@ -98,15 +114,36 @@ class QuickBarLayoutTest {
         assertEquals((360f - 16f - 18f) / 7f, w, 1e-4f)
         assertEquals(46.57f, w, 0.01f)
         assertEquals(11f, QuickBarLayout.fontDp(w))
-        assertEquals(38.57f, QuickBarLayout.labelRoom(w), 0.01f)
         // Touch cells absorb the 3 dp gaps: ≥ 48 dp wide on the narrowest supported phone.
         assertEquals(49.57f, QuickBarLayout.touchWidth(360f, 7), 0.01f)
-        val bar = portraitBar(novel = false, voiced = true)
-        assertEquals(listOf("LOG", "AUTO", "SKIP", "✨ AI", "日⇄双", "快存", "MENU"), bar.map { shown(it, w) })
-        // Q.SAVE would need 37.96 + 3 dp of the 38.57 dp room: too tight, so 快存.
-        assertEquals(40.96f, widthDp("Q.SAVE", w), 0.01f)
-        val replay = portraitBar(novel = true, voiced = false, replay = true)
-        assertEquals(listOf("LOG", "AUTO", "SKIP", "✨ AI", "日⇄双", "退出", "MENU"), replay.map { shown(it, w) })
+        // 1080 px @ 3×: row inset round(19.5) = 20 px, cells ⌊1040 / 7⌋ = 148 px, label room
+        // 148 − 2·round(4.5) − 2·12 = 114 px (38 dp).
+        val xxh = Bar(360f, 3f)
+        assertEquals(148, xxh.touchPx)
+        assertEquals(114, xxh.roomPx)
+        // Q.SAVE = 37.96 + 3 dp letter spacing = 40.96 dp = 123 px > 114 → 快存.
+        assertEquals(40.96f, widthDp("Q.SAVE", 11f), 0.01f)
+        assertEquals(123, textPx("Q.SAVE", xxh))
+        for (d in densities) {
+            val bar = Bar(360f, d)
+            assertEquals(listOf("LOG", "AUTO", "SKIP", "✨ AI", "日⇄双", "快存", "MENU"), portraitBar(novel = false, voiced = true).map { shown(it, bar) }, "d=$d")
+            assertEquals(listOf("LOG", "AUTO", "SKIP", "✨ AI", "日⇄双", "退出", "MENU"), portraitBar(novel = true, voiced = false, replay = true).map { shown(it, bar) }, "d=$d")
+        }
+    }
+
+    @Test
+    fun subPixelRoundingNeverLetsAFullLabelClip() {
+        // 402 dp @ 3× (1206 px): the float room would be 44.57 dp ≥ Q.SAVE's 44.41 dp, but Compose gives
+        // the Text ⌊(1206 − 40) / 7⌋ − 10 − 24 = 132 px < 134 px → 快存.
+        val bar = Bar(402f, 3f)
+        assertEquals(12f, bar.font)
+        assertEquals(132, bar.roomPx)
+        assertEquals(134, textPx("Q.SAVE", bar))
+        assertEquals("快存", shown(QuickAction("Q.SAVE", shortLabel = "快存") {}, bar))
+        // Same at 402 px @ 1×: 43 px room vs 45 px text.
+        val mdpi = Bar(402f, 1f)
+        assertEquals(43, mdpi.roomPx)
+        assertEquals("快存", shown(QuickAction("Q.SAVE", shortLabel = "快存") {}, mdpi))
     }
 
     @Test
@@ -114,56 +151,89 @@ class QuickBarLayoutTest {
         val w = QuickBarLayout.buttonWidth(412f, 7)
         assertEquals(54f, w, 1e-4f)
         assertEquals(12f, QuickBarLayout.fontDp(w))
-        assertEquals(46f, QuickBarLayout.labelRoom(w), 1e-4f)
         assertEquals(57f, QuickBarLayout.touchWidth(412f, 7), 1e-4f)
-        assertEquals(44.41f, widthDp("Q.SAVE", w), 0.01f)
-        val bar = portraitBar(novel = true, voiced = true)
-        assertEquals(listOf("LOG", "AUTO", "SKIP", "✨ AI", "日⇄双", "Q.SAVE", "MENU"), bar.map { shown(it, w) })
-        // 结束回想 (48 + 2 dp) never fits 46 dp → 退出.
-        val replay = portraitBar(novel = false, voiced = false, replay = true)
-        assertEquals("退出", shown(replay[5], w))
+        assertEquals(44.41f, widthDp("Q.SAVE", 12f), 0.01f)
+        // PKX110 @ 3.5× (1442 px): cells ⌊(1442 − 46) / 7⌋ = 199 px, room 199 − 10 − 28 = 161 px ≥ 156 px.
+        val pkx = Bar(412f, 3.5f)
+        assertEquals(199, pkx.touchPx)
+        assertEquals(161, pkx.roomPx)
+        assertEquals(156, textPx("Q.SAVE", pkx))
+        for (d in densities.filter { it >= 1.5f }) {
+            val bar = Bar(412f, d)
+            assertEquals(listOf("LOG", "AUTO", "SKIP", "✨ AI", "日⇄双", "Q.SAVE", "MENU"), portraitBar(novel = true, voiced = true).map { shown(it, bar) }, "d=$d")
+            // 结束回想 (48 + 2 dp) never fits → 退出.
+            assertEquals("退出", shown(portraitBar(novel = false, voiced = false, replay = true)[5], bar), "d=$d")
+        }
+        // 1× rounding eats the margin (44 px room < 45 px): 快存.
+        assertEquals("快存", shown(QuickAction("Q.SAVE", shortLabel = "快存") {}, Bar(412f, 1f)))
     }
 
     @Test
     fun widerPhonesAndTablets() {
-        assertEquals(51.29f, QuickBarLayout.buttonWidth(393f, 7), 0.01f) // Pixel: 11 dp, Q.SAVE fits
-        assertEquals(11f, QuickBarLayout.fontDp(QuickBarLayout.buttonWidth(393f, 7)))
-        assertEquals("Q.SAVE", shown(QuickAction("Q.SAVE", shortLabel = "快存") {}, QuickBarLayout.buttonWidth(393f, 7)))
+        assertEquals(51.29f, QuickBarLayout.buttonWidth(393f, 7), 0.01f) // Pixel @ 2.75×: 11 dp, Q.SAVE fits
+        val pixel = Bar(393f, 2.75f)
+        assertEquals(11f, pixel.font)
+        assertEquals("Q.SAVE", shown(QuickAction("Q.SAVE", shortLabel = "快存") {}, pixel))
         assertEquals(80.86f, QuickBarLayout.buttonWidth(600f, 7), 0.01f)
-        assertEquals("结束回想", shown(QuickAction("结束回想", shortLabel = "退出") {}, QuickBarLayout.buttonWidth(600f, 7)))
+        assertEquals("结束回想", shown(QuickAction("结束回想", shortLabel = "退出") {}, Bar(600f, 2f)))
     }
 
     @Test
-    fun everyShownLabelFitsFrom360To600dp() {
-        // Normal + replay bars, every whole dp width 360…600: the shown label (full or short) fits the
-        // label room, even with glyphs 10 % wider than Roboto; touch cells stay ≥ 48 dp.
+    fun everyShownLabelFitsFrom360To600dpAtEveryDensity() {
+        // Normal + replay bars, every whole dp width 360…600 × 7 densities: the shown label (full or
+        // short) fits the pixel-exact label room with Roboto metrics; touch cells stay ≥ 48 dp.
         var shortUses = 0
-        for (wDp in 360..600) for (replay in listOf(false, true)) for (slack in listOf(1f, 1.1f)) {
-            val bar = portraitBar(novel = wDp % 2 == 0, voiced = true, replay = replay)
-            val w = QuickBarLayout.buttonWidth(wDp.toFloat(), bar.size)
-            assertTrue(w >= 46.5f, "$wDp dp → $w")
-            assertTrue(QuickBarLayout.touchWidth(wDp.toFloat(), bar.size) >= 48f)
-            assertTrue(QuickBarLayout.fontDp(w) in listOf(11f, 12f))
-            for (a in bar) {
-                val label = shown(a, w, slack)
+        var checks = 0
+        for (d in densities) for (wDp in 360..600) for (replay in listOf(false, true)) {
+            val bar = Bar(wDp.toFloat(), d)
+            assertTrue(bar.touchPx >= (48f * d).roundToInt(), "touch ${bar.touchPx}px at $wDp dp d=$d")
+            assertTrue(bar.font in listOf(11f, 12f))
+            for (a in portraitBar(novel = wDp % 2 == 0, voiced = true, replay = replay)) {
+                val label = shown(a, bar)
                 if (label != a.label) shortUses++
-                val tw = widthDp(label, w, slack)
-                assertTrue(tw <= QuickBarLayout.labelRoom(w), "\"$label\" ${tw}dp > ${QuickBarLayout.labelRoom(w)}dp at $wDp dp (replay=$replay slack=$slack)")
+                val tw = textPx(label, bar)
+                assertTrue(tw <= bar.roomPx, "\"$label\" ${tw}px > ${bar.roomPx}px at $wDp dp d=$d replay=$replay")
+                assertEquals(1f, QuickBarLayout.labelScale(tw, bar.roomPx))
+                checks++
             }
         }
+        assertEquals(densities.size * 241 * 2 * 7, checks)
         assertTrue(shortUses > 0)
     }
 
     @Test
-    fun displayLabelFallsBackOnlyWhereAShortLabelExists() {
+    fun aTenPercentWiderOemFontShrinksInsteadOfClipping() {
+        // Glyphs 10 % wider than Roboto: short labels still kick in first; a label without one that no
+        // longer fits (e.g. 日⇄双 at 1×) is shrunk by labelScale, never by more than 10 %.
+        var shrunk = 0
+        for (d in densities) for (wDp in 360..600) for (replay in listOf(false, true)) {
+            val bar = Bar(wDp.toFloat(), d)
+            for (a in portraitBar(novel = false, voiced = true, replay = replay)) {
+                val tw = textPx(shown(a, bar, slack = 1.1f), bar, slack = 1.1f)
+                val k = QuickBarLayout.labelScale(tw, bar.roomPx)
+                if (k < 1f) shrunk++
+                assertTrue(k >= 0.9f, "k=$k for ${a.label} at $wDp dp d=$d")
+                assertTrue(ceil(tw * k) <= bar.roomPx, "${a.label} at $wDp dp d=$d")
+            }
+        }
+        println("10 % wider font: $shrunk shrunk labels")
+    }
+
+    @Test
+    fun displayLabelAndScaleEdgeCases() {
         val exit = QuickAction("结束回想", false, shortLabel = "退出") {}
         val menu = QuickAction("MENU") {}
-        assertEquals("退出", QuickBarLayout.displayLabel(exit, 46.57f) { 44f })
-        assertEquals("结束回想", QuickBarLayout.displayLabel(exit, 60f) { 44f })
-        // No short label: the full label is kept even when the measurement says it is too wide.
-        assertEquals("MENU", QuickBarLayout.displayLabel(menu, 30f) { 40f })
+        assertEquals("退出", QuickBarLayout.displayLabel(exit, 114) { 130 })
+        assertEquals("结束回想", QuickBarLayout.displayLabel(exit, 160) { 130 })
         // The boundary fits (≤ room).
-        assertEquals("结束回想", QuickBarLayout.displayLabel(exit, 52f) { 44f })
+        assertEquals("结束回想", QuickBarLayout.displayLabel(exit, 130) { 130 })
+        // No short label: the full label is kept (labelScale shrinks it instead).
+        assertEquals("MENU", QuickBarLayout.displayLabel(menu, 30) { 40 })
+        assertEquals(1f, QuickBarLayout.labelScale(100, 100))
+        assertEquals(99f / 110f, QuickBarLayout.labelScale(110, 100), 1e-6f)
+        assertEquals(1f, QuickBarLayout.labelScale(0, 0))
+        assertEquals(0, QuickBarLayout.labelRoomPx(1080, 0, 3f))
+        assertEquals(0, QuickBarLayout.touchCellMinPx(1080, 0, 3f))
     }
 
     // ------------------------------------------------------------------ order
