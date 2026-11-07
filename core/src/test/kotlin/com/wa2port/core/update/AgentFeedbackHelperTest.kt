@@ -23,7 +23,7 @@ class AgentFeedbackHelperTest {
     @Test
     fun defaultVersionAndConstantsMatchReleaseSpec() {
         assertEquals("wa2port", AgentFeedbackHelper.APP_ALIAS)
-        assertEquals("1.4.14", AgentFeedbackHelper.DEFAULT_APP_VERSION)
+        assertEquals("1.4.15", AgentFeedbackHelper.DEFAULT_APP_VERSION)
         assertEquals("agent@example.com", AgentFeedbackHelper.PLACEHOLDER_EMAIL)
     }
 
@@ -80,7 +80,7 @@ class AgentFeedbackHelperTest {
     @Test
     fun buildsVibeCodingSubjectWithVersionPrefix() {
         assertEquals(
-            "wa2port: [v1.4.14] 双语模式下第四行标点优化",
+            "wa2port: [v1.4.15] 双语模式下第四行标点优化",
             AgentFeedbackHelper.buildSubject("  \n  双语模式下第四行标点优化\n详细复现步骤…  "),
         )
         assertEquals(
@@ -88,13 +88,13 @@ class AgentFeedbackHelperTest {
             AgentFeedbackHelper.buildSubject("Body line", summaryOverride = "  Custom   summary ", version = "v1.4.5"),
         )
         assertEquals(
-            "wa2port: [v1.4.14] App Feedback",
+            "wa2port: [v1.4.15] App Feedback",
             AgentFeedbackHelper.buildSubject("   ", version = "0.0.0"),
         )
         val longLine = "あ".repeat(100)
         val subject = AgentFeedbackHelper.buildSubject(longLine)
-        assertTrue(subject.startsWith("wa2port: [v1.4.14] "))
-        val summaryPart = subject.removePrefix("wa2port: [v1.4.14] ")
+        assertTrue(subject.startsWith("wa2port: [v1.4.15] "))
+        val summaryPart = subject.removePrefix("wa2port: [v1.4.15] ")
         assertEquals(AgentFeedbackHelper.MAX_SUMMARY_CHARS, summaryPart.length)
         assertTrue(summaryPart.endsWith("…"))
     }
@@ -214,27 +214,27 @@ class AgentFeedbackHelperTest {
     @Test
     fun titleTakesPrecedenceForSubjectAndFallsBackToFirstDescriptionLine() {
         assertEquals(
-            "wa2port: [v1.4.14] 回想模式 语音重叠",
+            "wa2port: [v1.4.15] 回想模式 语音重叠",
             AgentFeedbackHelper.buildSubject(
                 feedbackText = "第一行描述\n第二行",
                 title = "  回想模式\n语音重叠  ",
             ),
         )
         assertEquals(
-            "wa2port: [v1.4.14] Title wins",
+            "wa2port: [v1.4.15] Title wins",
             AgentFeedbackHelper.buildSubject("desc", summaryOverride = "override", title = "Title wins"),
         )
         // Blank title → summaryOverride → first non-blank description line (backward compatible).
         assertEquals(
-            "wa2port: [v1.4.14] override",
+            "wa2port: [v1.4.15] override",
             AgentFeedbackHelper.buildSubject("desc", summaryOverride = "override", title = "   "),
         )
         assertEquals(
-            "wa2port: [v1.4.14] 第一行描述",
+            "wa2port: [v1.4.15] 第一行描述",
             AgentFeedbackHelper.buildSubject(feedbackText = "\n  第一行描述  \n第二行", title = ""),
         )
         assertEquals(
-            "wa2port: [v1.4.14] App Feedback",
+            "wa2port: [v1.4.15] App Feedback",
             AgentFeedbackHelper.buildSubject(feedbackText = "  ", title = " \t "),
         )
     }
@@ -300,7 +300,7 @@ class AgentFeedbackHelperTest {
 
         // Text-only feedback (no title, no image) stays backward compatible.
         val plain = AgentFeedbackHelper.prepareMail(email = "agent@example.com", feedbackText = "首行摘要\n更多")
-        assertEquals("wa2port: [v1.4.14] 首行摘要", plain.subject)
+        assertEquals("wa2port: [v1.4.15] 首行摘要", plain.subject)
         assertNull(plain.attachmentName)
         assertFalse(plain.body.contains("Attachment:"))
         assertFalse(plain.body.contains("标题 Title:"))
