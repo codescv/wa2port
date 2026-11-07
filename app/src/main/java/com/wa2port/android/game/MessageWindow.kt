@@ -253,7 +253,8 @@ internal object DeckText {
 /**
  * Geometry of the Japanese text block last drawn by [AdvWindow] (stage-box px), captured during draw
  * for tap-to-analyze, plus the `🔊 重听` button's touch target ([voiceRect], null when the line has no
- * voice), the `✨ AI解读` button's touch target ([aiRect], null when the line has no Japanese text) and
+ * voice), the `✨ AI解读` button's touch target ([aiRect], null when the line has no Japanese text or
+ * in the portrait deck) and
  * direct in-window vertical scroll state for 5+ line monologues at large font scales.
  */
 class AdvHitBox {
@@ -282,7 +283,8 @@ class AdvHitBox {
 
     /**
      * Touch target of the `✨ AI解读` pill (stage-box px, ≥ 48 dp square, above the first text line,
-     * left of and never overlapping [voiceRect]), or null when the current line has no Japanese text.
+     * left of and never overlapping [voiceRect]), or null when the current line has no Japanese text or
+     * the window is the portrait deck ([frameMode]; its `✨ AI` is a bottom thumb-bar key).
      */
     @Volatile
     var aiRect: Rect? = null
@@ -419,7 +421,8 @@ class AdvHitBox {
  * * Portrait ([frame] != null): the window is the reading deck below the stage at
  *   [AdvFrame.scale]; 双语 is STACKED (CN block above JP block, full width, cap
  *   `DeckLayout.lineCap`, [Reflow.SENTENCE] → [Reflow.JOIN_ALL]) unless the deck is wide enough for
- *   TWO_COL; single language starts at [Reflow.SENTENCE].
+ *   TWO_COL; single language starts at [Reflow.SENTENCE]. Its rim carries only `🔊 重听` (voiced
+ *   lines): portrait `✨ AI` is a bottom thumb-bar key ([AdvPills.showsRimAi]).
  */
 @Composable
 fun AdvWindow(
@@ -463,8 +466,9 @@ fun AdvWindow(
         )
         // Pin Line 0 origin unconditionally so spoken dialogue and narration never jump vertically.
         val textTop = DeckText.textTop(top, pad)
-        // Rim pills `[✨ AI解读] [🔊 重听]` at the right end of the nameplate row (1 tap, no advance).
-        val showAi = AdvPills.showsAi(line.jp.isEmpty)
+        // Rim pills at the right end of the nameplate row (1 tap, no advance): landscape `[✨ AI解读]
+        // [🔊 重听]`; the portrait deck keeps only `🔊 重听` (its `✨ AI` is in the bottom thumb bar).
+        val showAi = AdvPills.showsRimAi(line.jp.isEmpty, portrait = frame != null)
         val showVoice = line.ref.voice != null
         val anchor = right - pad
         // Speaker name box: fitted left of the pills (short `解读` label / smaller glyphs only when needed).
@@ -793,7 +797,8 @@ private fun DrawScope.drawAiPill(r: Rect, label: String, stageScale: Float, opac
  * panel inside [frame] only (the stage stays clean), text clipped to the frame, 双语 STACKED
  * paragraphs (CN block then JP block at `NOVEL_TWO_COL_PX`, deck cap, [Reflow.SENTENCE] →
  * [Reflow.JOIN_ALL]), a single paragraph taller than the frame scrolls through [hitBox], and the
- * `[✨ AI解读] [🔊 重听]` pills sit on the frame top (set [AdvHitBox.aiRect] / [AdvHitBox.voiceRect]).
+ * `[🔊 重听]` pill sits on the frame top for voiced lines (sets [AdvHitBox.voiceRect]; [AdvHitBox.aiRect]
+ * stays null — portrait `✨ AI` is a bottom thumb-bar key).
  */
 @Composable
 fun NovelPage(
@@ -1008,11 +1013,11 @@ private fun DrawScope.drawNovelDeck(
         Color(0xFF0A1428).copy(alpha = opacity), Offset(frame.left, frame.top), Size(frame.width, frame.height),
         CornerRadius(14f * stageScale),
     )
-    // `[✨ AI解读] [🔊 重听]` on the frame top for the newest line (the quick bar never adds 🔊 in
-    // portrait); the deck border is cut out under them.
+    // `[🔊 重听]` on the frame top for the newest voiced line (the quick bar never adds 🔊 in portrait;
+    // `✨ AI` lives in the bottom thumb bar, so no AI pill here); the deck border is cut out under it.
     val pills = AdvPills.layout(
         frame.right - pad, frame.top, textTop, stageScale,
-        showAi = AdvPills.showsAi(lastLine.jp.isEmpty), showVoice = lastLine.ref.voice != null, shortAi = false,
+        showAi = AdvPills.showsRimAi(lastLine.jp.isEmpty, portrait = true), showVoice = lastLine.ref.voice != null, shortAi = false,
         minPx = 48.dp.toPx(), canvasWidth = size.width,
     )
     drawFrameStroke(frame.left, frame.top, frame.right, frame.bottom, stageScale, opacity, listOfNotNull(pills.aiPill, pills.voicePill))

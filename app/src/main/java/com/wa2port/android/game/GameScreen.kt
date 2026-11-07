@@ -192,10 +192,12 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     } else {
         null
     }
-    // AI breakdown of the current line (stacks above whatever overlay is open). Landscape NOVEL only:
-    // ADV windows and the portrait deck carry the `[✨ AI解读]` rim pill instead.
+    // AI breakdown of the current line (stacks above whatever overlay is open). Portrait (ADV + NOVEL):
+    // the bottom thumb bar (the deck rim keeps only 🔊 重听); landscape NOVEL: no rim pills. Landscape
+    // ADV windows carry the `[✨ AI解读]` rim pill instead. `session.line` is also the newest NOVEL page
+    // line; `AiLearningController.open` toasts and returns on a line without Japanese text.
     val aiAction = if (QuickBarLayout.showsAiKey(isNovelMode, isPortrait)) {
-        QuickAction("✨ AI", vm.ai.breakdown != null, onClick = act {
+        QuickAction("✨ AI", vm.ai.breakdown != null, shortLabel = "✨AI", onClick = act {
             val l = session.line
             if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
         })
@@ -224,13 +226,14 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             ),
         )
         if (!session.inReplayMode) {
-            add(QuickAction("Q.SAVE", false, onClick = act { scope.launch { session.quickSave() } }))
+            add(QuickAction("Q.SAVE", false, shortLabel = "快存", onClick = act { scope.launch { session.quickSave() } }))
         } else {
             add(QuickAction("结束回想", false, shortLabel = "退出", onClick = act { vm.exitToTitle() }))
         }
         add(QuickAction("MENU", false, onClick = act { session.overlay = Overlay.MENU }))
     }
-    // Portrait bottom bar: `LOG · AUTO · SKIP · 日⇄双 · Q.SAVE · MENU` (harmless openers in the corners).
+    // Portrait bottom bar: `LOG · AUTO · SKIP · ✨ AI · 日⇄双 · Q.SAVE · MENU` (harmless openers in the
+    // corners, ✨ AI in the centre slot).
     // Horizontal landscape rows (TOP / OVERLAY): `… LOG, ✨ AI, 🔊, 日⇄双 …`, matching the rim pills.
     val actions = if (isPortrait) {
         QuickBarLayout.portraitOrder(leftActions, rightActions, log = logAction)
@@ -277,7 +280,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val advHit = remember(session) { AdvHitBox() }
         val gestureHandler = remember(session) {
             StageGestureHandler(
-                // Rim pills (🔊 重听 / ✨ AI解读) first, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
+                // Rim pills (🔊 重听 / landscape ✨ AI解读) first, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
                 onTap = { p ->
                     if (!tryVoiceTap(vm, session, advHit, p) && !tryAiPillTap(vm, session, advHit, p) && !tryAiTap(vm, session, advHit, p)) {
                         session.onTap()
@@ -426,7 +429,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             }
             BarPlacement.OVERLAY -> {}
             // Portrait bottom thumb bar on the gesture inset. The opaque container (bar + inset strip)
-            // swallows taps in the key gaps / side padding / inset so a near miss never advances the line.
+            // swallows taps in the side padding / inset so a near miss never advances the line (the key
+            // gaps belong to the neighbouring keys' touch cells, see QuickBarLayout.touchWidth).
             BarPlacement.PORTRAIT_BAR -> Box(
                 Modifier.align(Alignment.TopCenter).padding(top = g.hudTop.coerceAtLeast(0f).dp)
                     .fillMaxWidth().height(g.hudHeight.dp + insets.bottom)
@@ -586,9 +590,10 @@ private fun tryVoiceTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBo
 }
 
 /**
- * ADV / portrait NOVEL `✨ AI解读`: a tap inside [AdvHitBox.aiRect] opens the AI breakdown of the
- * current line (no focus character) without advancing and returns true. Works on unvoiced narration
- * too; checked after `🔊 重听` (their touch targets never overlap) and before tap-to-analyze.
+ * Landscape ADV `✨ AI解读`: a tap inside [AdvHitBox.aiRect] opens the AI breakdown of the current line
+ * (no focus character) without advancing and returns true. Works on unvoiced narration too; checked
+ * after `🔊 重听` (their touch targets never overlap) and before tap-to-analyze. The portrait deck
+ * never sets [AdvHitBox.aiRect] (its `✨ AI` lives in the bottom thumb bar).
  */
 private fun tryAiPillTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, p: Offset): Boolean {
     val line = session.line ?: return false

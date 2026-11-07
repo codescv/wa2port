@@ -23,8 +23,9 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Message-window rim pills `[✨ AI解读] [🔊 重听]` ([AdvPills]): placement, ≥ 48 dp non-overlapping touch
- * targets above Line 0, and speaker-nameplate clearance over the real WA2 corpus.
+ * Message-window rim pills ([AdvPills]): landscape `[✨ AI解读] [🔊 重听]`, portrait-deck `[🔊 重听]` only
+ * (portrait `✨ AI` is a bottom thumb-bar key); placement, ≥ 48 dp non-overlapping touch targets above
+ * Line 0, and speaker-nameplate clearance over the real WA2 corpus.
  */
 class AdvPillsTest {
     private val eps = 1e-3f
@@ -40,6 +41,7 @@ class AdvPillsTest {
         val s: Float,
         val canvasWidth: Float,
         val minPx: Float,
+        val portrait: Boolean,
     ) {
         val pad: Float get() = MessageLayout.ADV_PAD * s
         val anchor: Float get() = right - pad
@@ -53,7 +55,7 @@ class AdvPillsTest {
         return Window(
             "landscape ${w}x$h d=$density t=$textScale twoCol=$twoCol",
             cw * MessageLayout.ADV_LEFT, cw * MessageLayout.ADV_RIGHT, ch * MessageLayout.advTop(textScale, twoCol),
-            ch / 720f, cw, 48f * density,
+            ch / 720f, cw, 48f * density, portrait = false,
         )
     }
 
@@ -64,6 +66,7 @@ class AdvPillsTest {
         return Window(
             "portrait ${w}x$h d=$density t=$textScale $lang",
             f.left * density, f.right * density, f.top * density, DeckLayout.DECK_SCALE * density, w * density, 48f * density,
+            portrait = true,
         )
     }
 
@@ -74,6 +77,9 @@ class AdvPillsTest {
         }
     }
 
+    /** Windows that draw the `✨ AI解读` rim pill: the landscape [AdvWindow] only. */
+    private fun rimAiWindows(): List<Window> = allWindows().filter { AdvPills.showsRimAi(jpEmpty = false, portrait = it.portrait) }
+
     private fun assertTouchTarget(win: Window, r: Rect, what: String) {
         assertTrue(r.width >= win.minPx - eps, "$what width ${r.width} < 48dp (${win.name})")
         assertTrue(r.height >= win.minPx - eps, "$what height ${r.height} < 48dp (${win.name})")
@@ -83,7 +89,8 @@ class AdvPillsTest {
 
     @Test
     fun voicedJpLinePutsAiImmediatelyLeftOfVoiceWithoutOverlap() {
-        for (win in allWindows()) for (short in listOf(false, true)) {
+        assertTrue(rimAiWindows().isNotEmpty())
+        for (win in rimAiWindows()) for (short in listOf(false, true)) {
             val p = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, showAi = true, showVoice = true, shortAi = short, win.minPx, win.canvasWidth)
             val ai = p.aiPill!!
             val voice = p.voicePill!!
@@ -109,8 +116,8 @@ class AdvPillsTest {
 
     @Test
     fun unvoicedJpLineAnchorsAiAtTheRimEnd() {
-        for (win in allWindows()) {
-            val p = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, AdvPills.showsAi(jpEmpty = false), showVoice = false, shortAi = false, win.minPx, win.canvasWidth)
+        for (win in rimAiWindows()) {
+            val p = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, AdvPills.showsRimAi(jpEmpty = false, portrait = false), showVoice = false, shortAi = false, win.minPx, win.canvasWidth)
             assertNull(p.voicePill)
             assertNull(p.voiceTouch)
             assertEquals(win.anchor, p.aiPill!!.right, eps, win.name)
@@ -123,7 +130,7 @@ class AdvPillsTest {
     fun emptyJpLineHasNoAiPill() {
         assertFalse(AdvPills.showsAi(RichText.EMPTY.isEmpty))
         for (win in allWindows()) {
-            val voiced = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, AdvPills.showsAi(jpEmpty = true), showVoice = true, shortAi = false, win.minPx, win.canvasWidth)
+            val voiced = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, AdvPills.showsRimAi(jpEmpty = true, win.portrait), showVoice = true, shortAi = false, win.minPx, win.canvasWidth)
             assertNull(voiced.aiPill)
             assertNull(voiced.aiTouch)
             // 🔊 重听 keeps today's place and touch target.
@@ -137,18 +144,75 @@ class AdvPillsTest {
     }
 
     @Test
+    fun rimAiPillOnlyOnTheLandscapeWindow() {
+        // Landscape AdvWindow (frame == null): `[✨ AI解读]` on every line with Japanese text.
+        assertTrue(AdvPills.showsRimAi(jpEmpty = false, portrait = false))
+        assertFalse(AdvPills.showsRimAi(jpEmpty = true, portrait = false))
+        // Portrait deck (AdvWindow / NovelPage with a frame): never, the ✨ AI key is in the bottom bar.
+        assertFalse(AdvPills.showsRimAi(jpEmpty = false, portrait = true))
+        assertFalse(AdvPills.showsRimAi(jpEmpty = true, portrait = true))
+        assertTrue(QuickBarLayout.showsAiKey(isNovelMode = false, portrait = true))
+        assertTrue(QuickBarLayout.showsAiKey(isNovelMode = true, portrait = true))
+    }
+
+    @Test
+    fun portraitDeckRimCarriesOnlyTheVoicePill() {
+        var portraits = 0
+        for (win in allWindows().filter { it.portrait }) for (jpEmpty in listOf(false, true)) for (voiced in listOf(false, true)) {
+            portraits++
+            val p = AdvPills.layout(
+                win.anchor, win.top, win.textTop, win.s, AdvPills.showsRimAi(jpEmpty, portrait = true), voiced, shortAi = false, win.minPx, win.canvasWidth,
+            )
+            assertNull(p.aiPill, win.name)
+            assertNull(p.aiTouch, win.name)
+            if (voiced) {
+                // 🔊 重听 anchored at right − pad, its touch target ≥ 48 dp above Line 0.
+                assertEquals(win.anchor, p.voicePill!!.right, eps, win.name)
+                assertEquals(AdvPills.VOICE_W * win.s, p.voicePill!!.width, eps)
+                assertEquals(p.voicePill!!.left, p.pillsLeft, eps)
+                assertTouchTarget(win, p.voiceTouch!!, "voiceRect")
+                assertTrue(p.voiceTouch!!.contains(Offset(p.voicePill!!.center.x, p.voiceTouch!!.bottom - 1f)), win.name)
+            } else {
+                assertNull(p.voicePill)
+                assertNull(p.voiceTouch)
+                assertEquals(Float.POSITIVE_INFINITY, p.pillsLeft)
+            }
+        }
+        assertTrue(portraits > 0)
+    }
+
+    @Test
     fun portraitPkx110WorkedExample() {
-        // 412 dp PKX110 @100 %, density 1: deck 16…396, s = 0.572, 48 dp = 48 px.
+        // 412 dp PKX110 @100 %, density 1: deck 16…396, s = 0.572, 48 dp = 48 px. Rim: 🔊 重听 only.
         val win = portrait(412f, 915f, 1f, 1f, DisplayLang.BOTH)
-        val p = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, showAi = true, showVoice = true, shortAi = false, win.minPx, win.canvasWidth)
+        val p = AdvPills.layout(
+            win.anchor, win.top, win.textTop, win.s, AdvPills.showsRimAi(jpEmpty = false, win.portrait), showVoice = true, shortAi = false, win.minPx, win.canvasWidth,
+        )
+        assertNull(p.aiPill)
+        assertNull(p.aiTouch)
         assertEquals(396f - 12.589f, p.voicePill!!.right, 0.01f)
         assertEquals(52.64f, p.voicePill!!.width, 0.01f)
-        assertEquals(61.8f, p.aiPill!!.width, 0.01f)
-        assertEquals(5.72f, p.voicePill!!.left - p.aiPill!!.right, 0.01f)
+        // Touch target: pill + 8 stage px slop on each side (61.79 px ≥ 48), centred on the pill.
+        assertEquals(52.64f + 2f * AdvPills.TOUCH_EXT * win.s, p.voiceTouch!!.width, 0.01f)
+        assertEquals(p.voicePill!!.center.x, p.voiceTouch!!.center.x, 0.01f)
+        assertEquals(48f, p.voiceTouch!!.height, 0.01f)
+        // The nameplate may now run up to NAME_GAP before 🔊 alone: 61.8 + 5.72 px more room than before.
+        val bothLeft = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, true, true, false, win.minPx, win.canvasWidth).pillsLeft
+        assertEquals((AdvPills.AI_W + AdvPills.PILL_GAP) * win.s, bothLeft.let { p.pillsLeft - it }, 0.01f)
+    }
+
+    @Test
+    fun landscapePairWorkedExample() {
+        // 732.44×412 dp landscape stage @100 %, density 1: `[✨ AI解读] [🔊 重听]` split at the gap midpoint.
+        val win = landscape(732.44f, 412f, 1f, 1f, twoCol = true)
+        val p = AdvPills.layout(
+            win.anchor, win.top, win.textTop, win.s, AdvPills.showsRimAi(jpEmpty = false, win.portrait), showVoice = true, shortAi = false, win.minPx, win.canvasWidth,
+        )
         val split = (p.aiPill!!.right + p.voicePill!!.left) / 2f
+        assertEquals(AdvPills.PILL_GAP * win.s, p.voicePill!!.left - p.aiPill!!.right, 0.01f)
         assertEquals(split, p.aiTouch!!.right, eps)
         assertEquals(split, p.voiceTouch!!.left, eps)
-        assertEquals(48f, p.aiTouch!!.height, 0.01f)
+        assertTrue(p.aiTouch!!.height >= 48f - eps)
         // The shared edge belongs to 🔊 only (Rect.contains is right-open).
         assertFalse(p.aiTouch!!.contains(Offset(split, p.aiTouch!!.bottom - 1f)))
         assertTrue(p.voiceTouch!!.contains(Offset(split, p.voiceTouch!!.bottom - 1f)))
@@ -233,6 +297,8 @@ class AdvPillsTest {
         assertTrue(speakers.size > 50, "speakers=${speakers.size}")
         var checks = 0
         var minScale = 1f
+        var portraitMinScale = 1f
+        var portraitDropped = 0
         var shortUses = 0
         var dropped = 0
         var worst = ""
@@ -249,12 +315,20 @@ class AdvPillsTest {
                 val allNames = nameBlocks(line, lang, win.s * textScale)
                 if (allNames.isEmpty()) continue
                 for (voiced in listOf(false, true)) {
+                    // Exactly what AdvWindow draws: landscape `[✨ AI解读] [🔊 重听]`, portrait `[🔊 重听]` only.
+                    val showAi = AdvPills.showsRimAi(jpEmpty = false, portrait = win.portrait)
                     val fit = AdvPills.fitNameplate(
-                        win.left + win.pad, allNames.map { it.rich.baseCodes().size * it.size }, win.pad, win.s, win.anchor, showAi = true, showVoice = voiced,
+                        win.left + win.pad, allNames.map { it.rich.baseCodes().size * it.size }, win.pad, win.s, win.anchor, showAi = showAi, showVoice = voiced,
                     )
                     val names = allNames.take(fit.parts)
                     val glyphW = names.sumOf { (it.rich.baseCodes().size * it.size).toDouble() }.toFloat()
-                    val p = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, true, voiced, fit.shortAi, win.minPx, win.canvasWidth)
+                    val p = AdvPills.layout(win.anchor, win.top, win.textTop, win.s, showAi, voiced, fit.shortAi, win.minPx, win.canvasWidth)
+                    if (win.portrait) {
+                        assertFalse(fit.shortAi, "no AI label to shorten on the portrait rim (${win.name})")
+                        assertNull(p.aiPill)
+                        portraitMinScale = minOf(portraitMinScale, fit.glyphScale)
+                        if (fit.parts < allNames.size) portraitDropped++
+                    }
                     val nameRight = win.left + win.pad + AdvPills.nameplateWidth(glyphW * fit.glyphScale, names.size, win.pad, win.s)
                     assertTrue(
                         nameRight + AdvPills.NAME_GAP * win.s <= p.pillsLeft + 0.01f,
@@ -270,7 +344,10 @@ class AdvPillsTest {
                 }
             }
         }
-        println("nameplate checks=$checks speakers=${speakers.size} shortLabel=$shortUses droppedJpPart=$dropped minGlyphScale=$minScale worst=$worst")
+        println(
+            "nameplate checks=$checks speakers=${speakers.size} shortLabel=$shortUses droppedJpPart=$dropped minGlyphScale=$minScale worst=$worst " +
+                "portraitMinGlyphScale=$portraitMinScale portraitDroppedJpPart=$portraitDropped",
+        )
         // Names stay legible: never shrunk below 70 % even at 150 % on a 360 dp phone (≈ 105 % size).
         assertTrue(minScale >= 0.7f, "minGlyphScale=$minScale ($worst)")
     }
@@ -283,7 +360,9 @@ class AdvPillsTest {
             val line = DialogueLine(LineRef("test", 0, 0), sampleJp, sampleJp, spJp, spCn, read = false)
             val names = nameBlocks(line, DisplayLang.BOTH, win.s)
             if (names.isEmpty()) continue
-            val fit = AdvPills.fitNameplate(win.left + win.pad, names.map { it.rich.baseCodes().size * it.size }, win.pad, win.s, win.anchor, true, true)
+            val fit = AdvPills.fitNameplate(
+                win.left + win.pad, names.map { it.rich.baseCodes().size * it.size }, win.pad, win.s, win.anchor, AdvPills.showsRimAi(false, win.portrait), true,
+            )
             assertNotNull(fit)
             assertEquals(1f, fit.glyphScale, "glyphs never shrink on PKX110 @100 %: ${names.map { it.rich.baseCodes().size }}")
             assertEquals(names.size, fit.parts, "both name parts kept on PKX110 @100 %")

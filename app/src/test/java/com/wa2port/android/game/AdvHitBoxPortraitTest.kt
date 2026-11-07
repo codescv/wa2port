@@ -17,7 +17,10 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Portrait deck hit-testing: content-box px, stacked JP block, 🔊 / ✨ touch targets, scroll state (spec §2.4). */
+/**
+ * Portrait deck hit-testing: content-box px, stacked JP block, the lone 🔊 touch target (no ✨ rim pill:
+ * portrait `✨ AI` is a bottom thumb-bar key), nameplate room, scroll state (spec §2.4).
+ */
 class AdvHitBoxPortraitTest {
     /** Monospace fake: glyph `i` of line `L` at (`i·em`, `L·1.5·em`), [cap] glyphs per line. */
     private class FakePainter : TextPainter {
@@ -103,14 +106,46 @@ class AdvHitBoxPortraitTest {
             val top = frame.top * density
             val pad = MessageLayout.ADV_PAD * s
             val textTop = DeckText.textTop(top, pad)
-            val r = AdvPills.layout(right - pad, top, textTop, s, showAi = false, showVoice = true, shortAi = false, 48f * density, 412f * density)
-                .voiceTouch!!
+            val layout = AdvPills.layout(
+                right - pad, top, textTop, s, showAi = AdvPills.showsRimAi(jpEmpty = false, portrait = true), showVoice = true, shortAi = false,
+                48f * density, 412f * density,
+            )
+            assertEquals(null, layout.aiPill)
+            assertEquals(null, layout.aiTouch)
+            val r = layout.voiceTouch!!
             assertTrue(r.width >= 48f * density - 1e-3f, "w density=$density")
             assertTrue(r.height >= 48f * density - 1e-3f, "h density=$density")
             assertTrue(r.bottom <= textTop, "never covers the first text line (density=$density t=$t)")
             assertTrue(r.left >= 0f && r.right <= 412f * density + 1e-3f)
             assertTrue(r.left > left, "right half of the deck")
         }
+    }
+
+    @Test
+    fun portraitNameplateRunsUpToTheVoicePillAlone() {
+        // AdvWindow(frame) fits the speaker tab with showAi = false: the limit is NAME_GAP before 🔊 重听
+        // (or before the rim end on unvoiced lines), never before a ✨ AI解读 pill.
+        val s = frame.scale
+        val pad = MessageLayout.ADV_PAD * s
+        val nameLeft = frame.left + pad
+        val anchor = frame.right - pad
+        val showAi = AdvPills.showsRimAi(jpEmpty = false, portrait = true)
+        assertFalse(showAi)
+        val voiceLimit = anchor - AdvPills.VOICE_W * s - AdvPills.NAME_GAP * s - nameLeft
+        val bothLimit = anchor - AdvPills.pillsWidth(true, true, false, s) - AdvPills.NAME_GAP * s - nameLeft
+        assertEquals((AdvPills.AI_W + AdvPills.PILL_GAP) * s, voiceLimit - bothLimit, 1e-3f)
+        // A name that used to force the short `解读` label next to both pills now keeps full size.
+        val glyphs = (voiceLimit + bothLimit) / 2f - 2f * pad
+        assertEquals(true, AdvPills.fitNameplate(nameLeft, listOf(glyphs), pad, s, anchor, showAi = true, showVoice = true).shortAi)
+        assertEquals(AdvPills.NameFit(false, 1f, 1), AdvPills.fitNameplate(nameLeft, listOf(glyphs), pad, s, anchor, showAi, showVoice = true))
+        // Exactly at the voice-only limit: still full size; the nameplate ends NAME_GAP before 🔊.
+        val edge = voiceLimit - 2f * pad - 0.001f
+        assertEquals(AdvPills.NameFit(false, 1f, 1), AdvPills.fitNameplate(nameLeft, listOf(edge), pad, s, anchor, showAi, showVoice = true))
+        val voicePill = AdvPills.layout(anchor, frame.top, DeckText.textTop(frame.top, pad), s, showAi, true, false, 48f, 412f).voicePill!!
+        assertEquals(voicePill.left - AdvPills.NAME_GAP * s, nameLeft + AdvPills.nameplateWidth(edge, 1, pad, s), 0.01f)
+        // Unvoiced line: the whole rim (up to right − pad − NAME_GAP) belongs to the nameplate.
+        val bare = anchor - AdvPills.NAME_GAP * s - nameLeft - 2f * pad - 0.001f
+        assertEquals(AdvPills.NameFit(false, 1f, 1), AdvPills.fitNameplate(nameLeft, listOf(bare), pad, s, anchor, showAi, showVoice = false))
     }
 
     @Test

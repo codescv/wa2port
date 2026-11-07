@@ -3,9 +3,10 @@ package com.wa2port.android.game
 import androidx.compose.ui.geometry.Rect
 
 /**
- * Pure geometry of the message-window rim pills `[✨ AI解读] [🔊 重听]` drawn by [AdvWindow] (landscape
- * window and portrait reading deck) and the portrait [NovelPage] deck, plus the speaker-nameplate fit
- * that keeps the nameplate clear of them. All values are canvas px; `s` = px per stage px.
+ * Pure geometry of the message-window rim pills `[✨ AI解读] [🔊 重听]` drawn by the landscape
+ * [AdvWindow], and of the lone `🔊 重听` pill on the portrait reading deck ([AdvWindow] / [NovelPage]
+ * with a frame; see [showsRimAi]), plus the speaker-nameplate fit that keeps the nameplate clear of
+ * them. All values are canvas px; `s` = px per stage px.
  *
  * * Both pills straddle the window top edge like the nameplate (`t = top − 0.55·h`); the right-most
  *   pill ends at the anchor `right − pad`. `🔊 重听` (voiced lines) is the right-most; `✨ AI解读`
@@ -66,6 +67,13 @@ internal object AdvPills {
 
     /** `✨ AI解读` is shown for every line with Japanese text; `🔊 重听` for every voiced line. */
     fun showsAi(jpEmpty: Boolean): Boolean = !jpEmpty
+
+    /**
+     * Whether a window draws the `✨ AI解读` rim pill: only the landscape [AdvWindow] (`frame == null`).
+     * The portrait reading deck ([AdvWindow] / [NovelPage] with a frame) keeps only `🔊 重听` on its
+     * rim; its `✨ AI` key lives in the bottom thumb bar ([QuickBarLayout.showsAiKey]).
+     */
+    fun showsRimAi(jpEmpty: Boolean, portrait: Boolean): Boolean = showsAi(jpEmpty) && !portrait
 
     /** Total width of the shown pills, gap included (canvas px). */
     fun pillsWidth(showAi: Boolean, showVoice: Boolean, shortAi: Boolean, s: Float): Float {

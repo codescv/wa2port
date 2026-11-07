@@ -249,7 +249,8 @@ fun BacklogOverlay(
  *
  * Hosts the secondary QuickBar controls (**快捷控制 Quick Controls**: 3-way language incl. single
  * 中文, ADV ⇄ NOVEL, font size presets, `✨ 点词` toggle, `👁 隐藏窗口`, and `Q.LOAD 快速读档`) at the top
- * of the card so the primary QuickBar stays at 6 high-frequency keys (+ `✨ AI` / `🔊` in landscape NOVEL).
+ * of the card so the primary QuickBar stays at 6 high-frequency keys (+ `✨ AI` in portrait — 7 keys —
+ * and `✨ AI` / `🔊` in landscape NOVEL).
  *
  * Portrait: a bottom sheet flush with the screen bottom (frequent actions, `返回游戏 Resume` last, in
  * the thumb zone) that is dismissed by tapping the scrim, ✕, or pulling it down (drag handle /
