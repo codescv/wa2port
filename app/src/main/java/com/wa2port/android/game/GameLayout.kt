@@ -18,7 +18,8 @@ data class DpRect(val left: Float, val top: Float, val right: Float, val bottom:
  * The **content box** ([content], window dp) holds the stage, the ADV / NOVEL text, the gesture
  * layer and the choice cards; every rect below except [content] is relative to the content box.
  * Landscape: content box == stage box (today's letterboxed 16:9 stage). Portrait: content box =
- * `(0, stageTop, w, h)` with the 16:9 stage at its top and the reading deck below.
+ * `(0, insetTop, w, hudTop)` with the 16:9 stage at its top and the reading deck below; the quick
+ * bar sits below the content box on the bottom inset (`hudTop = h − insetBottom − 48`).
  */
 data class GameGeometry(
     val portrait: Boolean,
@@ -30,7 +31,7 @@ data class GameGeometry(
     /** Landscape letterbox sizes (side bar width / top bar height); 0 in portrait. */
     val side: Float,
     val topBox: Float,
-    /** Portrait HUD row (quick bar) top and height in window dp; 0 in landscape. */
+    /** Portrait bottom quick bar top and height in window dp (`hudTop + hudHeight = h − insetBottom`); 0 in landscape. */
     val hudTop: Float,
     val hudHeight: Float,
     /** Portrait reading deck (content dp), null in landscape. */
@@ -48,7 +49,7 @@ data class GameGeometry(
 
 /** Pure game-screen layout: landscape = today's formulas verbatim; portrait = "split-stage theater". */
 object GameLayout {
-    /** Portrait HUD (quick bar) row height (dp). */
+    /** Portrait bottom quick-bar row height (dp). */
     const val HUD_HEIGHT_DP = 48f
 
     /** Landscape: side letterbox width that hosts the quick-bar columns. */
@@ -115,9 +116,13 @@ object GameLayout {
         hasChoices: Boolean,
         hasLine: Boolean,
     ): GameGeometry {
-        val hudTop = insetTop
-        val stageTop = hudTop + HUD_HEIGHT_DP
-        val availH = h - stageTop - insetBottom
+        // One-handed portrait: stage at the top inset, reading deck below it, quick bar on the bottom
+        // inset (thumb zone). The content box (stage + deck) ends at the bar top, so the stage gesture
+        // layer never sits beneath the bar or the inset strip. `deckH = h − insetTop − 48 − stageH −
+        // 20 − 8 − insetBottom` is identical to the former top-bar layout (DeckLayout fit unchanged).
+        val stageTop = insetTop
+        val hudTop = h - insetBottom - HUD_HEIGHT_DP
+        val availH = hudTop - stageTop
         val deckW = w - 2f * DeckLayout.DECK_SIDE_DP
         val bothMode = DeckLayout.bothMode(DeckLayout.textWidth(deckW), textScale)
         val stacked = lang == DisplayLang.BOTH && bothMode == DeckLayout.BothMode.STACKED
@@ -125,12 +130,12 @@ object GameLayout {
         val stageW = minOf(w, maxOf(0f, availH - deckMin) * 16f / 9f)
         val stageH = stageW * 9f / 16f
         val stageLeft = (w - stageW) / 2f
-        val contentH = h - stageTop
+        val contentH = hudTop - stageTop
         val deck = DpRect(
             DeckLayout.DECK_SIDE_DP,
             stageH + DeckLayout.DECK_GAP_DP,
             w - DeckLayout.DECK_SIDE_DP,
-            maxOf(stageH + DeckLayout.DECK_GAP_DP, contentH - insetBottom - DeckLayout.DECK_BOTTOM_DP),
+            maxOf(stageH + DeckLayout.DECK_GAP_DP, contentH - DeckLayout.DECK_BOTTOM_DP),
         )
         val hasPromptChoices = hasChoices && hasLine
         val advFrame: DpRect
@@ -146,7 +151,7 @@ object GameLayout {
         return GameGeometry(
             portrait = true,
             placement = BarPlacement.PORTRAIT_BAR,
-            content = DpRect(0f, stageTop, w, h),
+            content = DpRect(0f, stageTop, w, maxOf(stageTop, hudTop)),
             stage = DpRect(stageLeft, 0f, stageLeft + stageW, stageH),
             side = 0f,
             topBox = 0f,

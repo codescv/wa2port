@@ -48,8 +48,11 @@ object QuickBarLayout {
     /** Below this button width the font drops from 12 to 11 dp. */
     const val SMALL_FONT_BELOW_DP = 52f
 
-    /** Below this button width [QuickAction.shortLabel] is used. */
-    const val SHORT_LABEL_BELOW_DP = 50f
+    /**
+     * Below this button width [QuickAction.shortLabel] is used (`结束回想` ≈ 48 dp at 12 dp + 8 dp
+     * padding needs ≥ 56 dp; 6 keys on a 360 dp phone are 54.8 dp wide).
+     */
+    const val SHORT_LABEL_BELOW_DP = 58f
 
     /** Width of each of [count] equal-weight buttons in a bar [barWidthDp] wide. */
     fun buttonWidth(barWidthDp: Float, count: Int): Float {
@@ -64,9 +67,25 @@ object QuickBarLayout {
 
     /**
      * The NOVEL-mode `🔊` key is a landscape-only extra (portrait NOVEL has the deck `🔊 重听` pill),
-     * so the portrait bar always holds the same 7 keys.
+     * so the portrait bar always holds the same 6 keys.
      */
     fun showsVoiceKey(isNovelMode: Boolean, hasVoice: Boolean, portrait: Boolean): Boolean = isNovelMode && hasVoice && !portrait
+
+    /**
+     * The `✨ AI` key is a landscape-NOVEL-only extra like `🔊`: ADV windows and the portrait deck
+     * (ADV + NOVEL) carry the `[✨ AI解读]` rim pill, landscape `NovelPage` draws no pills.
+     */
+    fun showsAiKey(isNovelMode: Boolean, portrait: Boolean): Boolean = isNovelMode && !portrait
+
+    /**
+     * Portrait bottom-bar order: [log] moves to the left corner (`LOG · AUTO · SKIP · 日⇄双 · Q.SAVE ·
+     * MENU`) so both corners hold harmless overlay openers and SKIP / Q.SAVE sit ≥ 1 key away from
+     * either corner. A [log] not present in [left] is ignored (identity match only).
+     */
+    fun <T : Any> portraitOrder(left: List<T>, right: List<T>, log: T): List<T> {
+        if (left.none { it === log }) return left + right
+        return listOf(log) + left.filterNot { it === log } + right
+    }
 
     /**
      * Order of a horizontal quick row built from the side-column halves [left] + [right]: when the
@@ -114,7 +133,7 @@ fun QuickColumn(actions: List<QuickAction>, width: Dp, modifier: Modifier = Modi
 }
 
 /**
- * Portrait HUD quick bar: every action as an equal-weight ≥ 48 dp button filling the width
+ * Portrait bottom thumb bar: every action as an equal-weight ≥ 48 dp button filling the width
  * (`spacedBy(3dp)`, 8 dp side padding, one line, 11/12 dp labels, [QuickAction.shortLabel] when narrow).
  */
 @Composable

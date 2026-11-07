@@ -61,10 +61,11 @@ class GameLayoutTest {
         val deckBottomScreen: Float,
     )
 
-    private val a = Device(360f, 780f, 32f, 32f, 202.5f, 302.5f, 748f)
-    private val b = Device(412f, 915f, 36f, 36f, 231.75f, 335.75f, 883f)
-    private val c = Device(600f, 960f, 24f, 24f, 337.5f, 429.5f, 928f)
-    private val d = Device(673f, 841f, 0f, 8f, 378.56f, 454.56f, 809f)
+    // Bottom bar on the 24 dp gesture inset: hudTop = h − 24 − 48; stage + deck start at the top inset.
+    private val a = Device(360f, 780f, 32f, 708f, 202.5f, 254.5f, 700f)
+    private val b = Device(412f, 915f, 36f, 843f, 231.75f, 287.75f, 835f)
+    private val c = Device(600f, 960f, 24f, 888f, 337.5f, 381.5f, 880f)
+    private val d = Device(673f, 841f, 0f, 769f, 378.56f, 406.56f, 761f)
     private val devices = listOf(a, b, c, d)
 
     private fun portrait(dev: Device, t: Float = 1f, choices: Boolean = false, line: Boolean = true, lang: DisplayLang = DisplayLang.BOTH): GameGeometry {
@@ -81,12 +82,12 @@ class GameLayoutTest {
             assertEquals(BarPlacement.PORTRAIT_BAR, g.placement, tag)
             assertEquals(dev.hudTop, g.hudTop, eps, tag)
             assertEquals(48f, g.hudHeight, eps, tag)
-            // Content box = (0, stageTop, w, h); full-width uncropped 16:9 stage at its top.
-            assertEquals(DpRect(0f, dev.hudTop + 48f, dev.w, dev.h), g.content, tag)
+            // Content box = (0, insetTop, w, hudTop); full-width uncropped 16:9 stage at its top.
+            assertEquals(DpRect(0f, maxOf(dev.cutoutTop, 8f), dev.w, dev.hudTop), g.content, tag)
             assertEquals(dev.w, g.stageWidth, eps, tag)
             assertEquals(dev.stageH, g.stageHeight, eps, tag)
             assertEquals(g.stageWidth * 9f / 16f, g.stageHeight, 1e-3f, tag)
-            // Deck: 16 dp margins, 20 dp below the stage, 8 dp above the bottom inset.
+            // Deck: 16 dp margins, 20 dp below the stage, 8 dp above the bottom bar.
             val deck = g.deck!!
             assertEquals(16f, deck.left, eps, tag)
             assertEquals(dev.w - 16f, deck.right, eps, tag)
@@ -158,12 +159,35 @@ class GameLayoutTest {
         assertEquals(8f, none.top.value)
         assertEquals(16f, none.bottom.value)
         val g = GameLayout.compute(673f, 841f, none.top.value, none.bottom.value, 1f, DisplayLang.BOTH, false, true)
-        assertEquals(8f, g.hudTop, eps)
-        assertEquals(841f - 56f - 16f - 8f, g.deck!!.bottom, eps)
+        assertEquals(841f - 16f - 48f, g.hudTop, eps)
+        assertEquals(g.hudTop, g.content.bottom, eps)
+        // Same deck bottom as the former top-bar layout (content dp): 841 − 8 − 48 − 16 − 8.
+        assertEquals(841f - 8f - 48f - 16f - 8f, g.deck!!.bottom, eps)
         val big = ScreenInsets.of(40f, 30f, 12f, 0f)
         assertEquals(40f, big.top.value)
         assertEquals(30f, big.bottom.value)
         assertEquals(12f, big.left.value)
+    }
+
+    @Test
+    fun barSitsOnTheBottomInsetAndNeverOverlapsTheDeck() {
+        for (dev in devices) for (t in listOf(0.7f, 1f, 1.5f)) for (lang in listOf(DisplayLang.JP, DisplayLang.BOTH)) for (bottom in listOf(24f, 48f)) {
+            val insets = ScreenInsets.of(cutoutTopDp = dev.cutoutTop, gestureBottomDp = bottom, cutoutLeftDp = 0f, cutoutRightDp = 0f)
+            val g = GameLayout.compute(dev.w, dev.h, insets.top.value, insets.bottom.value, t, lang, hasChoices = false, hasLine = true)
+            val tag = "${dev.w}×${dev.h} @$t $lang inset=$bottom"
+            assertEquals(dev.h - insets.bottom.value, g.hudTop + g.hudHeight, eps, tag)
+            assertEquals(g.hudTop, g.content.bottom, eps, tag)
+            assertEquals(insets.top.value, g.content.top, eps, tag)
+            assertEquals(0f, g.stage.top, eps, tag)
+            val deck = g.deck!!
+            assertEquals(g.hudTop, g.content.top + deck.bottom + DeckLayout.DECK_BOTTOM_DP, eps, tag)
+            assertEquals(deck.top, g.stage.bottom + DeckLayout.DECK_GAP_DP, eps, tag)
+            // Deck height identity with the former top-bar layout: h − insetTop − 48 − stageH − 20 − 8 − insetBottom.
+            val identity = dev.h - insets.top.value - 48f - g.stageHeight - 20f - 8f - insets.bottom.value
+            assertEquals(identity, deck.height, eps, tag)
+            // The whole deck is clear of the 56 dp bottom edge zone (swipe-up eligible everywhere).
+            assertTrue(g.content.top + deck.bottom <= dev.h - 56f, tag)
+        }
     }
 
     @Test

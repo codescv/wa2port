@@ -22,11 +22,13 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.paddingFromBaseline
 import androidx.compose.foundation.layout.requiredSize
@@ -64,6 +66,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.PlatformTextStyle
@@ -79,6 +82,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,8 +94,14 @@ import com.wa2port.android.ai.NotebookOverlay
 import com.wa2port.android.ai.OfflinePackOfferCard
 import com.wa2port.android.ai.StarButton
 import com.wa2port.android.ui.CloseButton
+import com.wa2port.android.ui.DragHandle
 import com.wa2port.android.ui.LocalCompact
+import com.wa2port.android.ui.LocalIsPortrait
+import com.wa2port.android.ui.PullDismissLogic
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.android.ui.pullDismissHandle
+import com.wa2port.android.ui.pullDismissSheet
+import com.wa2port.android.ui.rememberPullDismissState
 import com.wa2port.android.ui.screenSafePadding
 import com.wa2port.core.ai.AiErrorCode
 import com.wa2port.core.ai.AiPersonaSettings
@@ -152,7 +162,12 @@ private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换�
  * Character ↔ chunk selection is local state (0 ms, no network). The root is an indication-less
  * click target so taps never leak to the stage / backlog underneath, while drags still reach the
  * scrollable panes.
+ *
+ * Pull down to return (compact and wide): the drag handle + header drag the sheet 1:1, and a
+ * downward drag at the top of either list continues as a pull ([rememberPullDismissState]); fling
+ * momentum never pulls. Compact portrait adds a thumb-zone `[◀ 上一句] [🔊 原声] [下一句 ▶]` bar.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AiBreakdownOverlay(
     state: AiBreakdownState,
@@ -177,10 +192,30 @@ fun AiBreakdownOverlay(
     LaunchedEffect(packState is AiPackState.Installed, state) {
         if (packState is AiPackState.Installed && !state.isSample && state.status is AiStatus.Error) ai.explain()
     }
+    // Pull-down to return: drag the handle / header, or pull down from the top of either list.
+    val pull = rememberPullDismissState(onDismiss = onClose)
+    // ◀ / ▶ / ↻ (a new sentence state) always starts at rest.
+    LaunchedEffect(state) { pull.reset() }
+    // Live rotation shrinking the sheet below the current offset: back to rest.
+    LaunchedEffect(pull.sheetHeightPx) {
+        if (pull.sheetHeightPx > 0f && !pull.dismissing && pull.offsetPx > pull.sheetHeightPx) pull.reset()
+    }
+    // Anti-stuck net: whenever no list is scrolling, a displaced idle sheet springs home.
+    LaunchedEffect(listState, leftListState, skeletonListState) {
+        snapshotFlow { listState.isScrollInProgress || leftListState.isScrollInProgress || skeletonListState.isScrollInProgress }
+            .collect { scrolling -> if (!scrolling) pull.settleIfIdle() }
+    }
+    val imeVisible = WindowInsets.isImeVisible
+    val canPrev = ai.canPrev()
+    val canNext = ai.canNext()
+    // Compact portrait: ◀ 上一句 / 🔊 原声 / 下一句 ▶ in the thumb zone (3 fixed slots, never a dead bar).
+    val bottomNav = compact && LocalIsPortrait.current && !imeVisible && !state.isSample && state.cursorRef != null &&
+        (canPrev || canNext || state.voice != null)
     Box(
         Modifier
             .fillMaxSize()
-            .background(SCRIM)
+            // Scrim read in the draw phase only (no recomposition per drag frame); fades as the sheet is pulled.
+            .drawBehind { drawRect(SCRIM, alpha = PullDismissLogic.scrimAlpha(pull.offsetPx, pull.sheetHeightPx)) }
             // Block taps from reaching the stage / backlog underneath (B2) without consuming MOVE
             // events: a root that consumed every change on the Main pass made the children's
             // scrollables abort during touch-slop detection, so scrolling only worked on fast flicks.
@@ -188,10 +223,17 @@ fun AiBreakdownOverlay(
     ) {
         Column(
             Modifier.align(Alignment.Center).widthIn(max = 1100.dp).fillMaxSize()
+                .graphicsLayer { translationY = pull.offsetPx }
+                // The sheet itself is opaque: bright text underneath never bleeds through while pulled.
+                .background(SCRIM, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                .pullDismissSheet(pull)
                 .screenSafePadding()
                 .padding(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            HeaderRow(state, ai, persona, onPersona, onClose, compact)
+            Column(Modifier.fillMaxWidth().pullDismissHandle(pull)) {
+                DragHandle()
+                HeaderRow(state, ai, persona, onPersona, onClose, compact, showNav = !bottomNav)
+            }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val panes = DetailListStates(listState, skeletonListState, input.value) { input.value = it }
                 if (maxWidth >= 640.dp) {
@@ -214,6 +256,15 @@ fun AiBreakdownOverlay(
                     }
                 }
             }
+            if (bottomNav) {
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("◀ 上一句", enabled = canPrev, modifier = Modifier.weight(1f), minHeight = 48.dp) { ai.openPrev() }
+                    Chip("🔊 原声", enabled = state.voice != null, modifier = Modifier.weight(1f), minHeight = 48.dp) {
+                        if (onReplayVoice != null) onReplayVoice() else ai.replayVoice(state.voice)
+                    }
+                    Chip("下一句 ▶", enabled = canNext, modifier = Modifier.weight(1f), minHeight = 48.dp) { ai.openNext() }
+                }
+            }
         }
         if (ai.notebookOpen) {
             NotebookOverlay(
@@ -231,7 +282,8 @@ fun AiBreakdownOverlay(
 
 /**
  * Wide: one row `[title | ◀ ▶ personas ↻ 📒 (scroll) | ✕]`. Compact: two rows —
- * `[title (ellipsis) | 📒 | ✕]` over a full-width scrolling `[◀ 上一句 | 下一句 ▶ | personas… | ↻]`.
+ * `[title (ellipsis) | 📒 | ✕]` over a full-width scrolling `[◀ 上一句 | 下一句 ▶ | personas… | ↻]`
+ * (◀ / ▶ dropped when [showNav] is false: the compact-portrait bottom bar carries them).
  */
 @Composable
 private fun HeaderRow(
@@ -241,6 +293,7 @@ private fun HeaderRow(
     onPersona: (String) -> Unit,
     onClose: () -> Unit,
     compact: Boolean = false,
+    showNav: Boolean = true,
 ) {
     if (compact) {
         Column(Modifier.fillMaxWidth()) {
@@ -256,7 +309,7 @@ private fun HeaderRow(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!state.isSample) {
+                if (!state.isSample && showNav) {
                     Chip("◀ 上一句", enabled = ai.canPrev()) { ai.openPrev() }
                     Chip("下一句 ▶", enabled = ai.canNext()) { ai.openNext() }
                     Spacer(Modifier.width(4.dp))
@@ -301,11 +354,13 @@ private fun Chip(
     enabled: Boolean = true,
     color: Color = Wa2Colors.Accent,
     textStyle: TextStyle = TextStyle.Default,
+    modifier: Modifier = Modifier,
+    minHeight: Dp = 36.dp,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(16.dp)
     Box(
-        Modifier.heightIn(min = 36.dp).clip(shape)
+        modifier.heightIn(min = minHeight).clip(shape)
             .background(if (selected) color else Color(0x33203050))
             .border(1.dp, if (selected) color else Wa2Colors.AccentDim, shape)
             .clickable(enabled = enabled, onClick = onClick)

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.absolutePadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,12 +36,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
@@ -54,10 +58,17 @@ import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.data.OrientationMode
 import com.wa2port.android.data.Settings
 import com.wa2port.android.ui.CloseButton
+import com.wa2port.android.ui.DragHandle
 import com.wa2port.android.ui.LocalCompact
+import com.wa2port.android.ui.LocalIsPortrait
+import com.wa2port.android.ui.LocalScreenInsets
 import com.wa2port.android.ui.MenuButton
+import com.wa2port.android.ui.PullDismissLogic
 import com.wa2port.android.ui.Segmented
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.android.ui.pullDismissHandle
+import com.wa2port.android.ui.pullDismissSheet
+import com.wa2port.android.ui.rememberPullDismissState
 import com.wa2port.android.ui.sceneLabel
 import com.wa2port.android.ui.screenSafePadding
 import com.wa2port.core.engine.ChoiceOption
@@ -66,6 +77,11 @@ import com.wa2port.core.engine.LineRef
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
 import com.wa2port.core.text.TextScale
+import kotlinx.coroutines.launch
+
+/** In-game menu scrim and card colours. */
+private val MENU_SCRIM = Color(0xCC050A16)
+private val MENU_CARD = Color(0xE60D1628)
 
 /** A language part of a bilingual caption. */
 private data class Part(val rich: RichText, val lang: TextLang, val sizePx: Float, val color: Int)
@@ -102,7 +118,8 @@ private fun BilingualText(painter: TextPainter, parts: List<Part>, widthPx: Floa
 /**
  * Full-width tappable choice cards (≥ 56 dp), both languages, centred on the stage. Portrait passes
  * [cardWidth] (deck width) and [scalePx] (px per stage px × text scale of the reading deck); the
- * defaults keep the landscape `maxWidth × 0.78` cards at the stage scale.
+ * defaults keep the landscape `maxWidth × 0.78` cards at the stage scale. Portrait cards hug the
+ * bottom of their deck area (thumb zone, right above the bottom bar).
  */
 @Composable
 fun ChoiceCards(
@@ -117,7 +134,7 @@ fun ChoiceCards(
     scalePx: Float? = null,
 ) {
     val scale = scalePx ?: (stageHeightPx / 720f * textScale)
-    BoxWithConstraints(modifier.background(Color(0x55000000)), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier.background(Color(0x55000000)), contentAlignment = if (cardWidth != null) Alignment.BottomCenter else Alignment.Center) {
         val density = LocalDensity.current
         val cardWidth = cardWidth?.coerceAtMost(maxWidth) ?: (maxWidth * 0.78f)
         val innerPx = with(density) { (cardWidth - 32.dp).toPx() }
@@ -148,7 +165,8 @@ fun ChoiceCards(
 
 /**
  * Scrollable bilingual backlog with per-line ✨ AI breakdown and ▶ voice replay; opens scrolled to the newest line. Line and
- * speaker-name sizes follow the font size setting ([textScale], 1.0 = 100 %).
+ * speaker-name sizes follow the font size setting ([textScale], 1.0 = 100 %). Portrait adds a thumb-zone
+ * `[↓ 最新 Latest] [✕ 关闭 Close]` row below the list.
  */
 @Composable
 fun BacklogOverlay(
@@ -162,6 +180,8 @@ fun BacklogOverlay(
     onAi: ((LineRef) -> Unit)? = null,
 ) {
     val density = LocalDensity.current
+    val portrait = LocalIsPortrait.current
+    val scope = rememberCoroutineScope()
     val state = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size - 1).coerceAtLeast(0))
     Column(
         Modifier.fillMaxSize().background(Color(0xF0060B18))
@@ -175,7 +195,7 @@ fun BacklogOverlay(
             Text("回想 Backlog  バックログ", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
             CloseButton(onClose)
         }
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(if (portrait) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxSize()) {
             val textWidthPx = with(density) { (maxWidth - 72.dp).toPx() }
             val main = with(density) { 17.sp.toPx() } * textScale
             val sub = with(density) { 14.sp.toPx() } * textScale
@@ -212,6 +232,15 @@ fun BacklogOverlay(
                 }
             }
         }
+        if (portrait) {
+            // Thumb-zone actions (2 fixed slots): jump back to the newest line, close.
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuButton("↓ 最新 Latest", enabled = state.canScrollForward, modifier = Modifier.weight(1f), compact = true) {
+                    scope.launch { state.animateScrollToItem(entries.lastIndex.coerceAtLeast(0)) }
+                }
+                MenuButton("✕ 关闭 Close", modifier = Modifier.weight(1f), compact = true, onClick = onClose)
+            }
+        }
     }
 }
 
@@ -220,7 +249,11 @@ fun BacklogOverlay(
  *
  * Hosts the secondary QuickBar controls (**快捷控制 Quick Controls**: 3-way language incl. single
  * 中文, ADV ⇄ NOVEL, font size presets, `✨ 点词` toggle, `👁 隐藏窗口`, and `Q.LOAD 快速读档`) at the top
- * of the card so the primary QuickBar stays at 7 high-frequency keys.
+ * of the card so the primary QuickBar stays at 6 high-frequency keys (+ `✨ AI` / `🔊` in landscape NOVEL).
+ *
+ * Portrait: a bottom sheet flush with the screen bottom (frequent actions, `返回游戏 Resume` last, in
+ * the thumb zone) that is dismissed by tapping the scrim, ✕, or pulling it down (drag handle /
+ * header anywhere, or from the top of its scroll). Landscape: the centred card.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -242,31 +275,58 @@ fun GameMenu(
     var confirmTitle by remember { mutableStateOf(false) }
     val exitLabel = if (inReplayMode) "结束回想 Exit Replay" else "返回标题 Title"
     val compact = LocalCompact.current
+    val portrait = LocalIsPortrait.current
+    val insets = LocalScreenInsets.current
+    val pull = rememberPullDismissState(onDismiss = onResume)
+    val sheetShape = if (portrait) RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp) else RoundedCornerShape(14.dp)
     Box(
-        Modifier.fillMaxSize().background(Color(0xCC050A16)).clickable(onClick = onResume).screenSafePadding(),
-        contentAlignment = Alignment.Center,
+        Modifier.fillMaxSize()
+            .drawBehind { drawRect(MENU_SCRIM, alpha = if (portrait) PullDismissLogic.scrimAlpha(pull.offsetPx, pull.sheetHeightPx) else 1f) }
+            .clickable(onClick = onResume)
+            // Portrait: no bottom padding — the sheet sits flush on the screen bottom and carries the
+            // gesture inset inside its own background.
+            .then(if (portrait) Modifier.absolutePadding(left = insets.left, top = insets.top, right = insets.right) else Modifier.screenSafePadding()),
+        contentAlignment = if (portrait) Alignment.BottomCenter else Alignment.Center,
     ) {
         Column(
-            Modifier
-                .padding(horizontal = 12.dp)
-                .widthIn(max = 460.dp)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xE60D1628))
-                .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(14.dp))
-                .clickable(enabled = false) {}
-                .padding(16.dp),
+            if (portrait) {
+                Modifier
+                    .widthIn(max = 460.dp)
+                    .fillMaxWidth()
+                    .graphicsLayer { translationY = pull.offsetPx }
+                    // Before verticalScroll: the sheet's nested-scroll connection must be its ancestor.
+                    .pullDismissSheet(pull)
+                    .clip(sheetShape)
+                    .background(MENU_CARD)
+                    .border(1.dp, Wa2Colors.AccentDim, sheetShape)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = insets.bottom + 16.dp)
+            } else {
+                Modifier
+                    .padding(horizontal = 12.dp)
+                    .widthIn(max = 460.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 12.dp)
+                    .clip(sheetShape)
+                    .background(MENU_CARD)
+                    .border(1.dp, Wa2Colors.AccentDim, sheetShape)
+                    .clickable(enabled = false) {}
+                    .padding(16.dp)
+            },
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("快捷控制 · 系统菜单  Quick Controls & Menu", color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                    Text(sceneLabel(scene), color = Wa2Colors.TextDim, fontSize = 12.sp)
+            Column(if (portrait) Modifier.fillMaxWidth().pullDismissHandle(pull) else Modifier.fillMaxWidth()) {
+                if (portrait) DragHandle()
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("快捷控制 · 系统菜单  Quick Controls & Menu", color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(sceneLabel(scene), color = Wa2Colors.TextDim, fontSize = 12.sp)
+                    }
+                    CloseButton(onResume)
                 }
-                CloseButton(onResume)
             }
 
             // Screen orientation (横屏 / 竖屏 / 自动).

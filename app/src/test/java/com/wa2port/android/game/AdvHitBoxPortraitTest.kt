@@ -74,9 +74,10 @@ class AdvHitBoxPortraitTest {
         hit.minTolPx = 12f
         hit.jp = AdvHitBox.JpBox(jp, frame.left + pad, jpTop, width, em, cap, Reflow.SENTENCE, Int.MAX_VALUE, textTop - 3f, frame.bottom)
         val painter = FakePainter()
-        // Tap (60, 420) dp on screen → content box (60, 336): the content box starts at stageTop = 84.
-        assertEquals(84f, geometry.content.top, 0.01f)
-        val p = Offset(60f, 420f - geometry.content.top)
+        // Tap (60, 372) dp on screen → content box (60, 336): the content box starts at the top inset (36;
+        // the quick bar lives at the bottom), so the whole deck sits 48 dp higher than with the top bar.
+        assertEquals(36f, geometry.content.top, 0.01f)
+        val p = Offset(60f, 372f - geometry.content.top)
         assertEquals(1, hit.glyphAt(painter, p))
         assertEquals(31.41f, painter.lastLocal!!.x, 0.05f)
         assertEquals(2.44f, painter.lastLocal!!.y, 0.05f)

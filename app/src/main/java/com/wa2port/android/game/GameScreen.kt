@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,12 +43,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.wa2port.android.AppViewModel
 import com.wa2port.android.ai.NotebookOverlay
 import com.wa2port.android.data.DisplayLang
@@ -76,8 +78,8 @@ private const val TAG = "Wa2Game"
  * (in the letterbox when there is room) + overlays (menu, backlog, save/load, config, movie).
  *
  * Portrait windows (measured `maxHeight > maxWidth`) use the same composition tree with a different
- * [GameLayout] geometry: quick-bar HUD row, full 16:9 stage at the top of the content box and the
- * reading deck (ADV / NOVEL / choice prompt + cards) below it.
+ * [GameLayout] geometry tuned for one-handed play: full 16:9 stage at the top, the reading deck (ADV /
+ * NOVEL / choice prompt + bottom-aligned cards) below it and the quick bar on the bottom inset.
  */
 @Composable
 fun GameScreen(vm: AppViewModel, session: GameSession) {
@@ -190,19 +192,25 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     } else {
         null
     }
-    // AI breakdown of the current line (stacks above whatever overlay is open).
-    val aiAction = QuickAction("✨ AI", vm.ai.breakdown != null, onClick = act {
-        val l = session.line
-        if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
-    })
+    // AI breakdown of the current line (stacks above whatever overlay is open). Landscape NOVEL only:
+    // ADV windows and the portrait deck carry the `[✨ AI解读]` rim pill instead.
+    val aiAction = if (QuickBarLayout.showsAiKey(isNovelMode, isPortrait)) {
+        QuickAction("✨ AI", vm.ai.breakdown != null, onClick = act {
+            val l = session.line
+            if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
+        })
+    } else {
+        null
+    }
+    val logAction = QuickAction("LOG", false, onClick = act { session.overlay = Overlay.BACKLOG })
     val leftActions = buildList {
         add(QuickAction("AUTO", session.autoMode, onClick = act { session.toggleAuto() }))
         add(QuickAction("SKIP", session.skipToggle, onClick = act { session.toggleSkip() }))
-        add(QuickAction("LOG", false, onClick = act { session.overlay = Overlay.BACKLOG }))
+        add(logAction)
         if (voiceAction != null) add(voiceAction)
     }
     val rightActions = buildList {
-        add(aiAction)
+        if (aiAction != null) add(aiAction)
         // 2-state core learner toggle: 日本語 ⇄ 中/日双语 (single 中文 lives in MENU Quick Controls).
         add(
             QuickAction(
@@ -222,8 +230,13 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         }
         add(QuickAction("MENU", false, onClick = act { session.overlay = Overlay.MENU }))
     }
-    // Horizontal rows (TOP / OVERLAY / portrait bar): `… LOG, ✨ AI, 🔊, 日⇄双 …`, matching the rim pills.
-    val actions = QuickBarLayout.rowOrder(leftActions, rightActions, voice = voiceAction, ai = aiAction)
+    // Portrait bottom bar: `LOG · AUTO · SKIP · 日⇄双 · Q.SAVE · MENU` (harmless openers in the corners).
+    // Horizontal landscape rows (TOP / OVERLAY): `… LOG, ✨ AI, 🔊, 日⇄双 …`, matching the rim pills.
+    val actions = if (isPortrait) {
+        QuickBarLayout.portraitOrder(leftActions, rightActions, log = logAction)
+    } else {
+        QuickBarLayout.rowOrder(leftActions, rightActions, voice = voiceAction, ai = aiAction)
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
@@ -231,7 +244,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val textScale = settings.textScaleFactor
         val hasChoices = session.choices.isNotEmpty()
         val hasLine = session.line != null
-        // Landscape: today's letterbox formulas; portrait: HUD row + stage + reading deck (R1: by measured size).
+        // Landscape: today's letterbox formulas; portrait: stage + reading deck + bottom bar (R1: by measured size).
         val g = remember(maxWidth, maxHeight, insets, textScale, settings.lang, hasChoices, hasLine) {
             GameLayout.compute(maxWidth.value, maxHeight.value, insets.top.value, insets.bottom.value, textScale, settings.lang, hasChoices, hasLine)
         }
@@ -289,9 +302,12 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
 
         // ---------------------------------------------------------------- stage (+ portrait deck)
         // One content box in both orientations (R3): only its modifiers and the text frame change, so
-        // the stage view, text canvases, hit box and movie state survive a rotation.
+        // the stage view, text canvases, hit box and movie state survive a rotation. Portrait: the box
+        // ends at the bottom bar, so the gesture layer never lies beneath the bar or the inset strip.
         val contentModifier = if (g.portrait) {
-            Modifier.fillMaxSize().padding(top = g.content.top.dp).background(Wa2Colors.Night)
+            Modifier.fillMaxSize()
+                .padding(top = g.content.top.coerceAtLeast(0f).dp, bottom = (maxHeight.value - g.content.bottom).coerceAtLeast(0f).dp)
+                .background(Wa2Colors.Night)
         } else {
             Modifier.size(stageW, stageH).align(Alignment.Center)
         }
@@ -364,7 +380,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     }
                     if (tapBadge) {
                         Box(
-                            Modifier.heightIn(min = 36.dp).clip(RoundedCornerShape(18.dp))
+                            Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).clip(RoundedCornerShape(24.dp))
                                 .clickable {
                                     vm.updateSettings { it.copy(aiTapToAnalyze = false) }
                                     session.toast = "已关闭点词解析 Tap-to-analyze off"
@@ -409,10 +425,16 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 QuickRow(actions, Modifier.padding(horizontal = 8.dp))
             }
             BarPlacement.OVERLAY -> {}
-            BarPlacement.PORTRAIT_BAR -> QuickBarFill(
-                actions,
-                Modifier.align(Alignment.TopCenter).padding(top = g.hudTop.dp).height(g.hudHeight.dp).alpha(barAlpha),
-            )
+            // Portrait bottom thumb bar on the gesture inset. The opaque container (bar + inset strip)
+            // swallows taps in the key gaps / side padding / inset so a near miss never advances the line.
+            BarPlacement.PORTRAIT_BAR -> Box(
+                Modifier.align(Alignment.TopCenter).padding(top = g.hudTop.coerceAtLeast(0f).dp)
+                    .fillMaxWidth().height(g.hudHeight.dp + insets.bottom)
+                    .background(Wa2Colors.Night)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+            ) {
+                QuickBarFill(actions, Modifier.align(Alignment.TopCenter).height(g.hudHeight.dp).alpha(barAlpha))
+            }
         }
 
         // ---------------------------------------------------------------- overlays
@@ -502,10 +524,13 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         }
 
         // 「撤销 Undo」 pill after an in-session load / quick save (expires after UNDO_WINDOW_MS).
+        // Portrait: just above the bottom bar (thumb zone); landscape: top centre.
         val undo = session.undoAction
+        val aboveBar = insets.bottom + (g.hudHeight + 8f).dp
+        val undoPos = if (g.portrait) Modifier.align(Alignment.BottomCenter).padding(bottom = aboveBar) else Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
         if (undo != null) {
             Row(
-                Modifier.align(Alignment.TopCenter).padding(top = if (g.portrait) (g.hudTop + 56f).dp else 12.dp)
+                undoPos
                     .background(Color(0xE6101A30), RoundedCornerShape(24.dp))
                     .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(24.dp))
                     .padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
@@ -524,10 +549,14 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
 
         // Toasts stay visible above overlays and the AI sheet (e.g. "Saved", persona switched).
         session.toast?.let {
+            val toastPos = if (g.portrait) {
+                Modifier.align(Alignment.BottomCenter).padding(bottom = aboveBar + if (undo != null) 56.dp else 0.dp)
+            } else {
+                Modifier.align(Alignment.TopCenter).padding(top = if (undo != null) 68.dp else 16.dp)
+            }
             Text(
                 it, color = Wa2Colors.Text, fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.TopCenter)
-                    .padding(top = if (g.portrait) (g.hudTop + 56f + if (undo != null) 56f else 0f).dp else if (undo != null) 68.dp else 16.dp)
+                modifier = toastPos
                     .background(Color(0xCC101A30), RoundedCornerShape(8.dp)).padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
