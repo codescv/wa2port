@@ -161,7 +161,10 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         session.movieFinished()
     }
 
-    BackHandler {
+    // While the AI sheet is up (notebook closed, no movie) its own BackHandler slides it down
+    // (AiBreakdownOverlay); this one stays out of the way so the sheet always wins.
+    val aiSheetOwnsBack = vm.ai.breakdown != null && !vm.ai.notebookOpen && session.movie == null
+    BackHandler(enabled = !aiSheetOwnsBack) {
         when {
             session.movie != null -> if (movieGate?.requestSkip() != false) finishMovie()
             vm.ai.notebookOpen -> vm.ai.closeNotebook(session)
@@ -226,7 +229,10 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             ),
         )
         if (!session.inReplayMode) {
-            add(QuickAction("Q.SAVE", false, shortLabel = "快存", onClick = act { scope.launch { session.quickSave() } }))
+            // Always the English `Q.SAVE` (like LOG / AUTO / SKIP / ✨ AI / MENU and Q.LOAD), never a
+            // Chinese short label: a narrow key or a wide OEM font (e.g. ColorOS OPlusSans) shrinks the
+            // glyphs instead (`QuickBarLayout.fitScale`), never clips.
+            add(QuickAction("Q.SAVE", false, onClick = act { scope.launch { session.quickSave() } }))
         } else {
             add(QuickAction("结束回想", false, shortLabel = "退出", onClick = act { vm.exitToTitle() }))
         }
@@ -517,6 +523,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     session.overlay = Overlay.CONFIG
                 },
                 onClose = { vm.ai.close(session) },
+                // A movie keeps Back for its skip gate (GameScreen's BackHandler).
+                backEnabled = session.movie == null,
             )
         }
         if (vm.ai.notebookOpen && vm.ai.breakdown == null) {

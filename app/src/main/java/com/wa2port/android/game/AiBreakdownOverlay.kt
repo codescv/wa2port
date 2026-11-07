@@ -1,5 +1,6 @@
 package com.wa2port.android.game
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -102,6 +103,7 @@ import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.pullDismissHandle
 import com.wa2port.android.ui.pullDismissSheet
 import com.wa2port.android.ui.rememberPullDismissState
+import com.wa2port.android.ui.rememberSheetEntrance
 import com.wa2port.android.ui.screenSafePadding
 import com.wa2port.core.ai.AiErrorCode
 import com.wa2port.core.ai.AiPersonaSettings
@@ -166,6 +168,15 @@ private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换�
  * Pull down to return (compact and wide): the drag handle + header drag the sheet 1:1, and a
  * downward drag at the top of either list continues as a pull ([rememberPullDismissState]); fling
  * momentum never pulls. Compact portrait adds a thumb-zone `[◀ 上一句] [🔊 原声] [下一句 ▶]` bar.
+ *
+ * Motion: on mount the sheet slides up from the bottom of the container (one full height → 0,
+ * 260 ms Emphasized Decelerate, [rememberSheetEntrance]) while the scrim fades in with it; both are
+ * read in the draw phase from the layer's own size, so the first frame already starts off-screen.
+ * The entrance is keyed to the mount only: ◀ / ▶ / ↻ (a new [state] in the same slot) and live
+ * rotation never replay it, and `下一句 ▶` re-opening on the next script line appears in place
+ * ([AiBreakdownState.slideIn]). ✕ and Back (when [backEnabled] and the notebook is closed) slide the
+ * sheet down like a finger pull-dismiss (200 ms) before [onClose] — exactly once; [onOpenSettings]
+ * still jumps immediately.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -177,6 +188,7 @@ fun AiBreakdownOverlay(
     onReplayVoice: (() -> Unit)?,
     onOpenSettings: (() -> Unit)?,
     onClose: () -> Unit,
+    backEnabled: Boolean = true,
 ) {
     val compact = LocalCompact.current
     // Hoisted to the overlay root, keyed by the sentence: fresh per sentence (openPrev / openNext start
@@ -194,7 +206,14 @@ fun AiBreakdownOverlay(
     }
     // Pull-down to return: drag the handle / header, or pull down from the top of either list.
     val pull = rememberPullDismissState(onDismiss = onClose)
-    // ◀ / ▶ / ↻ (a new sentence state) always starts at rest.
+    // Slide up from the bottom on mount only (not per sentence / rotation); frozen during a slide-out.
+    val entrance = rememberSheetEntrance(pull, slideIn = state.slideIn)
+    // ✕ / Back slide the sheet down like a finger pull (onClose once, after the 200 ms slide-out).
+    val dismiss: () -> Unit = { pull.dismiss() }
+    // The in-sheet notebook owns Back while open (the host closes it); hosts skip their own
+    // breakdown branch while this handler is enabled.
+    BackHandler(enabled = backEnabled && !ai.notebookOpen, onBack = dismiss)
+    // ◀ / ▶ / ↻ (a new sentence state) always starts at rest. Pull state only: the entrance is separate.
     LaunchedEffect(state) { pull.reset() }
     // Live rotation shrinking the sheet below the current offset: back to rest.
     LaunchedEffect(pull.sheetHeightPx) {
@@ -214,8 +233,9 @@ fun AiBreakdownOverlay(
     Box(
         Modifier
             .fillMaxSize()
-            // Scrim read in the draw phase only (no recomposition per drag frame); fades as the sheet is pulled.
-            .drawBehind { drawRect(SCRIM, alpha = PullDismissLogic.scrimAlpha(pull.offsetPx, pull.sheetHeightPx)) }
+            // Scrim read in the draw phase only (no recomposition per frame): fades in with the entrance
+            // (0 on the first frame) and out as the sheet is pulled. The root and the sheet share a height.
+            .drawBehind { drawRect(SCRIM, alpha = PullDismissLogic.overlayScrimAlpha(entrance.progress, size.height, pull.offsetPx)) }
             // Block taps from reaching the stage / backlog underneath (B2) without consuming MOVE
             // events: a root that consumed every change on the Main pass made the children's
             // scrollables abort during touch-slop detection, so scrolling only worked on fast flicks.
@@ -223,7 +243,8 @@ fun AiBreakdownOverlay(
     ) {
         Column(
             Modifier.align(Alignment.Center).widthIn(max = 1100.dp).fillMaxSize()
-                .graphicsLayer { translationY = pull.offsetPx }
+                // Entrance + pull, from the layer's own laid-out height: off-screen on the very first frame.
+                .graphicsLayer { translationY = PullDismissLogic.sheetTranslationPx(entrance.progress, size.height, pull.offsetPx) }
                 // The sheet itself is opaque: bright text underneath never bleeds through while pulled.
                 .background(SCRIM, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                 .pullDismissSheet(pull)
@@ -232,7 +253,7 @@ fun AiBreakdownOverlay(
         ) {
             Column(Modifier.fillMaxWidth().pullDismissHandle(pull)) {
                 DragHandle()
-                HeaderRow(state, ai, persona, onPersona, onClose, compact, showNav = !bottomNav)
+                HeaderRow(state, ai, persona, onPersona, dismiss, compact, showNav = !bottomNav)
             }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val panes = DetailListStates(listState, skeletonListState, input.value) { input.value = it }

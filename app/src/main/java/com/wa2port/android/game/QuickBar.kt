@@ -35,6 +35,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,7 +44,8 @@ import kotlin.math.roundToInt
 
 /**
  * One quick-bar action. [active] highlights toggles (AUTO/SKIP). [shortLabel] replaces [label] in
- * the portrait [QuickBarFill] only when [label] does not fit its button ([QuickBarLayout.displayLabel]).
+ * the portrait [QuickBarFill] only when [label] does not fit its button ([QuickBarLayout.displayLabel]);
+ * actions without one (e.g. `Q.SAVE`, always English) shrink their glyphs instead.
  */
 data class QuickAction(val label: String, val active: Boolean = false, val shortLabel: String? = null, val onClick: () -> Unit)
 
@@ -109,7 +111,8 @@ object QuickBarLayout {
     /**
      * The label drawn on [a]'s button: [QuickAction.label] when its measured width ([textWidthPx], px
      * at [fontDp]) fits [roomPx] ([labelRoomPx]), otherwise [QuickAction.shortLabel] (if any). Decided
-     * per key, so e.g. PKX110 (412 dp @ 3.5×, 7 keys) keeps `Q.SAVE` while a 360 dp phone shows `快存`.
+     * per key. Only `✨ AI` (→ `✨AI`) and replay `结束回想` (→ `退出`) carry a short label; `Q.SAVE` has
+     * none and always stays English (a narrow key shrinks it via [fitScale] instead).
      */
     fun displayLabel(a: QuickAction, roomPx: Int, textWidthPx: (String) -> Int): String {
         val short = a.shortLabel ?: return a.label
@@ -117,11 +120,36 @@ object QuickBarLayout {
     }
 
     /**
-     * Last-resort glyph scale for a shown label [widthPx] wide in [roomPx] (e.g. an OEM font much wider
+     * Glyph scale for a shown label [widthPx] wide in [roomPx] (a narrow key, or an OEM font much wider
      * than Roboto): 1 when it fits, else shrinks it to `roomPx − 1` px (1 px for `ceil` rounding).
      */
     fun labelScale(widthPx: Int, roomPx: Int): Float =
         if (widthPx <= roomPx || widthPx <= 0) 1f else (roomPx - 1).coerceAtLeast(0).toFloat() / widthPx
+
+    /** Smallest glyph scale [fitScale] ever applies (a sane floor for absurdly narrow keys). */
+    const val MIN_LABEL_SCALE = 0.6f
+
+    /** Re-measure rounds [fitScale] takes before trusting its last scale. */
+    const val FIT_STEPS = 4
+
+    /**
+     * Verified glyph scale for a label [widthPx] wide (at scale 1) in [roomPx]: starts at [labelScale]
+     * and re-measures the label at that scale ([measureAt]: px width with `fontSize` and
+     * `letterSpacing` both multiplied by the scale). Should font hinting / rounding still leave it over
+     * [roomPx] (e.g. 1 px), it shrinks again by the remaining overshoot, up to [FIT_STEPS] times. Never
+     * below [MIN_LABEL_SCALE]; 1 (no re-measure) when the label already fits.
+     */
+    fun fitScale(widthPx: Int, roomPx: Int, measureAt: (Float) -> Int): Float {
+        var k = labelScale(widthPx, roomPx)
+        if (k >= 1f) return 1f
+        repeat(FIT_STEPS) {
+            k = k.coerceAtLeast(MIN_LABEL_SCALE)
+            val w = measureAt(k)
+            if (w <= roomPx || k <= MIN_LABEL_SCALE) return k
+            k *= labelScale(w, roomPx)
+        }
+        return k.coerceAtLeast(MIN_LABEL_SCALE)
+    }
 
     /**
      * The NOVEL-mode `🔊` key is a landscape-only extra: the portrait deck (ADV + NOVEL) carries the
@@ -197,8 +225,9 @@ fun QuickColumn(actions: List<QuickAction>, width: Dp, modifier: Modifier = Modi
  * (3 dp visual gaps, 8 dp side padding, one line, 11/12 dp labels). Each touch cell absorbs half a gap
  * on either side ([QuickBarLayout.touchWidth] ≥ 48 dp on a 360 dp phone with 7 keys). Labels are
  * measured with the real font against the pixel-exact worst-case room ([QuickBarLayout.labelRoomPx]):
- * a key whose label does not fit shows its [QuickAction.shortLabel], and a label that still does not
- * fit (unusually wide OEM font) is shrunk ([QuickBarLayout.labelScale]) rather than clipped.
+ * `✨ AI` / `结束回想` switch to their [QuickAction.shortLabel] when they do not fit; every other label
+ * (incl. `Q.SAVE`, always English) is shrunk instead ([QuickBarLayout.fitScale]: `fontSize` and
+ * `letterSpacing` scaled together and re-measured until it fits), never clipped or ellipsized.
  */
 @Composable
 fun QuickBarFill(actions: List<QuickAction>, modifier: Modifier = Modifier) {
@@ -216,9 +245,11 @@ fun QuickBarFill(actions: List<QuickAction>, modifier: Modifier = Modifier) {
                 ),
             )
         }
-        val measurer = rememberTextMeasurer(cacheSize = 16)
+        val measurer = rememberTextMeasurer(cacheSize = 32)
         val roomPx = QuickBarLayout.labelRoomPx(constraints.maxWidth, actions.size, density.density)
-        val textWidthPx: (String) -> Int = { s -> measurer.measure(s, style, softWrap = false, maxLines = 1).size.width }
+        fun scaled(k: Float): TextStyle = if (k < 1f) style.copy(fontSize = style.fontSize * k, letterSpacing = style.letterSpacing * k) else style
+        fun widthPx(s: String, st: TextStyle): Int = measurer.measure(s, st, softWrap = false, maxLines = 1).size.width
+        val textWidthPx: (String) -> Int = { s -> widthPx(s, style) }
         val halfGap = QuickBarLayout.GAP_DP / 2f
         Row(
             Modifier.fillMaxSize().padding(horizontal = (QuickBarLayout.SIDE_PAD_DP - halfGap).dp),
@@ -247,13 +278,15 @@ fun QuickBarFill(actions: List<QuickAction>, modifier: Modifier = Modifier) {
                         contentAlignment = Alignment.Center,
                     ) {
                         val label = QuickBarLayout.displayLabel(a, roomPx, textWidthPx)
-                        val k = QuickBarLayout.labelScale(textWidthPx(label), roomPx)
+                        val k = QuickBarLayout.fitScale(textWidthPx(label), roomPx) { s -> widthPx(label, scaled(s)) }
                         Text(
                             label,
                             color = if (a.active) Wa2Colors.Night else Wa2Colors.Text,
-                            style = if (k < 1f) style.copy(fontSize = style.fontSize * k, letterSpacing = style.letterSpacing * k) else style,
+                            style = scaled(k),
                             textAlign = TextAlign.Center,
                             maxLines = 1, softWrap = false,
+                            // Belt and braces: fitScale already verified the width; never clip / ellipsize.
+                            overflow = TextOverflow.Visible,
                         )
                     }
                 }

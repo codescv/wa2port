@@ -85,6 +85,12 @@ class AiBreakdownState(
     val returnTo: Overlay,
     val isSample: Boolean = false,
     val returnToNotebook: Boolean = false,
+    /**
+     * Whether a freshly mounted AI sheet slides up from the bottom (`rememberSheetEntrance`). False
+     * for `下一句 ▶` re-opening on the next script line ([AiLearningController.openNext] closes the
+     * sheet for a moment while the script advances): a continuation appears in place.
+     */
+    val slideIn: Boolean = true,
 ) {
     /** Backlog reference of the open line (null for the hand-written sample). */
     val cursorRef: LineRef? = line?.ref
@@ -292,8 +298,10 @@ class AiLearningController(
      * Opens the breakdown for [line] ([focusCharIndex] = tapped character, if any). The sheet stacks
      * above the current overlay ([returnTo], restored on close); from the plain game view it sets
      * `Overlay.AI` so the engine pauses. Resets the 10-line study-burst window and starts [explain].
+     * [slideIn] = false: a freshly mounted sheet appears in place instead of sliding up
+     * ([AiBreakdownState.slideIn]).
      */
-    fun open(session: GameSession, line: DialogueLine, focusCharIndex: Int?, returnTo: Overlay = session.overlay) {
+    fun open(session: GameSession, line: DialogueLine, focusCharIndex: Int?, returnTo: Overlay = session.overlay, slideIn: Boolean = true) {
         val decoder = session.engine.decoder
         val sentence = JpSentence.fromRich(line.jp, decoder)
         if (sentence.text.isBlank()) {
@@ -318,6 +326,7 @@ class AiLearningController(
             sceneHint = req.sceneHint ?: "WHITE ALBUM 2 · ${sceneLabel(session.engine.scene)}",
             voice = line.ref.voice,
             returnTo = back,
+            slideIn = slideIn,
         )
         st.focusCharIndex = req.focusCharIndex
         breakdown = st
@@ -611,7 +620,8 @@ class AiLearningController(
                 pendingReopenOnNextLine = false
                 var guard = 0
                 while (!session.revealDone && guard++ < 16) session.onTap()
-                open(session, line, focusCharIndex = null, returnTo = Overlay.NONE)
+                // A continuation of the open sheet: appears in place, no second slide-up.
+                open(session, line, focusCharIndex = null, returnTo = Overlay.NONE, slideIn = false)
                 return
             }
         }

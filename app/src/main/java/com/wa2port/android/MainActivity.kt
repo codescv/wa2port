@@ -166,8 +166,11 @@ private fun Wa2Routes(vm: AppViewModel) {
                 onClose = { vm.ai.closeNotebook(null) },
             )
         }
+        // The AI sheet (here or in ConfigScreen) handles Back itself while the notebook is closed: it
+        // slides down like a pull-dismiss, so this handler stays disabled then (deterministic order).
+        val aiSheetOwnsBack = vm.ai.breakdown != null && !vm.ai.notebookOpen
         if (vm.screen != Screen.Game && (vm.ai.notebookOpen || vm.ai.breakdown != null || vm.screen != Screen.Title)) {
-            BackHandler {
+            BackHandler(enabled = !aiSheetOwnsBack) {
                 when {
                     vm.ai.notebookOpen -> vm.ai.closeNotebook(null)
                     vm.ai.breakdown != null -> vm.ai.close(null)

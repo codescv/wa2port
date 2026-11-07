@@ -13,7 +13,11 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Pull-down-to-dismiss rules ([PullDismissLogic]) and state machine ([PullDismissState]). */
+/**
+ * Pull-down-to-dismiss rules ([PullDismissLogic]), the bottom-to-top sheet entrance math
+ * ([PullDismissLogic.sheetTranslationPx] / [PullDismissLogic.overlayScrimAlpha]) and the state machine
+ * ([PullDismissState]).
+ */
 class PullDismissLogicTest {
     private val d = 2.625f // PKX110-class density (px per dp)
     private val eps = 1e-3f
@@ -330,5 +334,218 @@ class PullDismissLogicTest {
         r.scroll(121f * 2f)
         r.fling(0f)
         assertEquals(1, r.dismisses)
+    }
+
+    // ------------------------------------------------------------------ entrance (slide up from the bottom)
+
+    /** Sheet translation / scrim exactly as AiBreakdownOverlay's graphicsLayer / drawBehind compute them. */
+    private fun ty(p: Float, h: Float, r: Rig) = PullDismissLogic.sheetTranslationPx(p, h, r.state.offsetPx)
+    private fun scrim(p: Float, h: Float, r: Rig) = PullDismissLogic.overlayScrimAlpha(p, h, r.state.offsetPx)
+
+    @Test
+    fun firstFrameStartsFullyOffScreenBeforeOnSizeChanged() {
+        // Frame 0: onSizeChanged has not reported yet (sheetHeightPx = 0), but the layer's own size
+        // (read in the draw phase) is already known — the sheet is parked one full height below.
+        val r = Rig(d, sheetDp = 0f)
+        val h = 800f * d
+        val p0 = PullDismissLogic.initialEnterProgress(slideIn = true)
+        assertEquals(0f, p0)
+        assertEquals(h, ty(p0, h, r), eps)
+        assertEquals(0f, scrim(p0, h, r), "no opaque scrim flash on frame 0")
+        // Old rule (pull offset + sheetHeightPx only) would have drawn the sheet at y = 0 and an opaque scrim.
+        assertEquals(1f, PullDismissLogic.scrimAlpha(r.state.offsetPx, r.state.sheetHeightPx))
+        // Even with no size at all, the scrim follows the progress (never a flash).
+        assertEquals(0f, PullDismissLogic.overlayScrimAlpha(0f, 0f, 0f))
+        assertEquals(0.5f, PullDismissLogic.overlayScrimAlpha(0.5f, 0f, 40f))
+        assertEquals(1f, PullDismissLogic.overlayScrimAlpha(1f, 0f, 0f))
+        assertEquals(0f, PullDismissLogic.enterProgressAt(0L))
+        assertEquals(0f, PullDismissLogic.enterProgressAt(-16L))
+    }
+
+    @Test
+    fun slideUpIsMonotonicFromFullHeightToRestWhileTheScrimFadesIn() {
+        val r = Rig(d)
+        val h = 800f * d
+        var prevTy = Float.MAX_VALUE
+        var prevA = -1f
+        for (t in 0..PullDismissLogic.ENTER_DURATION_MS step 4) {
+            val p = PullDismissLogic.enterProgressAt(t.toLong())
+            assertTrue(p in 0f..1f, "t=$t p=$p")
+            val y = ty(p, h, r)
+            val a = scrim(p, h, r)
+            assertTrue(y <= prevTy + eps && y in -eps..h + eps, "t=$t y=$y prev=$prevTy")
+            assertTrue(a >= prevA - eps && a in 0f..1f, "t=$t a=$a prev=$prevA")
+            prevTy = y
+            prevA = a
+        }
+        // Lands exactly at rest, opaque, and stays there.
+        for (t in listOf(260L, 261L, 400L, 10_000L)) {
+            assertEquals(1f, PullDismissLogic.enterProgressAt(t))
+            assertEquals(0f, ty(PullDismissLogic.enterProgressAt(t), h, r))
+            assertEquals(1f, scrim(PullDismissLogic.enterProgressAt(t), h, r))
+        }
+        assertEquals(260, PullDismissLogic.ENTER_DURATION_MS)
+        // Emphasized decelerate: most of the travel happens early, a long gentle landing.
+        assertTrue(PullDismissLogic.enterProgressAt(130L) > 0.8f)
+        assertTrue(PullDismissLogic.enterProgressAt(26L) > 0.1f)
+        // The scrim tracks the sheet: half-way up = half opaque.
+        assertEquals(0.5f, PullDismissLogic.overlayScrimAlpha(0.5f, h, 0f), eps)
+        assertEquals(h / 2f, PullDismissLogic.entranceOffsetPx(0.5f, h), eps)
+        // Out-of-range inputs are clamped.
+        assertEquals(h, PullDismissLogic.entranceOffsetPx(-1f, h), eps)
+        assertEquals(0f, PullDismissLogic.entranceOffsetPx(2f, h))
+        assertEquals(0f, PullDismissLogic.entranceOffsetPx(0f, -10f))
+        assertEquals(0f, PullDismissLogic.sheetTranslationPx(1f, h, -30f), "a negative pull never lifts the sheet")
+    }
+
+    @Test
+    fun continuationReopenAppearsInPlace() {
+        // `下一句 ▶` on the latest line re-mounts the sheet on the next script line: no second slide-up.
+        val r = Rig(d)
+        val p0 = PullDismissLogic.initialEnterProgress(slideIn = false)
+        assertEquals(1f, p0)
+        assertEquals(0f, ty(p0, 800f * d, r))
+        assertEquals(1f, scrim(p0, 800f * d, r))
+        assertFalse(PullDismissLogic.entranceRuns(dismissing = false, enterProgress = p0))
+    }
+
+    @Test
+    fun sentenceNavigationKeepsTheSheetAnchoredAtRest() {
+        // ◀ / ▶ / ↻ replace the state in the same slot: LaunchedEffect(state) resets the PULL only; the
+        // mount-scoped entrance is already at 1 and never restarts.
+        val r = Rig(d)
+        val h = 800f * d
+        r.scroll(30f * d) // a pull in progress when ▶ is tapped
+        r.state.reset()
+        for (step in 0 until 5) {
+            r.state.reset() // one per sentence switch
+            assertFalse(PullDismissLogic.entranceRuns(dismissing = r.state.dismissing, enterProgress = 1f))
+            assertEquals(0f, ty(1f, h, r))
+            assertEquals(1f, scrim(1f, h, r))
+        }
+        // A switch mid-entrance (or the frame-0 reset on mount) leaves the entrance untouched: it keeps
+        // sliding from where it is, the reset only clears the pull.
+        r.scroll(20f * d)
+        r.state.reset()
+        assertTrue(PullDismissLogic.entranceRuns(dismissing = r.state.dismissing, enterProgress = 0.4f))
+        assertEquals(0.6f * h, ty(0.4f, h, r), eps)
+        // The anti-stuck net (lists idle on the first frame) is a no-op at rest: nothing to settle.
+        r.state.settleIfIdle()
+        assertTrue(r.runs.isEmpty())
+        assertEquals(0f, r.state.offsetPx)
+    }
+
+    @Test
+    fun pullDownFromRestDismissesAndLeavesOffScreen() {
+        val r = Rig(d)
+        val h = 800f * d
+        r.scroll(130f * d)
+        assertEquals(130f * d, ty(1f, h, r), eps)
+        assertTrue(scrim(1f, h, r) < 1f)
+        r.fling(0f)
+        assertEquals(1, r.dismisses)
+        assertEquals(h, ty(1f, h, r), eps)
+        assertEquals(0f, scrim(1f, h, r))
+    }
+
+    @Test
+    fun pullMidEntranceAddsToItAndNeverSticks() {
+        val r = Rig(d)
+        val h = 800f * d
+        // Finger grabs the handle while the sheet is still half-way up.
+        r.state.onHandleDragStarted()
+        r.state.dragBy(40f * d)
+        assertEquals(0.5f * h + 40f * d, ty(0.5f, h, r), eps)
+        // The entrance keeps running underneath (not dismissing).
+        assertTrue(PullDismissLogic.entranceRuns(r.state.dismissing, 0.5f))
+        // Short slow release: the pull springs home, the entrance finishes → exactly at rest.
+        r.state.onHandleDragStopped(0f)
+        assertEquals(0, r.dismisses)
+        assertEquals(0f, r.state.offsetPx)
+        assertEquals(0f, ty(1f, h, r))
+        // A long pull mid-entrance dismisses like at rest (thresholds only look at the pull).
+        val q = Rig(d)
+        q.scroll(130f * d)
+        q.fling(0f)
+        assertEquals(1, q.dismisses)
+        assertTrue(ty(0.7f, h, q) >= h, "fully off-screen when onClose fires")
+    }
+
+    @Test
+    fun closeOrBackMidEntranceFreezesTheEntranceAndSlidesDownOnce() {
+        // ✕ / Back → pull.dismiss() while the sheet is 30 % up: the entrance freezes (dismissing), the
+        // pull slides out, so the sheet only ever moves down and ends fully off-screen.
+        val frames = listOf(100f, 400f, 900f, 1500f, 2000f)
+        val r = Rig(d, frames = frames, suspendAnimations = true)
+        val h = 800f * d
+        val p = 0.3f
+        r.state.dismiss()
+        assertTrue(r.state.dismissing)
+        assertFalse(PullDismissLogic.entranceRuns(r.state.dismissing, p), "entrance frozen during the slide-out")
+        assertEquals(Triple(0f, h, true), r.runs.single())
+        var prev = PullDismissLogic.entranceOffsetPx(p, h)
+        for (f in frames) {
+            val y = PullDismissLogic.sheetTranslationPx(p, h, f)
+            assertTrue(y >= prev, "monotonic slide-down: $y < $prev")
+            prev = y
+        }
+        // Back pressed again / ✕ double-tap during the slide-out: never a second onClose.
+        r.state.dismiss()
+        r.state.dismiss()
+        assertEquals(1, r.runs.size)
+        assertEquals(0, r.dismisses, "onClose only after the slide-out completes")
+        // A non-suspended slide-out completes → onClose exactly once, off-screen.
+        val c = Rig(d)
+        c.state.dismiss()
+        c.state.dismiss()
+        assertEquals(1, c.dismisses)
+        assertTrue(ty(p, h, c) >= h)
+        assertEquals(0f, scrim(p, h, c))
+    }
+
+    @Test
+    fun cancelledSlideOutResumesAFrozenEntrance() {
+        // Slide-out interrupted by reset (state switch / disposal) while the entrance was frozen at 30 %:
+        // dismissing → false resumes the entrance, so the sheet can never stay part-way up.
+        val r = Rig(d, suspendAnimations = true)
+        r.state.dismiss()
+        assertFalse(PullDismissLogic.entranceRuns(r.state.dismissing, 0.3f))
+        r.state.reset()
+        assertTrue(PullDismissLogic.entranceRuns(r.state.dismissing, 0.3f))
+        assertEquals(0, r.dismisses)
+        assertEquals(0f, ty(1f, 800f * d, r))
+    }
+
+    @Test
+    fun dismissWorksBeforeTheSheetHeightIsKnown() {
+        // ✕ / Back before onSizeChanged: slides 120 dp, then onClose — once; never stuck.
+        val r = Rig(d, sheetDp = 0f)
+        r.state.dismiss()
+        assertEquals(Triple(0f, 120f * d, true), r.runs.single())
+        assertEquals(1, r.dismisses)
+        r.state.dismiss()
+        assertEquals(1, r.dismisses)
+    }
+
+    @Test
+    fun liveRotationNeverReplaysOrStrandsTheEntrance() {
+        // Rotation keeps the overlay in the same slot (no re-mount): a finished entrance stays at 1, so
+        // any new height (portrait 800 dp ↔ landscape 360 dp) keeps the sheet at rest, scrim opaque.
+        val r = Rig(d)
+        for (hDp in listOf(800f, 360f, 412f, 915f)) {
+            val h = hDp * d
+            r.state.sheetHeightPx = h
+            assertEquals(0f, ty(1f, h, r))
+            assertEquals(1f, scrim(1f, h, r))
+            assertFalse(PullDismissLogic.entranceRuns(dismissing = false, enterProgress = 1f))
+        }
+        // Rotating mid-entrance: the remaining offset re-scales to the new height (never beyond it)
+        // and the entrance just finishes.
+        for (p in listOf(0f, 0.25f, 0.5f, 0.9f)) {
+            val portrait = ty(p, 800f * d, r)
+            val landscape = ty(p, 360f * d, r)
+            assertTrue(landscape <= 360f * d + eps && landscape <= portrait + eps)
+            assertEquals(1f - p, landscape / (360f * d), eps)
+        }
     }
 }

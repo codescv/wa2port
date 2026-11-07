@@ -1,5 +1,8 @@
 package com.wa2port.android.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
@@ -21,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -93,6 +97,56 @@ object PullDismissLogic {
 
     /** Pull taken AFTER the child could not scroll (at its top): a user drag downwards. */
     fun postScroll(availableY: Float, userInput: Boolean): Float = if (userInput && availableY > 0f) availableY else 0f
+
+    // ------------------------------------------------------------------ entrance (slide up from the bottom)
+
+    /** Bottom-to-top entrance duration (ms). */
+    const val ENTER_DURATION_MS = 260
+
+    /** Material 3 "Emphasized Decelerate": fast start, long gentle landing. */
+    val EnterEasing: Easing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+
+    /**
+     * Entrance progress (0 = parked one full height below, 1 = at rest) of a sheet on its first
+     * frame: 0 when it should slide in, 1 when it appears in place (e.g. `下一句 ▶` re-opening the
+     * sheet on the next script line, which is a continuation and not a new opening).
+     */
+    fun initialEnterProgress(slideIn: Boolean): Float = if (slideIn) 0f else 1f
+
+    /** Eased entrance progress [elapsedMs] after the mount ([ENTER_DURATION_MS], [EnterEasing]). */
+    fun enterProgressAt(elapsedMs: Long): Float {
+        val t = (elapsedMs.toFloat() / ENTER_DURATION_MS).coerceIn(0f, 1f)
+        return if (t >= 1f) 1f else EnterEasing.transform(t)
+    }
+
+    /** Entrance offset (px, + = down): one full [heightPx] at progress 0, 0 at progress 1. */
+    fun entranceOffsetPx(enterProgress: Float, heightPx: Float): Float =
+        (1f - enterProgress.coerceIn(0f, 1f)) * heightPx.coerceAtLeast(0f)
+
+    /**
+     * Total downward translation of the sheet: the entrance offset plus the pull [pullOffsetPx]
+     * ([PullDismissState.offsetPx]). Additive, so a pull or a slide-out that starts mid-entrance
+     * composes with it and neither can leave the sheet stuck displaced. [heightPx] is the sheet's
+     * own laid-out height (read in the draw phase, so it is exact on the very first frame —
+     * no frame-0 flash at `y = 0` before `onSizeChanged` reports the size).
+     */
+    fun sheetTranslationPx(enterProgress: Float, heightPx: Float, pullOffsetPx: Float): Float =
+        entranceOffsetPx(enterProgress, heightPx) + pullOffsetPx.coerceAtLeast(0f)
+
+    /**
+     * Backdrop scrim alpha of an entering / pulled sheet: tracks the sheet's position
+     * ([scrimAlpha] of [sheetTranslationPx]) — 0 on the first entrance frame, 1 at rest, fading as it
+     * is pulled. With an unknown height (≤ 0) it follows [enterProgress] alone.
+     */
+    fun overlayScrimAlpha(enterProgress: Float, heightPx: Float, pullOffsetPx: Float): Float =
+        if (heightPx <= 0f) enterProgress.coerceIn(0f, 1f) else scrimAlpha(sheetTranslationPx(enterProgress, heightPx, pullOffsetPx), heightPx)
+
+    /**
+     * Whether the entrance should (keep) running: always, except during a slide-out ([dismissing]),
+     * which freezes it so the sheet only ever moves down while leaving. A [PullDismissState.reset]
+     * (dismissing → false) resumes a frozen entrance, so it can never stay part-way up.
+     */
+    fun entranceRuns(dismissing: Boolean, enterProgress: Float): Boolean = !dismissing && enterProgress < 1f
 }
 
 /** Runs one sheet animation from [from] to [to], reporting every frame to [onFrame]. */
@@ -326,6 +380,42 @@ fun rememberPullDismissState(onDismiss: () -> Unit): PullDismissState {
     SideEffect { state.density = density }
     DisposableEffect(state) { onDispose { state.reset() } }
     return state
+}
+
+/**
+ * Bottom-to-top entrance of a pull-to-dismiss sheet: [progress] runs 0 → 1 over
+ * [PullDismissLogic.ENTER_DURATION_MS] with [PullDismissLogic.EnterEasing]. Feed it to
+ * [PullDismissLogic.sheetTranslationPx] / [PullDismissLogic.overlayScrimAlpha] and read [progress]
+ * in the draw phase only (`graphicsLayer` / `drawBehind`): no recomposition per frame.
+ */
+@Stable
+class SheetEntrance internal constructor(initialProgress: Float) {
+    internal val anim = Animatable(initialProgress)
+
+    /** 0 = parked one full height below the container, 1 = at rest. */
+    val progress: Float get() = anim.value
+}
+
+/**
+ * A [SheetEntrance] scoped to the caller's composition lifetime: `remember {}` with no key, so
+ * swapping the sheet's content (`◀ 上一句` / `下一句 ▶` / `↻` replace the state without unmounting),
+ * recomposition and live rotation (same composition slot) never replay it — only a fresh mount
+ * does. [slideIn] is read on the mount only (false = appear at rest). The entrance freezes while
+ * [pull] slides out (the sheet only moves down while leaving) and resumes if the slide-out is
+ * [PullDismissState.reset], so it never stays part-way up. A pull during the entrance just adds to
+ * it ([PullDismissLogic.sheetTranslationPx]).
+ */
+@Composable
+fun rememberSheetEntrance(pull: PullDismissState, slideIn: Boolean = true): SheetEntrance {
+    val entrance = remember { SheetEntrance(PullDismissLogic.initialEnterProgress(slideIn)) }
+    val dismissing = pull.dismissing
+    // A key change cancels the running animateTo (value kept), so the slide-out freezes it.
+    LaunchedEffect(entrance, dismissing) {
+        if (PullDismissLogic.entranceRuns(dismissing, entrance.progress)) {
+            entrance.anim.animateTo(1f, tween(PullDismissLogic.ENTER_DURATION_MS, easing = PullDismissLogic.EnterEasing))
+        }
+    }
+    return entrance
 }
 
 /**
