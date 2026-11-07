@@ -43,6 +43,14 @@ interface TextPainter {
         reflow: Reflow = Reflow.KEEP_ALL,
     ): Float = if (visibleGlyphs <= 0) 0f else measureHeight(rich, lang, maxWidth, sizePx, maxChars, reflow)
 
+    /**
+     * Distance from the `y` passed to [draw] (the first line box top) down to the top of the first
+     * line's glyph em box of size [sizePx]. The atlas painter places glyphs at the bottom of a
+     * `sizePx × lineSpacing` line box (the band above holds furigana), so this is
+     * `sizePx × (lineSpacing − 1)` there. Used to vertically centre single-line labels (nameplate).
+     */
+    fun glyphInkTop(sizePx: Float): Float = 0f
+
     /** Draws the first [visibleGlyphs] glyphs with the top-left at ([x], [y]); returns the drawn height. */
     fun draw(
         canvas: Canvas,

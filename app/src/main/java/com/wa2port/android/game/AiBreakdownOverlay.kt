@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.paddingFromBaseline
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -74,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.intl.Locale
 import androidx.compose.ui.text.intl.LocaleList
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -132,8 +134,11 @@ private val TIGHT_JP_TEXT_STYLE = TextStyle(
     ),
 )
 
-/** Characters that must not begin a line (kinsoku shori). */
-private const val NO_LINE_START = "、。，．,.!！?？…‥」』）)】〕〉》ー～ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々"
+/** Furigana headroom above a base row (9 sp reading on a 10 sp line + 3 sp gap). */
+private val RUBY_BOX = 13.sp
+
+/** Chunk card surface glyph size. */
+private val CHUNK_SURFACE_SIZE = 18.sp
 
 private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换成敬体怎么说？", "再举一个例句")
 
@@ -314,7 +319,7 @@ private fun Chip(
 @Composable
 private fun Tag(label: String, color: Color = Wa2Colors.AccentDim, textColor: Color = Wa2Colors.Text, modifier: Modifier = Modifier) {
     Text(
-        label, color = textColor, fontSize = 11.sp, maxLines = 1,
+        label, color = textColor, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
         modifier = modifier.clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = 0.35f)).padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
@@ -354,78 +359,87 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
         }
         // Ruby-bearing tokens stay grouped (reading centred over the base); every other character is
         // its own flow item so long kana runs wrap inside narrow panes.
-        val groups: List<Pair<String?, List<Int>>> = remember(tokens, text) {
-            tokens.flatMap { t ->
-                val starts = ArrayList<Int>()
-                var i = t.span.start
-                while (i < t.span.end && i < text.length) {
-                    starts += i
-                    i += Character.charCount(text.codePointAt(i))
-                }
-                if (t.ruby != null) listOf(t.ruby to starts) else starts.map { null to listOf(it) }
-            }.fold(ArrayList<Pair<String?, List<Int>>>()) { acc, g ->
-                // Kinsoku: a closing punctuation mark never starts a line — glue it to a preceding
-                // ruby-less group.
-                val prev = acc.lastOrNull()
-                val single = g.first == null && g.second.size == 1 && text[g.second[0]] in NO_LINE_START
-                if (single && prev != null && prev.first == null) acc[acc.size - 1] = null to (prev.second + g.second) else acc += g
-                acc
-            }
-        }
         val hasAnyRuby = remember(tokens) { tokens.any { !it.ruby.isNullOrBlank() } }
         val density = LocalDensity.current
-        val rubyBoxH = with(density) { 13.sp.toDp() }
+        val rubyBoxH = with(density) { RUBY_BOX.toDp() }
         val baseBoxH = with(density) { 30.sp.toDp() }
-        FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            groups.forEach { (ruby, starts) ->
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
-                ) {
-                    if (hasAnyRuby) {
-                        Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
-                            if (!ruby.isNullOrBlank()) {
-                                Text(
-                                    ruby,
-                                    color = Wa2Colors.TextDim,
-                                    fontSize = 9.sp,
-                                    lineHeight = 10.sp,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    style = TIGHT_JP_TEXT_STYLE,
-                                    modifier = Modifier.paddingFromBaseline(top = 10.sp, bottom = 3.sp),
-                                )
+        val rubyPad = with(density) { (24f * RubyFlow.RUBY_CELL_PAD_EM).sp.toDp() }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val maxEms = constraints.maxWidth / with(density) { 24.sp.toPx() }
+            // Kinsoku: a closing punctuation mark never starts a line (glued to a preceding ruby-less
+            // group); a ruby word wider than the line degrades to per-character groups + （reading）.
+            val groups = remember(tokens, text, maxEms) { RubyFlow.sentenceGroups(tokens, text, maxEms) }
+            // Every group reserves the full ruby headroom, so a wrapped row's furigana never overlaps
+            // the row above; a reading wider than its kanji widens its own group (padded apart).
+            FlowRow(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                groups.forEach { g ->
+                    val ruby = g.ruby
+                    val starts = g.starts
+                    if (g.echo != null) {
+                        // Too-wide reading: non-interactive, wraps inside the line width.
+                        Column {
+                            if (hasAnyRuby) Spacer(Modifier.height(rubyBoxH))
+                            Text(
+                                g.echo,
+                                color = Wa2Colors.TextDim,
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                                style = JP_TEXT_STYLE,
+                                modifier = Modifier.paddingFromBaseline(top = 24.sp),
+                            )
+                        }
+                        return@forEach
+                    }
+                    Column(
+                        Modifier.padding(horizontal = if (!ruby.isNullOrBlank()) rubyPad else 0.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
+                    ) {
+                        if (hasAnyRuby) {
+                            Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
+                                if (!ruby.isNullOrBlank()) {
+                                    Text(
+                                        ruby,
+                                        color = Wa2Colors.TextDim,
+                                        fontSize = 9.sp,
+                                        lineHeight = 10.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = TIGHT_JP_TEXT_STYLE,
+                                        modifier = Modifier.paddingFromBaseline(top = 10.sp, bottom = 3.sp),
+                                    )
+                                }
                             }
                         }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        starts.forEach { idx ->
-                            val ch = String(Character.toChars(text.codePointAt(idx)))
-                            val inChunk = active != null && !active.span.isEmpty && idx in active.span
-                            val isFocus = idx == focus
-                            Box(
-                                modifier = Modifier
-                                    .height(baseBoxH)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (inChunk) Wa2Colors.Accent.copy(alpha = 0.22f) else Color.Transparent)
-                                    .drawBehind {
-                                        if (isFocus) {
-                                            drawLine(Wa2Colors.Accent, Offset(0f, size.height - 2f), Offset(size.width, size.height - 2f), strokeWidth = 4f)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            starts.forEach { idx ->
+                                val ch = String(Character.toChars(text.codePointAt(idx)))
+                                val inChunk = active != null && !active.span.isEmpty && idx in active.span
+                                val isFocus = idx == focus
+                                Box(
+                                    modifier = Modifier
+                                        .height(baseBoxH)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (inChunk) Wa2Colors.Accent.copy(alpha = 0.22f) else Color.Transparent)
+                                        .drawBehind {
+                                            if (isFocus) {
+                                                drawLine(Wa2Colors.Accent, Offset(0f, size.height - 2f), Offset(size.width, size.height - 2f), strokeWidth = 4f)
+                                            }
                                         }
-                                    }
-                                    .clickable { ai.selectChar(idx) }
-                                    .padding(horizontal = 1.dp),
-                            ) {
-                                Text(
-                                    ch,
-                                    color = Wa2Colors.Text,
-                                    fontSize = 24.sp,
-                                    lineHeight = 26.sp,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    style = TIGHT_JP_TEXT_STYLE,
-                                    modifier = Modifier.paddingFromBaseline(top = 24.sp, bottom = 6.sp),
-                                )
+                                        .clickable { ai.selectChar(idx) }
+                                        .padding(horizontal = 1.dp),
+                                ) {
+                                    Text(
+                                        ch,
+                                        color = Wa2Colors.Text,
+                                        fontSize = 24.sp,
+                                        lineHeight = 26.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = TIGHT_JP_TEXT_STYLE,
+                                        modifier = Modifier.paddingFromBaseline(top = 24.sp, bottom = 6.sp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -496,22 +510,9 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
             val speaker = listOfNotNull(state.speakerJp, state.speakerCn?.takeIf { it != state.speakerJp }).joinToString(" · ")
             Text(speaker.ifEmpty { "（旁白 / 内心独白）" }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 13.sp)
             if (showSentence && expl != null) {
-                val hasAnyRuby = expl.ruby.any { !it.ruby.isNullOrBlank() }
-                FlowRow(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    expl.ruby.forEach { t ->
-                        if (t.ruby != null) {
-                            RubyCell(t.ruby, t.base, showRuby = hasAnyRuby)
-                        } else {
-                            // Ruby-less runs break per character so long kana runs wrap.
-                            var i = 0
-                            while (i < t.base.length) {
-                                val n = Character.charCount(t.base.codePointAt(i))
-                                RubyCell(null, t.base.substring(i, i + n), showRuby = hasAnyRuby)
-                                i += n
-                            }
-                        }
-                    }
-                }
+                // Ruby-less runs break per character so long kana runs wrap.
+                val cells = remember(expl.ruby) { RubyFlow.cells(expl.ruby, "", rubyScale = 9f / 16f) }
+                RubyFlowRow(cells, 16.sp)
             }
         }
         if (expl != null && expl.model != OfflineExplainer.MODEL) {
@@ -539,21 +540,27 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
     }
 }
 
-/** One furigana cell (reading over base) of the skeleton card's sentence. */
+/**
+ * One furigana flow cell ([RubyFlow.Cell]): the ruby headroom box (when [reserveRuby], i.e. the
+ * line has any ruby) above the base box of a [size] glyph row. The cell is as wide as the wider
+ * of its reading and base (both centred, never soft-wrapped), so readings never collide.
+ */
 @Composable
-private fun RubyCell(ruby: String?, base: String, showRuby: Boolean = true) {
+private fun RubyFlowCell(cell: RubyFlow.Cell, size: TextUnit, reserveRuby: Boolean) {
     val density = LocalDensity.current
-    val rubyBoxH = with(density) { 13.sp.toDp() }
-    val baseBoxH = with(density) { 22.sp.toDp() }
+    val rubyBoxH = with(density) { RUBY_BOX.toDp() }
+    val baseBoxH = with(density) { (size.value + 6f).sp.toDp() }
+    val rubyPad = if (cell.hasRuby) with(density) { (size.value * RubyFlow.RUBY_CELL_PAD_EM).sp.toDp() } else 0.dp
     Column(
+        Modifier.padding(horizontal = rubyPad),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        if (showRuby) {
+        if (reserveRuby) {
             Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
-                if (!ruby.isNullOrBlank()) {
+                if (cell.hasRuby) {
                     Text(
-                        ruby,
+                        cell.ruby!!,
                         color = Wa2Colors.TextDim,
                         fontSize = 9.sp,
                         lineHeight = 10.sp,
@@ -567,16 +574,30 @@ private fun RubyCell(ruby: String?, base: String, showRuby: Boolean = true) {
         }
         Box(Modifier.height(baseBoxH)) {
             Text(
-                base,
-                color = Wa2Colors.Text,
-                fontSize = 16.sp,
-                lineHeight = 18.sp,
+                cell.base,
+                color = if (cell.echo) Wa2Colors.TextDim else Wa2Colors.Text,
+                fontSize = if (cell.echo) (size.value * 0.7f).sp else size,
+                lineHeight = (size.value + 2f).sp,
                 maxLines = 1,
                 softWrap = false,
                 style = TIGHT_JP_TEXT_STYLE,
-                modifier = Modifier.paddingFromBaseline(top = 17.sp, bottom = 5.sp),
+                modifier = Modifier.paddingFromBaseline(top = (size.value + 1f).sp, bottom = 5.sp),
             )
         }
+    }
+}
+
+/** Wrapping furigana line: [cells] in a FlowRow; each row keeps its own full ruby headroom. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RubyFlowRow(
+    cells: List<RubyFlow.Cell>,
+    size: TextUnit,
+    modifier: Modifier = Modifier,
+    reserveRuby: Boolean = cells.any { it.hasRuby },
+) {
+    FlowRow(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        cells.forEach { RubyFlowCell(it, size, reserveRuby) }
     }
 }
 
@@ -853,39 +874,13 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
     val shape = RoundedCornerShape(12.dp)
     val chunkRuby = if (c.alignment == SpanAlignment.UNALIGNED) emptyList() else RubyBuilder.sliceRuby(expl.ruby, c.span)
     val hasChunkRuby = chunkRuby.any { !it.ruby.isNullOrBlank() }
-    val topPad = if (hasChunkRuby) with(LocalDensity.current) { 13.sp.toDp() } else 0.dp
     Column(
         Modifier.fillMaxWidth().clip(shape).background(if (active) CARD_ACTIVE else CARD)
             .border(if (active) 2.dp else 1.dp, if (active) Wa2Colors.Accent else Wa2Colors.AccentDim.copy(alpha = 0.4f), shape)
             .clickable(onClick = onClick).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                Modifier.padding(top = topPad).size(24.dp).clip(CircleShape)
-                    .background(if (c.isEvolved) EVOLVED else Wa2Colors.Accent),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("${index + 1}", color = Wa2Colors.Night, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-            // The ruby line may shrink (fill = false) so a long chunk never pushes the reading / role tag
-            // off the card; the inner row fills the free space, keeping the tag right-aligned.
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RubyLine(chunkRuby, c.surface, 18.sp, Modifier.weight(1f, fill = false))
-                if (RubyBuilder.cleanReading(c.reading, c.surface) != null) {
-                    Text(
-                        c.reading,
-                        color = Wa2Colors.TextDim,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        style = TIGHT_JP_TEXT_STYLE,
-                        modifier = Modifier.padding(top = topPad).paddingFromBaseline(top = 19.sp, bottom = 5.sp),
-                    )
-                }
-            }
-            if (c.role.isNotBlank()) Tag(c.role, modifier = Modifier.padding(top = topPad))
-        }
+        ChunkHeader(index, c, chunkRuby, hasChunkRuby)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("📘 课本标准  ", color = TEXTBOOK, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Text(c.textbookForm, color = Wa2Colors.Text, fontSize = 15.sp, style = JP_TEXT_STYLE)
@@ -930,6 +925,89 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
     }
 }
 
+/**
+ * Chunk card header: `[index badge] [surface with furigana] [kana reading] [role pill]`.
+ *
+ * The badge and role pill keep their natural size and are centred on the first base row; the
+ * surface is a wrapping [RubyFlowRow] (never clipped mid-word); the reading sits beside the surface
+ * on its base line when both fit ([RubyFlow.readingBeside], measured), otherwise it flows onto its
+ * own wrapping line below the surface — so surface, furigana and reading never squeeze or overlap.
+ */
+@Composable
+private fun ChunkHeader(index: Int, c: SemanticChunk, chunkRuby: List<RubyToken>, hasChunkRuby: Boolean) {
+    val density = LocalDensity.current
+    val size = CHUNK_SURFACE_SIZE
+    val rubyBoxH = if (hasChunkRuby) with(density) { RUBY_BOX.toDp() } else 0.dp
+    val baseBoxH = with(density) { (size.value + 6f).sp.toDp() }
+    val reading = c.reading.takeIf { RubyBuilder.cleanReading(c.reading, c.surface) != null }
+    val measurer = rememberTextMeasurer()
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.padding(top = rubyBoxH).height(baseBoxH), contentAlignment = Alignment.Center) {
+            // requiredSize: stays a 24 dp circle (centred on the base row) even when a system
+            // fontScale < 1 makes the base row shorter than 24 dp.
+            Box(
+                Modifier.requiredSize(24.dp).clip(CircleShape).background(if (c.isEvolved) EVOLVED else Wa2Colors.Accent),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("${index + 1}", color = Wa2Colors.Night, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        BoxWithConstraints(Modifier.weight(1f)) {
+            val availPx = constraints.maxWidth.toFloat()
+            val sizePx = with(density) { size.toPx() }
+            val cells = remember(chunkRuby, c.surface, availPx, sizePx) {
+                RubyFlow.cells(chunkRuby, c.surface, maxEms = availPx / sizePx, rubyScale = 9f / size.value)
+            }
+            val beside = reading != null && remember(cells, reading, availPx, density) {
+                val baseStyle = TIGHT_JP_TEXT_STYLE.copy(fontSize = size)
+                val rubyStyle = TIGHT_JP_TEXT_STYLE.copy(fontSize = 9.sp)
+                val echoStyle = TIGHT_JP_TEXT_STYLE.copy(fontSize = (size.value * 0.7f).sp)
+                val padPx = with(density) { (size.value * RubyFlow.RUBY_CELL_PAD_EM).sp.toPx() }
+                val surfaceW = cells.sumOf { cell ->
+                    val base = measurer.measure(cell.base, if (cell.echo) echoStyle else baseStyle, softWrap = false, maxLines = 1).size.width.toFloat()
+                    val w = if (cell.hasRuby) {
+                        maxOf(base, measurer.measure(cell.ruby!!, rubyStyle, softWrap = false, maxLines = 1).size.width.toFloat()) + 2f * padPx
+                    } else {
+                        base
+                    }
+                    w.toDouble()
+                }.toFloat()
+                val readingW = measurer.measure(reading, TIGHT_JP_TEXT_STYLE.copy(fontSize = 12.sp), softWrap = false, maxLines = 1).size.width.toFloat()
+                // 2 dp slack for rounding: when in doubt the reading goes below rather than squeezing.
+                RubyFlow.readingBeside(surfaceW + with(density) { 2.dp.toPx() }, readingW, availPx, with(density) { 8.dp.toPx() })
+            }
+            if (beside) {
+                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // The surface may only wrap (FlowRow), never clip; the reading keeps its width.
+                    RubyFlowRow(cells, size, Modifier.weight(1f, fill = false), reserveRuby = hasChunkRuby)
+                    Text(
+                        reading!!,
+                        color = Wa2Colors.TextDim,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        style = TIGHT_JP_TEXT_STYLE,
+                        // Same baseline as the surface's base row.
+                        modifier = Modifier.padding(top = rubyBoxH).paddingFromBaseline(top = (size.value + 1f).sp, bottom = 5.sp),
+                    )
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    RubyFlowRow(cells, size, reserveRuby = hasChunkRuby)
+                    if (reading != null) {
+                        Text(reading, color = Wa2Colors.TextDim, fontSize = 12.sp, lineHeight = 16.sp, style = JP_TEXT_STYLE)
+                    }
+                }
+            }
+        }
+        if (c.role.isNotBlank()) {
+            Box(Modifier.padding(top = rubyBoxH).height(baseBoxH), contentAlignment = Alignment.Center) {
+                Tag(c.role, modifier = Modifier.widthIn(max = 96.dp))
+            }
+        }
+    }
+}
+
 /** Formality 1..5 pills (rough → formal). */
 @Composable
 private fun FormalityBar(level: Int) {
@@ -947,65 +1025,6 @@ private fun FormalityBar(level: Int) {
     }
 }
 
-/** Inline furigana line (non-interactive). */
-@Composable
-private fun RubyLine(tokens: List<RubyToken>, fallback: String, size: TextUnit, modifier: Modifier = Modifier) {
-    val density = LocalDensity.current
-    val rubyBoxH = with(density) { 13.sp.toDp() }
-    val baseTop = (size.value + 1f).sp
-    val baseBottom = 5.sp
-    val baseBoxH = with(density) { (size.value + 6f).sp.toDp() }
-    val lineH = (size.value + 2f).sp
-    if (tokens.none { !it.ruby.isNullOrBlank() }) {
-        Box(modifier.height(baseBoxH)) {
-            Text(
-                fallback,
-                color = Wa2Colors.Text,
-                fontSize = size,
-                lineHeight = lineH,
-                maxLines = 1,
-                softWrap = false,
-                style = TIGHT_JP_TEXT_STYLE,
-                modifier = Modifier.paddingFromBaseline(top = baseTop, bottom = baseBottom),
-            )
-        }
-        return
-    }
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        tokens.forEach { t ->
-            val r = t.ruby
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                Box(Modifier.height(rubyBoxH), contentAlignment = Alignment.BottomCenter) {
-                    if (!r.isNullOrBlank()) {
-                        Text(
-                            r,
-                            color = Wa2Colors.TextDim,
-                            fontSize = 9.sp,
-                            lineHeight = 10.sp,
-                            maxLines = 1,
-                            softWrap = false,
-                            style = TIGHT_JP_TEXT_STYLE,
-                            modifier = Modifier.paddingFromBaseline(top = 10.sp, bottom = 3.sp),
-                        )
-                    }
-                }
-                Box(Modifier.height(baseBoxH)) {
-                    Text(
-                        t.base,
-                        color = Wa2Colors.Text,
-                        fontSize = size,
-                        lineHeight = lineH,
-                        maxLines = 1,
-                        softWrap = false,
-                        style = TIGHT_JP_TEXT_STYLE,
-                        modifier = Modifier.paddingFromBaseline(top = baseTop, bottom = baseBottom),
-                    )
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
@@ -1016,17 +1035,15 @@ private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() 
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(
-                    if (RubyBuilder.cleanReading(v.lemmaReading, v.lemma) != null) "${v.lemma}【${v.lemmaReading}】" else v.lemma,
-                    color = Wa2Colors.Text,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    style = JP_TEXT_STYLE,
-                )
-                Tag(partOfSpeechLabel(v.partOfSpeech))
-                v.jlpt?.let { Tag(it, TEXTBOOK) }
-                v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
-                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE)
+                // Lemma and 【reading】 stay together when they fit; a long reading wraps below the
+                // lemma as a unit instead of breaking mid-word or crushing the badges / ☆ 收藏.
+                LemmaHead(v.lemma, v.lemmaReading, 15.sp, Modifier.align(Alignment.CenterVertically))
+                Tag(partOfSpeechLabel(v.partOfSpeech), modifier = Modifier.align(Alignment.CenterVertically))
+                v.jlpt?.let { Tag(it, TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
+                v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim, Modifier.align(Alignment.CenterVertically)) }
+                if (v.surface != v.lemma) {
+                    Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE, modifier = Modifier.align(Alignment.CenterVertically))
+                }
             }
             if (onToggleStar != null) {
                 StarButton(starred = starred, onClick = onToggleStar)
@@ -1035,6 +1052,19 @@ private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() 
         Text(v.meaning, color = Wa2Colors.Text, fontSize = 13.sp)
         v.conjugation?.let { Text("变形：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
         v.notes?.let { Text("注：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
+    }
+}
+
+/** `lemma【reading】` head of a vocab row: reading wraps below the lemma as a unit when narrow. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LemmaHead(lemma: String, reading: String, size: TextUnit, modifier: Modifier = Modifier) {
+    val clean = reading.takeIf { RubyBuilder.cleanReading(reading, lemma) != null }
+    FlowRow(modifier) {
+        Text(lemma, color = Wa2Colors.Text, fontSize = size, fontWeight = FontWeight.Medium, style = JP_TEXT_STYLE)
+        if (clean != null) {
+            Text("【$clean】", color = Wa2Colors.Text, fontSize = size, fontWeight = FontWeight.Medium, style = JP_TEXT_STYLE)
+        }
     }
 }
 
@@ -1048,17 +1078,23 @@ private fun VocabCard(v: VocabEntry, starred: Boolean = false, onToggleStar: (()
     ) { VocabRow(v, starred = starred, onToggleStar = onToggleStar) }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GrammarRow(g: GrammarPoint, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
+            // A long pattern wraps inside the weighted area; the JLPT badge flows after it (never
+            // squeezed to nothing) and ☆ 收藏 keeps its size.
+            FlowRow(
                 Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(g.pattern, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, style = JP_TEXT_STYLE)
-                g.jlpt?.let { Tag(it, TEXTBOOK) }
+                Text(
+                    g.pattern, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium, style = JP_TEXT_STYLE,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
+                g.jlpt?.let { Tag(it, TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
             }
             if (onToggleStar != null) {
                 StarButton(starred = starred, onClick = onToggleStar)

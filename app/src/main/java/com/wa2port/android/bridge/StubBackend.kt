@@ -107,6 +107,10 @@ class FallbackTextPainter(private val decoder: BilingualTextDecoder) : TextPaint
         return layout(text, lang, width(maxWidth, sizePx, maxChars), sizePx, Color.WHITE).height.toFloat()
     }
 
+    /** StaticLayout without font padding: baseline at `−ascent`; CJK ink spans ≈ baseline − 0.88 em … + 0.12 em. */
+    override fun glyphInkTop(sizePx: Float): Float =
+        (-paint(TextLang.JP, sizePx, Color.WHITE).fontMetrics.ascent - 0.88f * sizePx).coerceAtLeast(0f)
+
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
         maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Reflow,

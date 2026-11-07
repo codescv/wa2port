@@ -49,6 +49,7 @@ import com.wa2port.android.data.Settings
 import com.wa2port.android.data.WindowMode
 import com.wa2port.android.game.AiBreakdownOverlay
 import com.wa2port.android.game.GameSession
+import com.wa2port.android.game.NamePlate
 import com.wa2port.android.update.UpdateController
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
@@ -411,8 +412,8 @@ private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
             }.toInt()
             val textSp = spOfDp(em)
             val lineSp = spOfDp(em * MessageLayout.LINE_PITCH)
-            val nameH = MessageLayout.NAME_PX * s * t * 1.5f
-            val nameAbove = nameH * 0.55f
+            val nameH = MessageLayout.NAME_PX * s * t * NamePlate.PORTRAIT_TAB_EM
+            val nameAbove = nameH * NamePlate.OVERHANG
             val shape = RoundedCornerShape((14f * s).dp)
             Column(Modifier.fillMaxWidth()) {
                 Box(Modifier.fillMaxWidth()) {
@@ -442,7 +443,8 @@ private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
                     // Speaker name box overlapping the deck top, as in AdvWindow.
                     Box(
                         Modifier.padding(start = pad.dp).height(nameH.dp).clip(RoundedCornerShape((8f * s).dp))
-                            .background(Color(0xFF16284A)).padding(horizontal = pad.dp),
+                            .background(Color(0xFF16284A)).border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape((8f * s).dp))
+                            .padding(horizontal = pad.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(PREVIEW_NAME, color = Wa2Colors.Name, fontSize = spOfDp(MessageLayout.NAME_PX * s * t))

@@ -413,12 +413,20 @@ private fun NotebookVocabCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                val head = if (RubyBuilder.cleanReading(v.reading, v.lemma) != null) "${v.lemma}【${v.reading}】" else v.lemma
-                Text(head, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
-                if (v.partOfSpeech.isNotBlank()) NbTag(partOfSpeechLabel(v.partOfSpeech))
-                v.jlpt?.let { NbTag(it, NB_TEXTBOOK) }
-                v.pitchAccent?.let { NbTag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim) }
-                if (v.surface != v.lemma) Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 13.sp, style = NB_JP_STYLE)
+                // Lemma and 【reading】 stay together when they fit; a long reading wraps below the
+                // lemma as a unit instead of breaking mid-word or crushing the badges / ☆.
+                FlowRow(Modifier.align(Alignment.CenterVertically)) {
+                    Text(v.lemma, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
+                    if (RubyBuilder.cleanReading(v.reading, v.lemma) != null) {
+                        Text("【${v.reading}】", color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
+                    }
+                }
+                if (v.partOfSpeech.isNotBlank()) NbTag(partOfSpeechLabel(v.partOfSpeech), modifier = Modifier.align(Alignment.CenterVertically))
+                v.jlpt?.let { NbTag(it, NB_TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
+                v.pitchAccent?.let { NbTag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim, modifier = Modifier.align(Alignment.CenterVertically)) }
+                if (v.surface != v.lemma) {
+                    Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 13.sp, style = NB_JP_STYLE, modifier = Modifier.align(Alignment.CenterVertically))
+                }
             }
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
@@ -461,8 +469,11 @@ private fun NotebookGrammarCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(g.pattern, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
-                g.jlpt?.let { NbTag(it, NB_TEXTBOOK) }
+                Text(
+                    g.pattern, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
+                g.jlpt?.let { NbTag(it, NB_TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
             }
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
@@ -478,6 +489,7 @@ private fun NotebookGrammarCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NotebookSentenceCard(
     entry: NotebookSentenceEntry,
@@ -498,15 +510,25 @@ private fun NotebookSentenceCard(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val speaker = listOfNotNull(entry.speakerJp, entry.speakerCn?.takeIf { it != entry.speakerJp }).joinToString(" · ")
-            Text(
-                speaker.ifEmpty { "（旁白 / 内心独白）" },
-                color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name,
-                fontSize = 13.sp,
-                modifier = Modifier.weight(1f),
-            )
-            if (entry.scene > 0) NbTag(sceneLabel(entry.scene.toString()), Color(0x33FFFFFF), Wa2Colors.TextDim)
-            if (entry.vocabCount > 0 || entry.grammarCount > 0) {
-                NbTag("${entry.vocabCount} 词 · ${entry.grammarCount} 语法")
+            // Speaker + badges flow (wrap) in the weighted area so on 360 dp they never crush the
+            // speaker to zero width or push 🔊 原声 / ★ off the card.
+            FlowRow(
+                Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    speaker.ifEmpty { "（旁白 / 内心独白）" },
+                    color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name,
+                    fontSize = 13.sp,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
+                if (entry.scene > 0) {
+                    NbTag(sceneLabel(entry.scene.toString()), Color(0x33FFFFFF), Wa2Colors.TextDim, Modifier.align(Alignment.CenterVertically))
+                }
+                if (entry.vocabCount > 0 || entry.grammarCount > 0) {
+                    NbTag("${entry.vocabCount} 词 · ${entry.grammarCount} 语法", modifier = Modifier.align(Alignment.CenterVertically))
+                }
             }
             if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
@@ -627,13 +649,13 @@ private fun NbChip(
 }
 
 @Composable
-private fun NbTag(label: String, color: Color = Wa2Colors.AccentDim, textColor: Color = Wa2Colors.Text) {
+private fun NbTag(label: String, color: Color = Wa2Colors.AccentDim, textColor: Color = Wa2Colors.Text, modifier: Modifier = Modifier) {
     Text(
         label,
         color = textColor,
         fontSize = 11.sp,
         maxLines = 1,
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(6.dp))
             .background(color.copy(alpha = 0.35f))
             .padding(horizontal = 6.dp, vertical = 2.dp),

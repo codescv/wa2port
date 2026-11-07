@@ -18,6 +18,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -460,10 +461,6 @@ fun AdvWindow(
             Color(0xFF0A1428).copy(alpha = opacity), Offset(left, top), Size(right - left, bottom - top),
             CornerRadius(14f * stageScale),
         )
-        drawRoundRect(
-            Wa2Colors.AccentDim.copy(alpha = 0.6f * opacity + 0.2f), Offset(left, top), Size(right - left, bottom - top),
-            CornerRadius(14f * stageScale), style = Stroke(1.5f * stageScale),
-        )
         // Pin Line 0 origin unconditionally so spoken dialogue and narration never jump vertically.
         val textTop = DeckText.textTop(top, pad)
         // Rim pills `[✨ AI解读] [🔊 重听]` at the right end of the nameplate row (1 tap, no advance).
@@ -472,31 +469,40 @@ fun AdvWindow(
         val anchor = right - pad
         // Speaker name box: fitted left of the pills (short `解读` label / smaller glyphs only when needed).
         val allNames = nameBlocks(line, lang, scale)
-        var shortAi = false
-        if (allNames.isNotEmpty()) {
-            val fit = AdvPills.fitNameplate(
+        val fit = if (allNames.isEmpty()) {
+            null
+        } else {
+            AdvPills.fitNameplate(
                 left + pad, allNames.map { painter.glyphCount(it.rich) * it.size }, pad, stageScale, anchor, showAi, showVoice,
             )
-            shortAi = fit.shortAi
-            val k = fit.glyphScale
-            val names = allNames.take(fit.parts)
+        }
+        val pills = AdvPills.layout(anchor, top, textTop, stageScale, showAi, showVoice, fit?.shortAi ?: false, 48.dp.toPx(), size.width)
+        // Speaker name tab (see NamePlate): glyph ems centred in the tab (the painter's y is the line
+        // box top, glyphs sit glyphInkTop below it); tab fill + border drawn over the frame's top
+        // border, which is cut out under the tab and the rim pills so it never strikes the name.
+        val names = if (fit != null) allNames.take(fit.parts) else emptyList()
+        val k = fit?.glyphScale ?: 1f
+        val nameTab = if (names.isEmpty()) {
+            null
+        } else {
             val glyphW = names.sumOf { (painter.glyphCount(it.rich) * it.size).toDouble() }.toFloat()
-            val nh = NAME_PX * scale * 1.5f
             val nw = AdvPills.nameplateWidth(glyphW * k, names.size, pad, stageScale)
-            val ny = top - nh * 0.55f
-            drawRoundRect(Color(0xFF16284A).copy(alpha = 0.35f + 0.6f * opacity), Offset(left + pad, ny), Size(nw, nh), CornerRadius(8f * stageScale))
-            var nx = left + pad * 2
+            NamePlate.tab(left, top, textTop, pad, NAME_PX * scale, nw - pad * 2f, stageScale, portrait = frame != null)
+        }
+        drawFrameStroke(left, top, right, bottom, stageScale, opacity, listOfNotNull(nameTab, pills.aiPill, pills.voicePill))
+        if (nameTab != null) {
+            drawNameTab(nameTab, stageScale, opacity, opaque = frame != null)
+            var nx = nameTab.left + pad
             drawIntoCanvas { c ->
                 names.forEach { b ->
                     val sz = b.size * k
-                    val ty = ny + (nh - sz * 1.2f) / 2f
+                    val ty = NamePlate.drawY(nameTab, sz, painter.glyphInkTop(sz))
                     painter.draw(c.nativeCanvas, b.rich, b.lang, nx, ty, size.width, sz, b.color, Int.MAX_VALUE)
                     nx += painter.glyphCount(b.rich) * sz + AdvPills.NAME_PART_GAP * stageScale
                 }
             }
         }
-        val pills = AdvPills.layout(anchor, top, textTop, stageScale, showAi, showVoice, shortAi, 48.dp.toPx(), size.width)
-        drawRimPills(pills, stageScale, opacity)
+        drawRimPills(pills, stageScale, opacity, opaque = frame != null)
         state.aiRect = pills.aiTouch
         state.voiceRect = pills.voiceTouch
         val avail = DeckText.avail(bottom, pad, textTop)
@@ -659,16 +665,57 @@ private val PILL_LABEL_PAINT by lazy {
 /** Warm amber of the `✨ AI解读` pill (border + sparkle), complementing the blue `🔊 重听` accent. */
 private val AI_PILL_GOLD = Color(0xFFFFC870)
 
-/** Draws the rim pills of [pills] (see [AdvPills.layout]); touch targets are stored by the caller. */
-private fun DrawScope.drawRimPills(pills: AdvPills.Layout, stageScale: Float, opacity: Float) {
-    pills.aiPill?.let { drawAiPill(it, pills.aiLabel, stageScale, opacity) }
-    pills.voicePill?.let { drawVoicePill(it, stageScale, opacity) }
+/**
+ * The window / deck frame border with [holes] (nameplate tab, rim pills) cut out, so the border
+ * never strikes through the speaker name and the chrome drawn over it looks like one clean tab.
+ */
+private fun DrawScope.drawFrameStroke(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    stageScale: Float,
+    opacity: Float,
+    holes: List<Rect>,
+) {
+    fun clipped(i: Int) {
+        if (i == holes.size) {
+            drawRoundRect(
+                Wa2Colors.AccentDim.copy(alpha = 0.6f * opacity + 0.2f), Offset(left, top), Size(right - left, bottom - top),
+                CornerRadius(14f * stageScale), style = Stroke(1.5f * stageScale),
+            )
+            return
+        }
+        val h = holes[i]
+        clipRect(h.left, h.top, h.right, h.bottom, ClipOp.Difference) { clipped(i + 1) }
+    }
+    clipped(0)
+}
+
+/** Nameplate tab fill + border. Portrait ([opaque]) tabs sit on the dark deck gap and are fully opaque. */
+private fun DrawScope.drawNameTab(tab: Rect, stageScale: Float, opacity: Float, opaque: Boolean) {
+    val corner = CornerRadius(8f * stageScale)
+    val fillAlpha = if (opaque) 1f else 0.35f + 0.6f * opacity
+    drawRoundRect(Color(0xFF16284A).copy(alpha = fillAlpha), tab.topLeft, tab.size, corner)
+    drawRoundRect(
+        Wa2Colors.AccentDim.copy(alpha = 0.6f * opacity + 0.2f), tab.topLeft, tab.size, corner,
+        style = Stroke(1.2f * stageScale),
+    )
+}
+
+/**
+ * Draws the rim pills of [pills] (see [AdvPills.layout]); touch targets are stored by the caller.
+ * Portrait deck pills ([opaque]) are fully opaque over the cut-out deck border.
+ */
+private fun DrawScope.drawRimPills(pills: AdvPills.Layout, stageScale: Float, opacity: Float, opaque: Boolean = false) {
+    pills.aiPill?.let { drawAiPill(it, pills.aiLabel, stageScale, opacity, opaque) }
+    pills.voicePill?.let { drawVoicePill(it, stageScale, opacity, opaque) }
 }
 
 /** Pill background + border shared by both rim pills. */
-private fun DrawScope.drawPillShell(r: Rect, border: Color, stageScale: Float, opacity: Float) {
+private fun DrawScope.drawPillShell(r: Rect, border: Color, stageScale: Float, opacity: Float, opaque: Boolean = false) {
     val shape = CornerRadius(r.height / 2f)
-    drawRoundRect(Color(0xFF16284A).copy(alpha = 0.45f + 0.5f * opacity), r.topLeft, r.size, shape)
+    drawRoundRect(Color(0xFF16284A).copy(alpha = if (opaque) 1f else 0.45f + 0.5f * opacity), r.topLeft, r.size, shape)
     drawRoundRect(border.copy(alpha = 0.85f), r.topLeft, r.size, shape, style = Stroke(1.5f * stageScale))
 }
 
@@ -691,8 +738,8 @@ private fun DrawScope.drawPillLabel(label: String, x: Float, maxRight: Float, cy
  * Draws the `🔊 重听` pill into [r] (straddling the window top edge like the name box; bounds and
  * touch target from [AdvPills.layout]).
  */
-private fun DrawScope.drawVoicePill(r: Rect, stageScale: Float, opacity: Float) {
-    drawPillShell(r, Wa2Colors.Accent, stageScale, opacity)
+private fun DrawScope.drawVoicePill(r: Rect, stageScale: Float, opacity: Float, opaque: Boolean = false) {
+    drawPillShell(r, Wa2Colors.Accent, stageScale, opacity, opaque)
     // Speaker icon: body + cone + two sound waves.
     val cy = r.center.y
     val ix = r.left + 14f * stageScale
@@ -729,8 +776,8 @@ private fun sparklePath(cx: Float, cy: Float, radius: Float): Path = Path().appl
  * font differences across ROMs) and the system-font [label] (`AI解读`, or `解读` next to a long
  * nameplate on narrow screens).
  */
-private fun DrawScope.drawAiPill(r: Rect, label: String, stageScale: Float, opacity: Float) {
-    drawPillShell(r, AI_PILL_GOLD, stageScale, opacity)
+private fun DrawScope.drawAiPill(r: Rect, label: String, stageScale: Float, opacity: Float, opaque: Boolean = false) {
+    drawPillShell(r, AI_PILL_GOLD, stageScale, opacity, opaque)
     val cy = r.center.y
     val cx = r.left + 17f * stageScale
     drawPath(sparklePath(cx, cy + 1.5f * stageScale, 8.5f * stageScale), AI_PILL_GOLD)
@@ -961,10 +1008,14 @@ private fun DrawScope.drawNovelDeck(
         Color(0xFF0A1428).copy(alpha = opacity), Offset(frame.left, frame.top), Size(frame.width, frame.height),
         CornerRadius(14f * stageScale),
     )
-    drawRoundRect(
-        Wa2Colors.AccentDim.copy(alpha = 0.6f * opacity + 0.2f), Offset(frame.left, frame.top), Size(frame.width, frame.height),
-        CornerRadius(14f * stageScale), style = Stroke(1.5f * stageScale),
+    // `[✨ AI解读] [🔊 重听]` on the frame top for the newest line (the quick bar never adds 🔊 in
+    // portrait); the deck border is cut out under them.
+    val pills = AdvPills.layout(
+        frame.right - pad, frame.top, textTop, stageScale,
+        showAi = AdvPills.showsAi(lastLine.jp.isEmpty), showVoice = lastLine.ref.voice != null, shortAi = false,
+        minPx = 48.dp.toPx(), canvasWidth = size.width,
     )
+    drawFrameStroke(frame.left, frame.top, frame.right, frame.bottom, stageScale, opacity, listOfNotNull(pills.aiPill, pills.voicePill))
     val paragraphs = shown.mapIndexed { i, l ->
         val last = i == shown.lastIndex
         deck.paragraph(l, if (last) visibleJp else Int.MAX_VALUE, if (last) visibleCn else Int.MAX_VALUE)
@@ -1014,13 +1065,7 @@ private fun DrawScope.drawNovelDeck(
     if (maxScroll > 0.5f) {
         drawAdvScrollbar(frame.right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
     }
-    // `[✨ AI解读] [🔊 重听]` on the frame top for the newest line (the quick bar never adds 🔊 in portrait).
-    val pills = AdvPills.layout(
-        frame.right - pad, frame.top, textTop, stageScale,
-        showAi = AdvPills.showsAi(lastLine.jp.isEmpty), showVoice = lastLine.ref.voice != null, shortAi = false,
-        minPx = 48.dp.toPx(), canvasWidth = size.width,
-    )
-    drawRimPills(pills, stageScale, opacity)
+    drawRimPills(pills, stageScale, opacity, opaque = true)
     hitBox?.aiRect = pills.aiTouch
     hitBox?.voiceRect = pills.voiceTouch
     if (waiting) drawWaitMark(frame.right - pad * 0.45f, DeckText.waitMarkY(y, 10.dp.toPx(), frame.bottom, pad), 6.5f * stageScale, blink)

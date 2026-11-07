@@ -52,6 +52,8 @@ class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
         visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
     ): Float = layout(rich, lang, maxWidth, sizePx, maxChars, reflow).revealedHeight(visibleGlyphs)
 
+    override fun glyphInkTop(sizePx: Float): Float = sizePx * (glyphs.lineSpacing - 1f).coerceAtLeast(0f)
+
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
         maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
