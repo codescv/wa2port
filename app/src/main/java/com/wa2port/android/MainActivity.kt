@@ -45,7 +45,7 @@ import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.Wa2Theme
 import com.wa2port.android.ui.rememberScreenInsets
 
-/** Single activity: landscape by default (portrait / auto via [OrientationMode]), immersive full-screen, Compose UI. */
+/** Single activity: portrait by default (landscape / auto via [OrientationMode]), immersive full-screen, Compose UI. */
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels()
 

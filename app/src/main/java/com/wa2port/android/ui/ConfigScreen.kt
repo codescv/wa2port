@@ -203,7 +203,7 @@ fun ConfigPanel(
                         )
                     }
                     Text(
-                        "竖屏：画面保持 16:9，台词显示在下方阅读区",
+                        "竖屏（默认）：画面保持 16:9，台词显示在下方阅读区",
                         color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                     )
                     OptionRow("显示语言 Language") {

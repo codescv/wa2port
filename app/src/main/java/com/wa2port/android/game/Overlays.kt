@@ -329,7 +329,7 @@ fun GameMenu(
                 }
             }
 
-            // Screen orientation (横屏 / 竖屏 / 自动).
+            // Screen orientation (竖屏 default / 横屏 / 自动).
             Segmented(
                 options = OrientationMode.entries.map { it to it.label },
                 selected = settings.orientation,

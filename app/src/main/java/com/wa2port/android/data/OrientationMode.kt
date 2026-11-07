@@ -10,8 +10,9 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class OrientationMode(val label: String) {
-    LANDSCAPE("横屏"),
+    /** Default (matches the manifest's `android:screenOrientation="portrait"`). Listed first so the 竖屏 | 横屏 | 自动 controls start with it. */
     PORTRAIT("竖屏"),
+    LANDSCAPE("横屏"),
     AUTO("自动"),
     ;
 
@@ -24,13 +25,13 @@ enum class OrientationMode(val label: String) {
 
     companion object {
         /**
-         * LANDSCAPE → `SCREEN_ORIENTATION_SENSOR_LANDSCAPE` (6, = the manifest default), PORTRAIT →
-         * `SCREEN_ORIENTATION_PORTRAIT` (1), AUTO → `SCREEN_ORIENTATION_FULL_USER` (13, honours the
-         * system rotation lock).
+         * PORTRAIT → `SCREEN_ORIENTATION_PORTRAIT` (1, = the manifest default), LANDSCAPE →
+         * `SCREEN_ORIENTATION_SENSOR_LANDSCAPE` (6), AUTO → `SCREEN_ORIENTATION_FULL_USER` (13, honours
+         * the system rotation lock).
          */
         fun activityOrientationFor(mode: OrientationMode): Int = when (mode) {
-            LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             AUTO -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         }
     }

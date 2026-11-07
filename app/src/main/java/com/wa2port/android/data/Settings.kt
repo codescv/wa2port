@@ -6,6 +6,9 @@ import com.wa2port.core.text.TextScale
 import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 /** Which language(s) the message window, choices and backlog show. Toggled at runtime (中/日/双). */
@@ -79,8 +82,15 @@ data class Settings(
     val aiPrefetchDailyLimit: Int = 300,
     /** Locally configured Agent feedback email address (stored on device only; default empty). */
     val agentFeedbackEmail: String = "",
-    /** Requested screen orientation (横屏 default = unchanged for upgrades; 竖屏 / 自动 opt-in). */
-    val orientation: OrientationMode = OrientationMode.LANDSCAPE,
+    /** Requested screen orientation (竖屏 default since v1.4.13, = the manifest; 横屏 / 自动 opt-in). */
+    val orientation: OrientationMode = OrientationMode.PORTRAIT,
+    /**
+     * One-time v1.4.13 upgrade marker. Files written by v1.4.8..v1.4.12 lack this key but carry
+     * `"orientation":"LANDSCAPE"` only because the old default was encoded ([SettingsStore] uses
+     * `encodeDefaults`); [SettingsStore.load] flips that once to [OrientationMode.PORTRAIT] and saves
+     * `true`, so an explicit 横屏 chosen afterwards sticks.
+     */
+    val portraitDefaultMigrated: Boolean = true,
 ) {
     val instantText: Boolean get() = textSpeed >= TEXT_SPEED_INSTANT
 
@@ -103,12 +113,27 @@ class SettingsStore(private val file: File) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun load(): Settings = runCatching {
-        val loaded = json.decodeFromString<Settings>(file.readText())
-        loaded.copy(
+        val raw = file.readText()
+        val obj = json.parseToJsonElement(raw).jsonObject
+        val loaded = json.decodeFromString<Settings>(raw)
+        val normalized = loaded.copy(
             ai = loaded.ai.withNormalizedModel(),
             agentFeedbackEmail = AgentFeedbackHelper.normalizeEmail(loaded.agentFeedbackEmail),
         )
+        val migrated = obj["portraitDefaultMigrated"]?.jsonPrimitive?.booleanOrNull == true
+        if (migrated) {
+            normalized
+        } else {
+            // <= v1.4.12 file: a stored LANDSCAPE is the old encoded default → switch once to the new
+            // PORTRAIT default; an explicit PORTRAIT / AUTO is kept. Persist the marker right away.
+            migrateOrientation(normalized).also { save(it) }
+        }
     }.getOrDefault(Settings())
+
+    private fun migrateOrientation(s: Settings): Settings = s.copy(
+        orientation = if (s.orientation == OrientationMode.LANDSCAPE) OrientationMode.PORTRAIT else s.orientation,
+        portraitDefaultMigrated = true,
+    )
 
     fun save(settings: Settings) {
         runCatching {
