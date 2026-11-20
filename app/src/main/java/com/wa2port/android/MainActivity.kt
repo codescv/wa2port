@@ -18,6 +18,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,6 +34,7 @@ import com.wa2port.android.game.GameScreen
 import com.wa2port.android.ui.AssetSetupScreen
 import com.wa2port.android.ui.BgmGalleryScreen
 import com.wa2port.android.ui.CgGalleryScreen
+import com.wa2port.android.ui.CloudSyncConflictOverlay
 import com.wa2port.android.ui.ConfigCategory
 import com.wa2port.android.ui.ConfigScreen
 import com.wa2port.android.ui.LocalCompact
@@ -44,6 +48,7 @@ import com.wa2port.android.ui.TitleScreen
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.Wa2Theme
 import com.wa2port.android.ui.rememberScreenInsets
+import kotlinx.coroutines.launch
 
 /** Single activity: portrait by default (landscape / auto via [OrientationMode]), immersive full-screen, Compose UI. */
 class MainActivity : ComponentActivity() {
@@ -74,6 +79,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         vm.update.onHostResume(this)
+        vm.onHostResume()
     }
 
     @Deprecated("Deprecated in Java")
@@ -115,6 +121,8 @@ fun Wa2App(vm: AppViewModel) {
 
 @Composable
 private fun Wa2Routes(vm: AppViewModel) {
+    val syncState by vm.cloudSync.uiState.collectAsState()
+    val scope = rememberCoroutineScope()
     Box(Modifier.fillMaxSize()) {
         when (vm.screen) {
             Screen.Title -> TitleScreen(vm, onNotebook = { vm.ai.openNotebook(null) })
@@ -128,6 +136,7 @@ private fun Wa2Routes(vm: AppViewModel) {
                 onClose = { vm.back() },
                 ai = vm.ai,
                 update = vm.update,
+                cloudSync = vm.cloudSync,
                 initialCategory = vm.initialConfigCategory,
             )
             Screen.Assets -> AssetSetupScreen(vm)
@@ -137,6 +146,8 @@ private fun Wa2Routes(vm: AppViewModel) {
                 lang = vm.settings.lang,
                 onPick = { slot -> vm.loadGame(slot) },
                 onClose = { vm.back() },
+                refreshKey = vm.savesRevision,
+                onMutated = vm::notifyLocalSavesMutated,
             )
             Screen.Gallery -> CgGalleryScreen(vm = vm, onClose = { vm.back() })
             Screen.BgmGallery -> BgmGalleryScreen(vm = vm, onClose = { vm.back() })
@@ -177,6 +188,21 @@ private fun Wa2Routes(vm: AppViewModel) {
                     vm.screen != Screen.Title -> vm.back()
                 }
             }
+        }
+
+        if (syncState.pendingConflicts.isNotEmpty()) {
+            CloudSyncConflictOverlay(
+                conflicts = syncState.pendingConflicts,
+                isResolving = syncState.isResolvingConflict,
+                error = syncState.lastError,
+                onChoose = { conflict, choice ->
+                    scope.launch { vm.cloudSync.resolveConflict(conflict, choice) }
+                },
+                onChooseAll = { choice ->
+                    scope.launch { vm.cloudSync.resolveAllConflicts(choice) }
+                },
+                onDismiss = { vm.cloudSync.dismissConflicts() },
+            )
         }
 
         vm.busy?.let {

@@ -7,6 +7,9 @@ import android.util.Base64
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.wa2port.core.engine.SaveData
+import com.wa2port.core.sync.CloudSyncSchema
+import com.wa2port.core.sync.LocksCodec
+import com.wa2port.core.sync.LocksDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -48,7 +51,7 @@ class SaveStore(private val dir: File) {
     /** True when user slot [slot] (`>= 0`) is locked against overwriting and deletion. */
     fun isLocked(slot: Int): Boolean = slot >= 0 && lockFile(slot).isFile
 
-    /** Locks or unlocks user slot [slot] (`>= 0`) via its `.lock` sidecar file. */
+    /** Locks or unlocks user slot [slot] (`>= 0`) via its `.lock` sidecar file and updates `locks.json`. */
     fun setLocked(slot: Int, locked: Boolean) {
         if (slot < 0) return
         val f = lockFile(slot)
@@ -56,6 +59,21 @@ class SaveStore(private val dir: File) {
             runCatching { f.writeText("1") }
         } else {
             f.delete()
+        }
+        persistLocksManifest()
+    }
+
+    /** Sorted list of currently locked user slots (`0..SLOT_COUNT`). */
+    fun lockedSlots(): List<Int> = (QUICK_SLOT..SLOT_COUNT).filter { isLocked(it) }
+
+    private fun persistLocksManifest() {
+        runCatching {
+            val doc = LocksDocument(
+                version = 1,
+                updatedAtMs = System.currentTimeMillis(),
+                lockedSlots = lockedSlots(),
+            )
+            writeAtomic(File(dir, CloudSyncSchema.LOCKS_FILE_NAME), LocksCodec.encode(doc))
         }
     }
 
@@ -131,7 +149,7 @@ class SaveStore(private val dir: File) {
         const val AUTO_SLOT = -1
         /** Reserved load-undo slot (`undo.json`); excluded from the grid and from 「继续」. */
         const val UNDO_SLOT = -2
-        const val SLOT_COUNT = 24
+        const val SLOT_COUNT = CloudSyncSchema.MAX_USER_SLOT
         private const val QUICK_PREV_NAME = "quick.prev.json"
 
         /** Slots shown in the Load grid / considered for 「继续」, in display order. */

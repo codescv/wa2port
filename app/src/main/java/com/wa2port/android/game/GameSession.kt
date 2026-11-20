@@ -49,6 +49,7 @@ class GameSession(
     private val saves: SaveStore,
     private val systemFile: File,
     private val ioScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+    private val onSaveCompleted: (isAutoSave: Boolean) -> Unit = {},
     private val settings: () -> Settings,
 ) {
     val audio: AudioSink = backend.createAudio()
@@ -374,11 +375,13 @@ class GameSession(
         val thumb = thumbnailB64 ?: SaveStore.encodeThumbnail(stageHandle?.captureThumbnail())
         val data = engine.save(thumb)
         val system = engine.system.toJson()
-        return runCatching {
+        val ok = runCatching {
             if (!saves.write(slot, data)) return@runCatching false
             writeSystem(system)
             true
         }.getOrDefault(false)
+        if (ok) runCatching { onSaveCompleted(false) }
+        return ok
     }
 
     /**
@@ -448,10 +451,11 @@ class GameSession(
         val bitmap = if (captureThumb) runCatching { stageHandle?.captureThumbnail() }.getOrNull() else null
         val data = runCatching { engine.save(null) }.getOrNull() ?: return null
         return ioScope.launch {
-            runCatching {
+            val saved = runCatching {
                 val thumb = bitmap?.let { withContext(Dispatchers.Default) { SaveStore.encodeThumbnail(it) } }
                 saves.write(SaveStore.AUTO_SLOT, if (thumb != null) data.copy(thumbnail = thumb) else data)
-            }
+            }.getOrDefault(false)
+            if (saved) runCatching { onSaveCompleted(true) }
         }
     }
 

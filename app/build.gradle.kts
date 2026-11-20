@@ -1,9 +1,26 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
+
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.isFile) {
+        file.inputStream().use { load(it) }
+    }
+}
+
+fun buildConfigString(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+
+val gdriveClientSecret: String =
+    localProps.getProperty("wa2.gdrive.clientSecret")?.takeIf { it.isNotBlank() }
+        ?: System.getenv("WA2_GDRIVE_CLIENT_SECRET")?.takeIf { it.isNotBlank() }
+        ?: ""
 
 android {
     namespace = "com.wa2port.android"
@@ -19,6 +36,16 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+        buildConfigField(
+            "String",
+            "DEFAULT_GDRIVE_CLIENT_ID",
+            buildConfigString("304560912778-r98sabc8lhet5jlrt0tpgrpqkdigc0vl.apps.googleusercontent.com"),
+        )
+        buildConfigField(
+            "String",
+            "DEFAULT_GDRIVE_CLIENT_SECRET",
+            buildConfigString(gdriveClientSecret),
+        )
     }
 
     val keystorePath = System.getenv("WA2_KEYSTORE_PATH")?.takeIf { it.isNotBlank() && file(it).isFile }
@@ -57,6 +84,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module")

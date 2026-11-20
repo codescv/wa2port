@@ -483,16 +483,32 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             Overlay.SAVE -> {
                 val thumb = remember { SaveStore.encodeThumbnail(handle.captureThumbnail()) }
                 Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-                    SaveLoadPanel(SaveLoadMode.SAVE, vm.saves, settings.lang, onPick = { slot ->
-                        session.toast = if (session.saveTo(slot, thumb)) "已保存 Saved" else "存档失败 Save failed"
-                    }, onClose = { session.overlay = Overlay.NONE })
+                    SaveLoadPanel(
+                        mode = SaveLoadMode.SAVE,
+                        store = vm.saves,
+                        lang = settings.lang,
+                        onPick = { slot ->
+                            session.toast = if (session.saveTo(slot, thumb)) "已保存 Saved" else "存档失败 Save failed"
+                        },
+                        onClose = { session.overlay = Overlay.NONE },
+                        refreshKey = vm.savesRevision,
+                        onMutated = vm::notifyLocalSavesMutated,
+                    )
                 }
             }
             Overlay.LOAD -> Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-                SaveLoadPanel(SaveLoadMode.LOAD, vm.saves, settings.lang, onPick = { slot ->
-                    // Success shows the 「已读取存档 · 撤销 Undo」 pill (plain toast when nothing to undo).
-                    if (!session.loadFrom(slot)) session.toast = "读档失败 Load failed" else if (session.undoAction == null) session.toast = "已读取 Loaded"
-                }, onClose = { session.overlay = Overlay.NONE })
+                SaveLoadPanel(
+                    mode = SaveLoadMode.LOAD,
+                    store = vm.saves,
+                    lang = settings.lang,
+                    onPick = { slot ->
+                        // Success shows the 「已读取存档 · 撤销 Undo」 pill (plain toast when nothing to undo).
+                        if (!session.loadFrom(slot)) session.toast = "读档失败 Load failed" else if (session.undoAction == null) session.toast = "已读取 Loaded"
+                    },
+                    onClose = { session.overlay = Overlay.NONE },
+                    refreshKey = vm.savesRevision,
+                    onMutated = vm::notifyLocalSavesMutated,
+                )
             }
             Overlay.CONFIG -> Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
                 ConfigPanel(
@@ -501,6 +517,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     onClose = { session.overlay = Overlay.NONE },
                     ai = vm.ai,
                     session = session,
+                    cloudSync = vm.cloudSync,
                     appVersion = vm.update.currentVersion,
                 )
             }

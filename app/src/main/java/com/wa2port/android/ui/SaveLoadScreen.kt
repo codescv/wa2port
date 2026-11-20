@@ -48,26 +48,42 @@ enum class SaveLoadMode { SAVE, LOAD }
 
 /** Full-screen Save/Load (title → Load). */
 @Composable
-fun SaveLoadScreen(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPick: suspend (Int) -> Unit, onClose: () -> Unit) {
+fun SaveLoadScreen(
+    mode: SaveLoadMode,
+    store: SaveStore,
+    lang: DisplayLang,
+    onPick: suspend (Int) -> Unit,
+    onClose: () -> Unit,
+    refreshKey: Int = 0,
+    onMutated: () -> Unit = {},
+) {
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-        SaveLoadPanel(mode, store, lang, onPick, onClose)
+        SaveLoadPanel(mode, store, lang, onPick, onClose, refreshKey = refreshKey, onMutated = onMutated)
     }
 }
 
 /**
- * Grid of the quick slot + 24 slots with thumbnail, timestamp, scene and preview text. LOAD also
+ * Grid of the quick slot + 36 slots with thumbnail, timestamp, scene and preview text. LOAD also
  * shows the autosave (`自动 AUTO`) first; SAVE never offers it (autosave is automatic).
  * Compact ([LocalCompact]): 150 dp cells, 16 dp side padding, no `返回游戏` pill (✕ remains).
  */
 @Composable
-fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPick: suspend (Int) -> Unit, onClose: () -> Unit) {
+fun SaveLoadPanel(
+    mode: SaveLoadMode,
+    store: SaveStore,
+    lang: DisplayLang,
+    onPick: suspend (Int) -> Unit,
+    onClose: () -> Unit,
+    refreshKey: Int = 0,
+    onMutated: () -> Unit = {},
+) {
     var metas by remember { mutableStateOf<Map<Int, SlotMeta>>(emptyMap()) }
     var reload by remember { mutableIntStateOf(0) }
     var confirmSlot by remember { mutableStateOf<Int?>(null) }
     var deleteConfirmSlot by remember { mutableStateOf<Int?>(null) }
     var lastSavedSlot by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(reload) { metas = store.listMeta() }
+    LaunchedEffect(reload, refreshKey) { metas = store.listMeta() }
 
     fun pick(slot: Int) {
         scope.launch {
@@ -124,6 +140,7 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
                         {
                             store.setLocked(slot, !locked)
                             reload++
+                            onMutated()
                         }
                     } else null,
                     onDelete = if (meta != null && slot >= 0 && !locked) {
@@ -156,6 +173,7 @@ fun SaveLoadPanel(mode: SaveLoadMode, store: SaveStore, lang: DisplayLang, onPic
                             store.delete(target)
                             if (lastSavedSlot == target) lastSavedSlot = null
                             reload++
+                            onMutated()
                         }
                     },
                 ) { Text("删除 Delete", color = Color(0xFFFF8A80)) }

@@ -50,6 +50,7 @@ import com.wa2port.android.data.WindowMode
 import com.wa2port.android.game.AiBreakdownOverlay
 import com.wa2port.android.game.GameSession
 import com.wa2port.android.game.NamePlate
+import com.wa2port.android.sync.CloudSyncManager
 import com.wa2port.android.update.UpdateController
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
@@ -66,10 +67,19 @@ fun ConfigScreen(
     onClose: () -> Unit,
     ai: AiLearningController? = null,
     update: UpdateController? = null,
+    cloudSync: CloudSyncManager? = null,
     initialCategory: ConfigCategory = ConfigCategory.ALL,
 ) {
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
-        ConfigPanel(settings, onChange, onClose, ai, update = update, initialCategory = initialCategory)
+        ConfigPanel(
+            settings = settings,
+            onChange = onChange,
+            onClose = onClose,
+            ai = ai,
+            update = update,
+            cloudSync = cloudSync,
+            initialCategory = initialCategory,
+        )
         ai?.breakdown?.let { st ->
             AiBreakdownOverlay(
                 state = st,
@@ -89,6 +99,7 @@ enum class ConfigCategory(val label: String) {
     ALL("全部 All"),
     TEXT_DISPLAY("文字与显示 Text & Display"),
     AUDIO("音频 Audio"),
+    CLOUD_SYNC("☁ 云端同步 Cloud Sync"),
     AI("✨ AI 学习"),
     UPDATE("版本与反馈 Update"),
 }
@@ -114,14 +125,16 @@ fun ConfigPanel(
     ai: AiLearningController? = null,
     session: GameSession? = null,
     update: UpdateController? = null,
+    cloudSync: CloudSyncManager? = null,
     appVersion: String = update?.currentVersion ?: AgentFeedbackHelper.DEFAULT_APP_VERSION,
     initialCategory: ConfigCategory = ConfigCategory.ALL,
 ) {
-    val tabs = remember(ai != null) {
+    val tabs = remember(ai != null, cloudSync != null) {
         buildList {
             add(ConfigCategory.ALL)
             add(ConfigCategory.TEXT_DISPLAY)
             add(ConfigCategory.AUDIO)
+            if (cloudSync != null) add(ConfigCategory.CLOUD_SYNC)
             if (ai != null) add(ConfigCategory.AI)
             add(ConfigCategory.UPDATE)
         }
@@ -233,6 +246,9 @@ fun ConfigPanel(
                     LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
                 }
 
+                if (cloudSync != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.CLOUD_SYNC)) {
+                    CloudSyncSettingsSection(settings, onChange, cloudSync)
+                }
                 if (ai != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AI)) {
                     AiSettingsSection(settings, onChange, ai, session)
                 }

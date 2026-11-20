@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -22,11 +23,14 @@ import com.wa2port.android.data.Settings
 import com.wa2port.android.data.SlotMeta
 import com.wa2port.android.data.SettingsStore
 import com.wa2port.android.game.GameSession
+import com.wa2port.android.sync.AndroidKeystoreSyncSecretStore
+import com.wa2port.android.sync.CloudSyncManager
 import com.wa2port.android.ui.ConfigCategory
 import com.wa2port.android.update.UpdateController
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.SystemData
 import com.wa2port.core.engine.Wa2Engine
+import com.wa2port.core.sync.SystemDataMerger
 import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,13 +93,64 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** In-app update check / APK download (manual only); APKs live in `cacheDir/updates`. */
     val update = UpdateController(app, viewModelScope)
 
-    /** Newest resumable save (auto / quick / 1..24, never undo) for the title 「继续 Continue」. */
+    /** Incremented whenever cloud sync updates local saves or locks so SaveLoadScreen refreshes. */
+    var savesRevision by mutableIntStateOf(0)
+        private set
+
+    /** Google Drive Cloud Save Sync manager (OAuth 2.0 PKCE + Drive REST v3 + conflict queue). */
+    val cloudSync = CloudSyncManager(
+        secretStore = AndroidKeystoreSyncSecretStore(app),
+        isAutoSyncEnabled = { settings.cloudSyncAutoEnabled },
+        filesDir = app.filesDir,
+        scope = viewModelScope,
+        defaultClientId = BuildConfig.DEFAULT_GDRIVE_CLIENT_ID,
+        defaultClientSecret = BuildConfig.DEFAULT_GDRIVE_CLIENT_SECRET,
+        onLocalDataUpdated = { systemChanged, savesChanged ->
+            handleCloudDataUpdated(systemChanged, savesChanged)
+        },
+    )
+
+    /** Newest resumable save (auto / quick / 1..36, never undo) for the title 「继续 Continue」. */
     var latestContinuable by mutableStateOf<SlotMeta?>(null)
         private set
 
     init {
         rescanAssets()
         refreshContinuable()
+        cloudSync.triggerAutoSync(reason = "launch", debounce = false)
+    }
+
+    /** Called from `MainActivity.onResume()` to trigger debounced foreground cloud sync. */
+    fun onHostResume() {
+        cloudSync.triggerAutoSync(reason = "resume", debounce = true)
+    }
+
+    /** Called when local saves/locks were edited (e.g. delete or lock toggle in SaveLoadScreen). */
+    fun notifyLocalSavesMutated() {
+        refreshContinuable()
+        cloudSync.triggerAutoSync(reason = "local_edit", debounce = true)
+    }
+
+    private fun handleCloudDataUpdated(systemChanged: Boolean, savesChanged: Boolean) {
+        viewModelScope.launch(Dispatchers.Main) {
+            if (systemChanged) {
+                reloadSystemDataSafely()
+            }
+            if (savesChanged) {
+                savesRevision++
+                refreshContinuable()
+            }
+        }
+    }
+
+    /** Safely merges updated `system.json` from disk into the live engine without losing in-memory progress. */
+    private suspend fun reloadSystemDataSafely() {
+        val eng = engine ?: return
+        val diskText = withContext(Dispatchers.IO) {
+            if (systemFile.isFile) runCatching { systemFile.readText() }.getOrNull() else null
+        } ?: return
+        val merged = SystemDataMerger.mergeJson(eng.system.toJson(), diskText) ?: diskText
+        runCatching { eng.system.loadJson(merged) }
     }
 
     /** Re-reads [latestContinuable], after [after] (e.g. a pending autosave write) has finished. */
@@ -238,7 +293,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         ai.close(session)
         session?.dispose()
-        val s = GameSession(e, backend!!, saves, systemFile, viewModelScope) { settings }
+        val s = GameSession(
+            engine = e,
+            backend = backend!!,
+            saves = saves,
+            systemFile = systemFile,
+            ioScope = viewModelScope,
+            onSaveCompleted = { isAuto ->
+                cloudSync.triggerAutoSync(
+                    reason = if (isAuto) "autosave" else "save",
+                    debounce = isAuto,
+                )
+            },
+            settings = { settings },
+        )
         s.audio.setVolumes(settings.bgmVolume / 100f, settings.seVolume / 100f, settings.voiceVolume / 100f)
         session = s
         return s
@@ -348,6 +416,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        cloudSync.cancelSignIn()
         update.cancelDownload()
         ai.packs.close()
         closeEngine()

@@ -82,6 +82,8 @@ data class Settings(
     val aiPrefetchDailyLimit: Int = 300,
     /** Locally configured Agent feedback email address (stored on device only; default empty). */
     val agentFeedbackEmail: String = "",
+    /** Google Drive cloud save auto-sync (default ON when signed in). */
+    val cloudSyncAutoEnabled: Boolean = true,
     /** Requested screen orientation (竖屏 default since v1.4.13, = the manifest; 横屏 / 自动 opt-in). */
     val orientation: OrientationMode = OrientationMode.PORTRAIT,
     /**
