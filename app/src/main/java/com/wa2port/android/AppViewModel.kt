@@ -97,14 +97,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var savesRevision by mutableIntStateOf(0)
         private set
 
-    /** Google Drive Cloud Save Sync manager (OAuth 2.0 PKCE + Drive REST v3 + conflict queue). */
+    /** Google Drive Cloud Save Sync manager (Android OAuth 2.0 PKCE + Drive REST v3 + conflict queue). */
     val cloudSync = CloudSyncManager(
         secretStore = AndroidKeystoreSyncSecretStore(app),
         isAutoSyncEnabled = { settings.cloudSyncAutoEnabled },
         filesDir = app.filesDir,
         scope = viewModelScope,
         defaultClientId = BuildConfig.DEFAULT_GDRIVE_CLIENT_ID,
-        defaultClientSecret = BuildConfig.DEFAULT_GDRIVE_CLIENT_SECRET,
         onLocalDataUpdated = { systemChanged, savesChanged ->
             handleCloudDataUpdated(systemChanged, savesChanged)
         },
@@ -120,8 +119,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cloudSync.triggerAutoSync(reason = "launch", debounce = false)
     }
 
-    /** Called from `MainActivity.onResume()` to trigger debounced foreground cloud sync. */
+    /** Called from `MainActivity.onResume()` to cancel abandoned browser sign-ins and trigger foreground sync. */
     fun onHostResume() {
+        cloudSync.onHostResume()
         cloudSync.triggerAutoSync(reason = "resume", debounce = true)
     }
 

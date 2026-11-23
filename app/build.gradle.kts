@@ -1,5 +1,3 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,20 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val localProps = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.isFile) {
-        file.inputStream().use { load(it) }
-    }
-}
-
 fun buildConfigString(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
-
-val gdriveClientSecret: String =
-    localProps.getProperty("wa2.gdrive.clientSecret")?.takeIf { it.isNotBlank() }
-        ?: System.getenv("WA2_GDRIVE_CLIENT_SECRET")?.takeIf { it.isNotBlank() }
-        ?: ""
 
 android {
     namespace = "com.wa2port.android"
@@ -31,20 +17,15 @@ android {
         applicationId = "com.wa2port.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 25
-        versionName = "1.4.16"
+        versionCode = 26
+        versionName = "1.4.17"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
         buildConfigField(
             "String",
             "DEFAULT_GDRIVE_CLIENT_ID",
-            buildConfigString("304560912778-r98sabc8lhet5jlrt0tpgrpqkdigc0vl.apps.googleusercontent.com"),
-        )
-        buildConfigField(
-            "String",
-            "DEFAULT_GDRIVE_CLIENT_SECRET",
-            buildConfigString(gdriveClientSecret),
+            buildConfigString("304560912778-cnl01d27bu8jrunpdf5rjfuj3blh9v9a.apps.googleusercontent.com"),
         )
     }
 

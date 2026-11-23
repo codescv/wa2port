@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +32,6 @@ class CloudSyncManager(
     private val filesDir: File,
     private val scope: CoroutineScope,
     private val defaultClientId: String = "",
-    private val defaultClientSecret: String = "",
     private val onLocalDataUpdated: (systemChanged: Boolean, savesChanged: Boolean) -> Unit = { _, _ -> },
     private val clock: SyncClock = SyncClock.SYSTEM,
     private val tokenEndpoint: String = DEFAULT_OAUTH_TOKEN_ENDPOINT,
@@ -39,6 +39,7 @@ class CloudSyncManager(
     private val revokeEndpoint: String = DEFAULT_OAUTH_REVOKE_ENDPOINT,
     private val apiBase: String = DEFAULT_DRIVE_API_BASE,
     private val uploadBase: String = DEFAULT_DRIVE_UPLOAD_BASE,
+    private val redirectCoordinator: OAuthRedirectCoordinator = OAuthRedirectCoordinator.SHARED,
     private val driveApiFactory: (DriveTokenProvider) -> DriveApi = { provider ->
         HttpGoogleDriveClient(
             tokenProvider = provider,
@@ -50,6 +51,8 @@ class CloudSyncManager(
     companion object {
         const val AUTO_SYNC_DEBOUNCE_MS = 15_000L
         private const val MAX_FOLLOWUP_PASSES = 3
+        internal const val LEGACY_DESKTOP_CLIENT_ID =
+            "304560912778-r98sabc8lhet5jlrt0tpgrpqkdigc0vl.apps.googleusercontent.com"
     }
 
     private val baselineFile: File get() = File(filesDir, CloudSyncSchema.SYNC_STATE_FILE_NAME)
@@ -77,18 +80,20 @@ class CloudSyncManager(
     private val authGeneration = AtomicLong(0L)
 
     @Volatile
-    private var activeLoopback: GoogleOAuthLoopback? = null
+    private var activeOAuth: GoogleAndroidOAuth? = null
 
     private fun initialUiState(): SyncUiState {
         var creds = secretStore.load()
         val seededId = defaultClientId.trim()
-        val seededSecret = defaultClientSecret.trim()
+        val shouldMigrateLegacy = !creds.isSignedIn &&
+            creds.clientId.trim() == LEGACY_DESKTOP_CLIENT_ID &&
+            seededId.isNotBlank() &&
+            seededId != LEGACY_DESKTOP_CLIENT_ID
         val needId = creds.clientId.isBlank() && seededId.isNotBlank()
-        val needSecret = creds.clientSecret.isBlank() && seededSecret.isNotBlank()
-        if (needId || needSecret) {
+        if (shouldMigrateLegacy || needId) {
             val updated = creds.copy(
-                clientId = if (needId) seededId else creds.clientId,
-                clientSecret = if (needSecret) seededSecret else creds.clientSecret,
+                clientId = seededId,
+                clientSecret = if (shouldMigrateLegacy) "" else creds.clientSecret,
             )
             runCatching { secretStore.save(updated) }
             creds = updated
@@ -97,32 +102,61 @@ class CloudSyncManager(
             isSignedIn = creds.isSignedIn,
             accountEmail = creds.accountEmail,
             accountName = creds.accountName,
-            clientId = creds.clientId,
-            hasClientSecret = creds.clientSecret.isNotBlank(),
+            clientId = creds.clientId.ifBlank { seededId },
         )
     }
 
-    fun currentClientSecret(): String = secretStore.load().clientSecret
-
-    fun saveOAuthConfig(clientId: String, clientSecret: String) {
+    fun saveOAuthConfig(clientId: String) {
         val trimmedId = clientId.trim().ifBlank { defaultClientId.trim() }
-        val trimmedSecret = clientSecret.trim().ifBlank {
-            if (trimmedId == defaultClientId.trim()) defaultClientSecret.trim() else ""
-        }
         runCatching {
             val current = secretStore.load()
-            if (current.clientId == trimmedId && current.clientSecret == trimmedSecret) return
+            if (current.clientId == trimmedId) {
+                if (current.isSignedIn || current.clientSecret.isEmpty()) return
+                secretStore.save(current.copy(clientSecret = ""))
+                cachedTokenProvider = null
+                return
+            }
+
+            if (current.isSignedIn) {
+                // Changing Client ID while signed in invalidates the existing token pair:
+                // reset local auth/sync state so tokens minted for the old client are never
+                // paired with the new client ID.
+                authGeneration.incrementAndGet()
+                dirtyWhileSyncing.set(false)
+                cancelSignIn()
+                activeSync?.cancel()
+                activeSync = null
+                cachedTokenProvider = null
+                secretStore.save(StoredOAuthCredentials(clientId = trimmedId, clientSecret = ""))
+                runCatching { baselineFile.delete() }
+                _uiState.update {
+                    it.copy(
+                        isSignedIn = false,
+                        accountEmail = "",
+                        accountName = "",
+                        clientId = trimmedId,
+                        isSyncing = false,
+                        isResolvingConflict = false,
+                        progressMessage = null,
+                        lastResult = null,
+                        lastSyncedAtMs = 0L,
+                        lastError = null,
+                        pendingConflicts = emptyList(),
+                    )
+                }
+                return
+            }
+
             secretStore.save(
                 current.copy(
                     clientId = trimmedId,
-                    clientSecret = trimmedSecret,
+                    clientSecret = "",
                 ),
             )
             cachedTokenProvider = null
             _uiState.update {
                 it.copy(
                     clientId = trimmedId,
-                    hasClientSecret = trimmedSecret.isNotBlank(),
                 )
             }
         }.onFailure { err ->
@@ -132,42 +166,62 @@ class CloudSyncManager(
         }
     }
 
-    suspend fun signIn(openBrowser: (String) -> Unit): SyncAccountInfo {
+    /**
+     * Launches interactive Google sign-in followed by an initial sync inside [scope] (`viewModelScope`),
+     * so transient UI disposal / Activity recreation while the browser is open does not cancel sign-in.
+     */
+    fun startSignInAndSync(
+        timeoutMs: Long = 5 * 60_000L,
+        openBrowser: (String) -> Unit,
+    ): Job = scope.launch {
+        val ok = runCatching {
+            signIn(timeoutMs = timeoutMs, openBrowser = openBrowser)
+        }.isSuccess
+        if (ok) {
+            syncNow()
+        }
+    }
+
+    suspend fun signIn(
+        timeoutMs: Long = 5 * 60_000L,
+        openBrowser: (String) -> Unit,
+    ): SyncAccountInfo {
         val creds = secretStore.load()
         val clientId = creds.clientId.trim().ifBlank { defaultClientId.trim() }
-        val clientSecret = creds.clientSecret.trim().ifBlank { defaultClientSecret.trim() }
         if (clientId.isEmpty()) {
-            val msg = "请先配置 Google Desktop OAuth Client ID"
+            val msg = "请先配置 Google Android OAuth Client ID"
             _uiState.update { it.copy(lastError = msg) }
             throw IllegalStateException(msg)
         }
 
+        activeOAuth?.cancel()
         _uiState.update { it.copy(isSigningIn = true, lastError = null) }
-        val loopback = GoogleOAuthLoopback(
+        val oauth = GoogleAndroidOAuth(
             clientId = clientId,
-            clientSecret = clientSecret,
             openBrowser = openBrowser,
+            redirectCoordinator = redirectCoordinator,
             tokenEndpoint = tokenEndpoint,
             authEndpoint = authEndpoint,
             clock = clock,
         )
-        activeLoopback = loopback
+        activeOAuth = oauth
         val cancelHandle = coroutineContext.job.invokeOnCompletion { cause ->
             if (cause is CancellationException) {
-                loopback.cancel()
+                oauth.cancel()
             }
         }
         return try {
-            val (tokens, userInfo) = withContext(Dispatchers.IO) {
-                val t = loopback.start()
-                val info = fetchDriveUserInfo(t.accessToken, apiBase = apiBase)
-                t to info
+            val tokens = oauth.authorize(timeoutMs = timeoutMs)
+            val userInfo = withContext(Dispatchers.IO) {
+                fetchDriveUserInfo(tokens.accessToken, apiBase = apiBase)
             }
             val updated = StoredOAuthCredentials(
                 clientId = clientId,
-                clientSecret = clientSecret,
+                clientSecret = "",
                 accessToken = tokens.accessToken,
-                refreshToken = tokens.refreshToken.ifBlank { creds.refreshToken },
+                refreshToken = tokens.refreshToken.ifBlank {
+                    if (creds.clientId == clientId) creds.refreshToken else ""
+                },
                 expiresAtMs = tokens.expiresAtMs,
                 accountEmail = userInfo.email,
                 accountName = userInfo.displayName,
@@ -181,7 +235,6 @@ class CloudSyncManager(
                     accountEmail = updated.accountEmail,
                     accountName = updated.accountName,
                     clientId = updated.clientId,
-                    hasClientSecret = updated.clientSecret.isNotBlank(),
                     isSigningIn = false,
                     lastError = null,
                 )
@@ -199,14 +252,26 @@ class CloudSyncManager(
             throw e
         } finally {
             cancelHandle.dispose()
-            if (activeLoopback === loopback) activeLoopback = null
-            runCatching { loopback.close() }
+            if (activeOAuth === oauth) activeOAuth = null
+            runCatching { oauth.close() }
+        }
+    }
+
+    /**
+     * Called when the host Activity resumes. If an interactive sign-in is still awaiting a browser
+     * redirect (i.e. [OAuthRedirectActivity] did not deliver one), the user returned to the app
+     * without completing sign-in, so cancel cleanly instead of hanging.
+     */
+    fun onHostResume() {
+        val current = activeOAuth ?: return
+        if (current.isAwaitingRedirect()) {
+            cancelSignIn()
         }
     }
 
     fun cancelSignIn() {
-        activeLoopback?.cancel()
-        activeLoopback = null
+        activeOAuth?.cancel()
+        activeOAuth = null
         _uiState.update { it.copy(isSigningIn = false) }
     }
 
@@ -222,12 +287,25 @@ class CloudSyncManager(
         runningSync?.cancel()
         cachedTokenProvider = null
         val creds = secretStore.load()
+        var nextClientId = creds.clientId.trim().ifBlank { defaultClientId.trim() }
         withContext(Dispatchers.IO) {
             val tokenToRevoke = creds.refreshToken.ifBlank { creds.accessToken }
             if (tokenToRevoke.isNotBlank()) {
                 revokeOAuthTokenBestEffort(tokenToRevoke, revokeEndpoint = revokeEndpoint)
             }
-            runCatching { secretStore.clearTokens() }
+            val seededId = defaultClientId.trim()
+            val migrateLegacyOnSignOut =
+                creds.clientId.trim() == LEGACY_DESKTOP_CLIENT_ID &&
+                    seededId.isNotBlank() &&
+                    seededId != LEGACY_DESKTOP_CLIENT_ID
+            if (migrateLegacyOnSignOut) {
+                nextClientId = seededId
+                runCatching {
+                    secretStore.save(StoredOAuthCredentials(clientId = seededId, clientSecret = ""))
+                }
+            } else {
+                runCatching { secretStore.clearTokens() }
+            }
             runCatching { baselineFile.delete() }
         }
         _uiState.update {
@@ -235,6 +313,7 @@ class CloudSyncManager(
                 isSignedIn = false,
                 accountEmail = "",
                 accountName = "",
+                clientId = nextClientId,
                 isSyncing = false,
                 isResolvingConflict = false,
                 progressMessage = null,

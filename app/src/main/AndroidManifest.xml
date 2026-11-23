@@ -49,6 +49,22 @@
             </intent-filter>
         </activity>
 
+        <!-- Receives Google OAuth 2.0 custom URI scheme redirects for Android OAuth client PKCE sign-in. -->
+        <activity
+            android:name=".sync.OAuthRedirectActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.googleusercontent.apps.304560912778-cnl01d27bu8jrunpdf5rjfuj3blh9v9a" />
+            </intent-filter>
+        </activity>
+
         <!-- Shares update APKs (cacheDir/updates) with the installer and feedback images (cacheDir/feedback) with email apps. -->
         <provider
             android:name="androidx.core.content.FileProvider"

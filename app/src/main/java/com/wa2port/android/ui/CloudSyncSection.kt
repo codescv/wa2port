@@ -1,5 +1,6 @@
 package com.wa2port.android.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
@@ -36,12 +37,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wa2port.android.BuildConfig
 import com.wa2port.android.data.Settings
 import com.wa2port.android.sync.CloudSyncManager
+import com.wa2port.android.sync.GoogleAndroidOAuth
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -53,10 +54,10 @@ private val SYNC_WARN = Color(0xFFFFD9A0)
 
 /**
  * 设置 → ☁ 云端同步 Cloud Sync (Google Drive):
- * - Google Drive sign-in / sign-out + account email
+ * - Google Drive sign-in / sign-out + account email (Android OAuth 2.0 PKCE + custom URI scheme)
  * - 立即同步 Sync Now button + status (last synced time, uploaded/downloaded counts, error)
  * - 自动同步 Auto-Sync toggle (default ON when signed in)
- * - Optional collapsible Advanced section for custom OAuth Client ID / Client Secret override.
+ * - Optional collapsible Advanced section for custom Android OAuth Client ID override.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -71,10 +72,6 @@ fun CloudSyncSettingsSection(
     var confirmSignOut by remember { mutableStateOf(false) }
     var advancedOpen by remember { mutableStateOf(false) }
     var draftClientId by remember(state.clientId) { mutableStateOf(state.clientId) }
-    var draftClientSecret by remember(state.clientId, state.hasClientSecret) {
-        mutableStateOf(cloudSync.currentClientSecret())
-    }
-    var revealSecret by remember { mutableStateOf(false) }
     var savedNotice by remember { mutableStateOf<String?>(null) }
 
     SectionTitle("☁ 云端同步 Cloud Sync · Google Drive")
@@ -165,17 +162,15 @@ fun CloudSyncSettingsSection(
                     }
                 } else {
                     MenuButton("登录 Google Drive", subtitle = "Sign in", compact = true) {
-                        scope.launch {
-                            val ok = runCatching {
-                                cloudSync.signIn { url ->
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                }
-                            }.isSuccess
-                            if (ok) {
-                                cloudSync.syncNow()
+                        cloudSync.startSignInAndSync { url ->
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                addCategory(Intent.CATEGORY_BROWSABLE)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: ActivityNotFoundException) {
+                                throw IllegalStateException("未找到可用的浏览器应用，请先安装浏览器", e)
                             }
                         }
                     }
@@ -238,6 +233,15 @@ fun CloudSyncSettingsSection(
         )
     }
     if (advancedOpen) {
+        val defaultRedirectScheme = remember {
+            runCatching { GoogleAndroidOAuth.deriveRedirectScheme(BuildConfig.DEFAULT_GDRIVE_CLIENT_ID) }.getOrNull()
+        }
+        val derivedRedirectScheme = remember(draftClientId) {
+            runCatching { GoogleAndroidOAuth.deriveRedirectScheme(draftClientId) }.getOrNull()
+        }
+        val derivedRedirectUri = remember(draftClientId) {
+            runCatching { GoogleAndroidOAuth.deriveRedirectUri(draftClientId) }.getOrNull()
+        }
         Column(
             Modifier
                 .fillMaxWidth()
@@ -245,7 +249,7 @@ fun CloudSyncSettingsSection(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                "通常无需修改（已内置默认 Desktop OAuth 凭据）。如需改用自己的 GCP Desktop OAuth Client，可在此覆盖。",
+                "通常无需修改（已内置默认 Android OAuth 客户端，采用 PKCE 授权，无需 Client Secret）。仅在使用自编译 APK 与自定义 Android OAuth Client ID 时才需覆盖。",
                 color = Wa2Colors.TextDim,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(start = 4.dp),
@@ -255,40 +259,49 @@ fun CloudSyncSettingsSection(
                 onValueChange = { draftClientId = it; savedNotice = null },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = { Text("Desktop OAuth Client ID", fontSize = 12.sp) },
+                label = { Text("Android OAuth Client ID", fontSize = 12.sp) },
                 placeholder = { Text("xxxx.apps.googleusercontent.com", fontSize = 12.sp, color = Wa2Colors.TextDim) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 colors = syncFieldColors(),
             )
-            OutlinedTextField(
-                value = draftClientSecret,
-                onValueChange = { draftClientSecret = it; savedNotice = null },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Client Secret（可选 / Optional）", fontSize = 12.sp) },
-                placeholder = { Text("Optional OAuth Client Secret", fontSize = 12.sp, color = Wa2Colors.TextDim) },
-                visualTransformation = if (revealSecret) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    TextButton(onClick = { revealSecret = !revealSecret }) {
-                        Text(if (revealSecret) "隐藏" else "👁", color = Wa2Colors.Accent)
-                    }
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                colors = syncFieldColors(),
-            )
+            derivedRedirectUri?.let { uri ->
+                Text(
+                    "Redirect URI: $uri",
+                    color = Wa2Colors.TextDim,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+            if (draftClientId.isNotBlank() && derivedRedirectScheme == null) {
+                Text(
+                    "⚠ Android OAuth Client ID 需以 .apps.googleusercontent.com 结尾。",
+                    color = SYNC_WARN,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            } else if (
+                derivedRedirectScheme != null &&
+                defaultRedirectScheme != null &&
+                !derivedRedirectScheme.equals(defaultRedirectScheme, ignoreCase = true)
+            ) {
+                Text(
+                    "⚠ 当前 APK 清单仅注册默认回调 scheme（$defaultRedirectScheme），改用其他 Client ID 需同步修改 AndroidManifest 并重新编译。",
+                    color = SYNC_WARN,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MenuButton("保存配置 Save", compact = true) {
-                    cloudSync.saveOAuthConfig(draftClientId, draftClientSecret)
+                    cloudSync.saveOAuthConfig(draftClientId)
                     savedNotice = "✓ 已保存 OAuth 配置"
                 }
                 MenuButton("恢复默认 Reset", compact = true) {
-                    cloudSync.saveOAuthConfig("", "")
-                    val latest = cloudSync.uiState.value
-                    draftClientId = latest.clientId
-                    draftClientSecret = cloudSync.currentClientSecret()
+                    cloudSync.saveOAuthConfig("")
+                    draftClientId = cloudSync.uiState.value.clientId
                     savedNotice = "✓ 已恢复默认配置"
                 }
             }

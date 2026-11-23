@@ -198,7 +198,6 @@ data class SyncUiState(
     val accountEmail: String = "",
     val accountName: String = "",
     val clientId: String = "",
-    val hasClientSecret: Boolean = false,
     val isSigningIn: Boolean = false,
     val isSyncing: Boolean = false,
     val isResolvingConflict: Boolean = false,
