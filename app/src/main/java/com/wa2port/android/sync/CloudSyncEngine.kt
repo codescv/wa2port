@@ -1,5 +1,6 @@
 package com.wa2port.android.sync
 
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.sync.CloudSyncSchema
 import com.wa2port.core.sync.ConflictReason
 import com.wa2port.core.sync.LocksCodec
@@ -68,7 +69,7 @@ class CloudSyncEngine(
         val errors = mutableListOf<String>()
 
         try {
-            onProgress("正在连接 Google Drive…")
+            onProgress(Wa2I18n.s.syncProgressConnecting)
             val rootFolder = driveApi.findOrCreateFolder(CloudSyncSchema.ROOT_FOLDER_NAME, parentId = null)
             // Account switch / recreated root folder guard: if the Drive root folder ID changed,
             // old baseline entries belong to a different/deleted folder and must be cleared so
@@ -98,7 +99,7 @@ class CloudSyncEngine(
             val localLockedSlotsBeforeSync = readLocalLockedSlots().toSet()
 
             // 1. Sync system.json (with lossless union merge on conflict).
-            onProgress("正在同步系统数据…")
+            onProgress(Wa2I18n.s.syncProgressSystem)
             try {
                 val sysOutcome = syncSystemFile(
                     remoteFile = rootChildren[CloudSyncSchema.SYSTEM_FILE_NAME]?.takeIf { !it.isFolder },
@@ -129,7 +130,7 @@ class CloudSyncEngine(
                     return@forEachIndexed
                 }
 
-                onProgress("正在同步存档 (${idx + 1}/${slots.size})…")
+                onProgress(Wa2I18n.s.syncProgressSlot(idx + 1, slots.size))
                 try {
                     val outcome = syncSaveSlot(
                         slot = slot,
@@ -157,7 +158,7 @@ class CloudSyncEngine(
             }
 
             // 3. Sync saves/locks.json (and materialize .lock sidecars).
-            onProgress("正在同步存档锁定状态…")
+            onProgress(Wa2I18n.s.syncProgressLocks)
             try {
                 val locksOutcome = syncLocksFile(
                     remoteFile = savesChildren[CloudSyncSchema.LOCKS_FILE_NAME]?.takeIf { !it.isFolder },
@@ -457,13 +458,13 @@ class CloudSyncEngine(
                         bytes = localBytes,
                         md5 = localMd5,
                         timestampMs = systemFile.lastModified(),
-                        summary = "本地系统数据 (${localBytes.size} B)",
+                        summary = Wa2I18n.s.syncSystemLocalSummary(localBytes.size),
                     ),
                     remote = ConflictSideInfo.fromRaw(
                         bytes = remoteBytes,
                         md5 = remoteMd5,
                         timestampMs = remote.modifiedTimeMs,
-                        summary = "云端系统数据 (${remoteBytes.size} B)",
+                        summary = Wa2I18n.s.syncSystemCloudSummary(remoteBytes.size),
                     ),
                     remoteFileId = remote.id,
                     remoteModifiedMs = remote.modifiedTimeMs,

@@ -60,15 +60,16 @@ fun AiSettingsSection(
     ai: AiLearningController,
     session: GameSession?,
 ) {
+    val strings = LocalAppStrings.current
     val p = settings.ai
     val focus = LocalFocusManager.current
     fun set(f: (AiProviderSettings) -> AiProviderSettings) = onChange { it.copy(ai = f(it.ai)) }
     LaunchedEffect(Unit) { ai.refreshCacheStats() }
 
-    SectionTitle("AI 学习 AI Learning")
+    SectionTitle(strings.aiSectionTitle)
     // 📦 Full-game offline pack first: works with no API key at all.
     OfflinePackSettingsCard(ai.packs)
-    OptionRow("服务 Provider") {
+    OptionRow(strings.aiProviderLabel) {
         Segmented(
             listOf(AiProviderSettings.PROVIDER_GEMINI_API to "Gemini API Key", AiProviderSettings.PROVIDER_VERTEX_AI to "Vertex AI"),
             p.providerType, { v -> set { it.copy(providerType = v) } },
@@ -78,60 +79,60 @@ fun AiSettingsSection(
     if (!p.isVertex) {
         AiTextField("API Key", p.geminiApiKey, { v -> set { it.copy(geminiApiKey = v) } }, placeholder = "AIza…", secret = true)
         AiTextField(
-            "自定义服务器地址 Custom base URL / 代理", p.customBaseUrl, { v -> set { it.copy(customBaseUrl = v) } },
+            strings.aiCustomBaseUrlLabel, p.customBaseUrl, { v -> set { it.copy(customBaseUrl = v) } },
             placeholder = AiEndpoints.DEFAULT_GEMINI_BASE,
-            helper = "留空 = 官方地址。反代示例：https://my-proxy.example.com 或 …/v1beta（版本自动去重）；仅支持 https（本机 / 模拟器 10.0.2.2 可用 http）",
+            helper = strings.aiCustomBaseUrlHelper,
             keyboardType = KeyboardType.Uri,
         )
-        OptionRow("API 版本 Version") {
+        OptionRow(strings.aiApiVersionLabel) {
             Segmented(AiProviderSettings.API_VERSIONS.map { it to it }, p.geminiApiVersion, { v -> set { it.copy(geminiApiVersion = v) } })
             AiEndpoints.pastedVersion(p.customBaseUrl)?.let { v ->
-                Text("  地址中的 /$v 优先", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                Text("  ${strings.aiPastedVersionWins(v)}", color = Wa2Colors.TextDim, fontSize = 12.sp)
             }
         }
         if (p.customBaseUrl.isNotBlank()) {
-            OptionRow("代理鉴权 Proxy auth") {
+            OptionRow(strings.aiProxyAuthLabel) {
                 Segmented(
                     listOf(
-                        AiProviderSettings.AUTH_STYLE_HEADER to "x-goog-api-key 请求头",
-                        AiProviderSettings.AUTH_STYLE_BEARER to "Bearer",
-                        AiProviderSettings.AUTH_STYLE_QUERY to "?key= 查询参数",
+                        AiProviderSettings.AUTH_STYLE_HEADER to strings.aiProxyAuthHeader,
+                        AiProviderSettings.AUTH_STYLE_BEARER to strings.aiProxyAuthBearer,
+                        AiProviderSettings.AUTH_STYLE_QUERY to strings.aiProxyAuthQuery,
                     ),
                     p.proxyAuthStyle, { v -> set { it.copy(proxyAuthStyle = v) } },
                 )
             }
         }
     } else {
-        AiTextField("项目 Project", p.vertexProject, { v -> set { it.copy(vertexProject = v) } }, placeholder = "my-gcp-project")
-        OptionRow("区域 Location") {
+        AiTextField(strings.aiVertexProjectLabel, p.vertexProject, { v -> set { it.copy(vertexProject = v) } }, placeholder = "my-gcp-project")
+        OptionRow(strings.aiVertexLocationLabel) {
             Segmented(
                 AiProviderSettings.VERTEX_LOCATION_PRESETS.map { it to it }, p.vertexLocation, { v -> set { it.copy(vertexLocation = v) } },
             )
         }
-        AiTextField("区域 Location（可自定义）", p.vertexLocation, { v -> set { it.copy(vertexLocation = v.trim()) } }, placeholder = "global / us-east5 …")
-        OptionRow("鉴权 Auth") {
+        AiTextField(strings.aiVertexLocationCustomLabel, p.vertexLocation, { v -> set { it.copy(vertexLocation = v.trim()) } }, placeholder = "global / us-east5 …")
+        OptionRow(strings.aiVertexAuthLabel) {
             Segmented(
                 listOf(
-                    AiProviderSettings.VERTEX_AUTH_SERVICE_ACCOUNT to "服务账号 JSON",
-                    AiProviderSettings.VERTEX_AUTH_ACCESS_TOKEN to "Access Token",
-                    AiProviderSettings.VERTEX_AUTH_EXPRESS to "Express API Key",
+                    AiProviderSettings.VERTEX_AUTH_SERVICE_ACCOUNT to strings.aiVertexAuthSa,
+                    AiProviderSettings.VERTEX_AUTH_ACCESS_TOKEN to strings.aiVertexAuthToken,
+                    AiProviderSettings.VERTEX_AUTH_EXPRESS to strings.aiVertexAuthExpress,
                 ),
                 p.vertexAuthMode, { v -> set { it.copy(vertexAuthMode = v) } },
             )
         }
         when (p.vertexAuthMode) {
             AiProviderSettings.VERTEX_AUTH_ACCESS_TOKEN ->
-                AiTextField("Access Token", p.vertexAccessToken, { v -> set { it.copy(vertexAccessToken = v) } }, secret = true, helper = "gcloud auth print-access-token（约 1 小时过期）")
+                AiTextField(strings.aiVertexAuthToken, p.vertexAccessToken, { v -> set { it.copy(vertexAccessToken = v) } }, secret = true, helper = strings.aiVertexTokenHelper)
             AiProviderSettings.VERTEX_AUTH_EXPRESS ->
-                AiTextField("Express API Key", p.vertexApiKey, { v -> set { it.copy(vertexApiKey = v) } }, secret = true)
+                AiTextField(strings.aiVertexAuthExpress, p.vertexApiKey, { v -> set { it.copy(vertexApiKey = v) } }, secret = true)
             else -> ServiceAccountField(p.vertexServiceAccountJson) { v -> set { it.copy(vertexServiceAccountJson = v) } }
         }
         val defaultHost = AiEndpoints.vertexBase(p.copy(customBaseUrl = ""))
         AiTextField(
-            "自定义服务器地址 Custom base URL / 代理", p.customBaseUrl, { v -> set { it.copy(customBaseUrl = v) } },
+            strings.aiCustomBaseUrlLabel, p.customBaseUrl, { v -> set { it.copy(customBaseUrl = v) } },
             placeholder = defaultHost,
-            helper = "默认 $defaultHost" + if (p.vertexAuthMode == AiProviderSettings.VERTEX_AUTH_SERVICE_ACCOUNT && p.customBaseUrl.isNotBlank()) {
-                "。注意：服务账号换取令牌需直连 oauth2.googleapis.com；走代理时建议用 Access Token / Express Key 或由代理注入鉴权"
+            helper = strings.aiVertexBaseDefault(defaultHost) + if (p.vertexAuthMode == AiProviderSettings.VERTEX_AUTH_SERVICE_ACCOUNT && p.customBaseUrl.isNotBlank()) {
+                strings.aiVertexBaseProxyHint
             } else {
                 ""
             },
@@ -142,65 +143,77 @@ fun AiSettingsSection(
 
     // Effective endpoint (secrets redacted) + http warning: makes proxy typos visible before testing.
     val endpoint = runCatching { AiEndpoints.redactUrl(AiEndpoints.generateContentUrl(p)) }.getOrDefault("")
-    Text("请求地址 Endpoint: $endpoint", color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(vertical = 2.dp))
-    p.connectionWarning()?.let { Text("⚠ $it", color = ERR_RED, fontSize = 12.sp) }
+    Text(strings.aiEndpointPrefix(endpoint), color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(vertical = 2.dp))
+    p.connectionWarning(strings)?.let { Text("⚠ $it", color = ERR_RED, fontSize = 12.sp) }
 
-    OptionRow("模型 Model") {
+    OptionRow(strings.aiModelLabel) {
         Segmented(
             AiProviderSettings.MODEL_PRESETS.map { it to it }, p.model, { v -> set { it.copy(model = v) } },
         )
     }
-    AiTextField("自定义模型 Custom model", p.model, { v -> set { it.copy(model = AiEndpoints.sanitizeModel(v)) } }, placeholder = AiProviderSettings.DEFAULT_MODEL)
+    AiTextField(strings.aiCustomModelLabel, p.model, { v -> set { it.copy(model = AiEndpoints.sanitizeModel(v)) } }, placeholder = AiProviderSettings.DEFAULT_MODEL)
 
     val persona = ai.persona
-    OptionRow("家教人设 Persona") {
+    OptionRow(strings.aiPersonaLabel) {
         Segmented(
-            ai.personas.map { p -> p.id to (if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName) },
+            ai.personas.map { opt ->
+                val chip = when (opt.id) {
+                    AiPersonaSettings.ID_CUSTOM -> strings.aiPersonaCustomChip(opt.shortName)
+                    AiPersonaSettings.KAZUSA.id -> strings.aiPersonaKazusaName
+                    AiPersonaSettings.SETSUNA.id -> strings.aiPersonaSetsunaName
+                    else -> opt.shortName
+                }
+                opt.id to chip
+            },
             persona.id, { v -> onChange { it.copy(aiPersonaId = v) } },
         )
     }
     if (persona.id == AiPersonaSettings.ID_CUSTOM) {
         // User-defined tutor: name + soul (blank → defaults, see AiPersonaSettings.custom).
         AiTextField(
-            "自定义名称 Custom name", settings.aiCustomPersonaName, { v -> onChange { it.copy(aiCustomPersonaName = v) } },
+            strings.aiCustomNameLabel, settings.aiCustomPersonaName, { v -> onChange { it.copy(aiCustomPersonaName = v) } },
             placeholder = AiPersonaSettings.DEFAULT_CUSTOM_NAME,
         )
         DraftField(
-            "自定义 Soul / 人设 Custom soul", settings.aiCustomPersonaSoul, AiPersonaSettings.DEFAULT_CUSTOM_SOUL,
+            strings.aiCustomSoulLabel, settings.aiCustomPersonaSoul, AiPersonaSettings.DEFAULT_CUSTOM_SOUL,
             { v -> onChange { it.copy(aiCustomPersonaSoul = v) } },
         )
     } else {
-        Text(persona.soul, color = Wa2Colors.TextDim, fontSize = 12.sp)
+        val desc = when (persona.id) {
+            AiPersonaSettings.KAZUSA.id -> strings.aiPersonaKazusaDesc
+            AiPersonaSettings.SETSUNA.id -> strings.aiPersonaSetsunaDesc
+            else -> persona.soul
+        }
+        Text(desc, color = Wa2Colors.TextDim, fontSize = 12.sp)
     }
 
-    OptionRow("点词解析 Tap-to-analyze") {
-        Segmented(listOf(false to "关 Off", true to "开 On（ADV 日文列）"), settings.aiTapToAnalyze, { v -> onChange { it.copy(aiTapToAnalyze = v) } })
+    OptionRow(strings.aiTapToAnalyzeLabel) {
+        Segmented(listOf(false to strings.commonOff, true to strings.aiTapToAnalyzeOn), settings.aiTapToAnalyze, { v -> onChange { it.copy(aiTapToAnalyze = v) } })
     }
-    OptionRow("缓存解说 Cache") {
-        Segmented(listOf(true to "开 On", false to "关 Off"), p.cacheEnabled, { v -> set { it.copy(cacheEnabled = v) } })
+    OptionRow(strings.aiCacheLabel) {
+        Segmented(listOf(true to strings.commonOn, false to strings.commonOff), p.cacheEnabled, { v -> set { it.copy(cacheEnabled = v) } })
     }
-    OptionRow("⚡ 智能预解析（学习突发期 10 句内后台预取）") {
+    OptionRow(strings.aiPrefetchLabel) {
         Segmented(
-            listOf(false to "关 Off", true to "开 On"),
+            listOf(false to strings.commonOff, true to strings.commonOn),
             settings.aiPrefetchEnabled,
             { v -> onChange { it.copy(aiPrefetchEnabled = v) } },
         )
     }
     Text(
-        "全周目全量预取约 $100–300，因此仅在手动打开 AI 后的 10 句学习突发期内且针对未读行后台预取。" +
-            "（本次会话预取 ${ai.prefetchedCount} 句 · 命中 ${ai.prefetchHitCount} 次）",
+        strings.aiPrefetchHint(ai.prefetchedCount, ai.prefetchHitCount),
         color = Wa2Colors.TextDim,
         fontSize = 11.sp,
         modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
     )
-    LabeledSlider("温度 Temperature", Math.round(p.temperature * 10), 0..10, "%.1f".format(Locale.ROOT, p.temperature)) { v -> set { it.copy(temperature = v / 10f) } }
-    OptionRow("思考预算 Thinking") {
+    LabeledSlider(strings.aiTemperatureLabel, Math.round(p.temperature * 10), 0..10, "%.1f".format(Locale.ROOT, p.temperature)) { v -> set { it.copy(temperature = v / 10f) } }
+    OptionRow(strings.aiThinkingLabel) {
         Segmented(
-            listOf(-1 to "默认", 0 to "关闭 0", 512 to "512", 2048 to "2048", 8192 to "8192"),
+            listOf(-1 to strings.commonDefault, 0 to strings.aiThinkingOff, 512 to "512", 2048 to "2048", 8192 to "8192"),
             p.thinkingBudget, { v -> set { it.copy(thinkingBudget = v) } },
         )
     }
-    LabeledSlider("超时 Timeout", p.timeoutMs / 1000, 10..180, "${p.timeoutMs / 1000} s") { v -> set { it.copy(timeoutMs = v * 1000) } }
+    LabeledSlider(strings.aiTimeoutLabel, p.timeoutMs / 1000, 10..180, "${p.timeoutMs / 1000} s") { v -> set { it.copy(timeoutMs = v * 1000) } }
 
     // Test result is placed immediately above the action row so it is never hidden below the fold.
     ai.testResult?.let { r ->
@@ -216,13 +229,13 @@ fun AiSettingsSection(
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         // Clearing focus first commits any open multi-line draft (SA JSON / headers) into settings.
-        MenuButton(if (ai.testing) "测试中… Testing" else "测试连接 Test", enabled = !ai.testing) {
+        MenuButton(if (ai.testing) strings.aiTestingBtn else strings.aiTestBtn, enabled = !ai.testing) {
             focus.clearFocus()
             ai.testConnection()
         }
         val stats = ai.cacheStats
-        MenuButton("清除缓存 Clear cache", subtitle = stats?.let { "${it.entries} 条 · ${(it.bytes + 1023) / 1024} KB" }) { confirmClear = true }
-        MenuButton("示例预览 Preview") {
+        MenuButton(strings.aiClearCacheBtn, subtitle = stats?.let { strings.aiCacheStats(it.entries, (it.bytes + 1023) / 1024) }) { confirmClear = true }
+        MenuButton(strings.aiPreviewBtn) {
             focus.clearFocus()
             ai.openSample(session)
         }
@@ -232,7 +245,7 @@ fun AiSettingsSection(
             val s = ai.notebook.stars()
             s.vocab.size + s.grammar.size + s.sentences.size
         }
-        MenuButton("📒 学习记录 Notebook", subtitle = "$nbSentenceCount 句 · ★ $nbStarCount") {
+        MenuButton(strings.aiNotebookBtn, subtitle = strings.aiNotebookSub(nbSentenceCount, nbStarCount)) {
             focus.clearFocus()
             ai.openNotebook(session)
         }
@@ -241,9 +254,9 @@ fun AiSettingsSection(
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
-            confirmButton = { TextButton(onClick = { confirmClear = false; ai.clearCache() }) { Text("清除 Clear") } },
-            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消 Cancel") } },
-            text = { Text("删除所有已缓存的 AI 解说与追问记录？（注：📒 学习记录与收藏不会受影响）\nDelete all cached breakdowns? (Your Notebook & Stars are preserved.)") },
+            confirmButton = { TextButton(onClick = { confirmClear = false; ai.clearCache() }) { Text(strings.commonClear) } },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(strings.commonCancel) } },
+            text = { Text(strings.aiClearCacheConfirm) },
         )
     }
 }
@@ -259,6 +272,7 @@ private fun AiTextField(
     secret: Boolean = false,
     keyboardType: KeyboardType = KeyboardType.Text,
 ) {
+    val strings = LocalAppStrings.current
     var reveal by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         OutlinedTextField(
@@ -270,7 +284,7 @@ private fun AiTextField(
             placeholder = { Text(placeholder, fontSize = 13.sp, color = Wa2Colors.TextDim) },
             visualTransformation = if (secret && !reveal) PasswordVisualTransformation() else VisualTransformation.None,
             trailingIcon = if (secret) {
-                { TextButton(onClick = { reveal = !reveal }) { Text(if (reveal) "隐藏" else "👁", color = Wa2Colors.Accent) } }
+                { TextButton(onClick = { reveal = !reveal }) { Text(if (reveal) strings.aiSecretHide else "👁", color = Wa2Colors.Accent) } }
             } else {
                 null
             },
@@ -281,9 +295,10 @@ private fun AiTextField(
     }
 }
 
-/** Multi-line draft field committed on focus loss or 保存. */
+/** Multi-line draft field committed on focus loss or Save. */
 @Composable
 private fun DraftField(label: String, value: String, placeholder: String, onCommit: (String) -> Unit, footer: @Composable (String) -> Unit = {}) {
+    val strings = LocalAppStrings.current
     var draft by remember(value) { mutableStateOf(value) }
     // Commit a pending draft when the field leaves composition (Config closed while editing).
     val latestDraft = rememberUpdatedState(draft)
@@ -304,14 +319,15 @@ private fun DraftField(label: String, value: String, placeholder: String, onComm
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             footer(draft)
-            if (draft != value) TextButton(onClick = { onCommit(draft) }) { Text("保存 Save", color = Wa2Colors.Accent) }
+            if (draft != value) TextButton(onClick = { onCommit(draft) }) { Text(strings.commonSave, color = Wa2Colors.Accent) }
         }
     }
 }
 
 @Composable
 private fun ServiceAccountField(json: String, onCommit: (String) -> Unit) {
-    DraftField("服务账号 JSON Service account key", json, "{\"type\": \"service_account\", \"client_email\": …, \"private_key\": …}", onCommit) { draft ->
+    val strings = LocalAppStrings.current
+    DraftField(strings.aiSaJsonLabel, json, "{\"type\": \"service_account\", \"client_email\": …, \"private_key\": …}", onCommit) { draft ->
         if (draft.isNotBlank()) {
             val parsed = runCatching { ServiceAccountJwt.parse(draft) }
             Text(
@@ -324,15 +340,16 @@ private fun ServiceAccountField(json: String, onCommit: (String) -> Unit) {
 
 @Composable
 private fun ExtraHeadersField(value: String, onCommit: (String) -> Unit) {
+    val strings = LocalAppStrings.current
     var open by remember { mutableStateOf(value.isNotBlank()) }
     TextButton(onClick = { open = !open }) {
-        Text((if (open) "▼" else "▶") + " 高级：额外请求头 Extra headers", color = Wa2Colors.Accent, fontSize = 13.sp)
+        Text((if (open) "▼ " else "▶ ") + strings.aiExtraHeadersToggle, color = Wa2Colors.Accent, fontSize = 13.sp)
     }
     if (open) {
-        DraftField("每行一个 Name: value（可用 {apiKey} 占位）", value, "X-Proxy-Token: {apiKey}", onCommit) { draft ->
+        DraftField(strings.aiExtraHeadersFieldLabel, value, "X-Proxy-Token: {apiKey}", onCommit) { draft ->
             val n = AiEndpoints.parseExtraHeaders(draft, "").size
             val lines = draft.lines().count { it.isNotBlank() }
-            if (lines > 0) Text("$n / $lines 行有效", color = if (n == lines) OK_GREEN else ERR_RED, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
+            if (lines > 0) Text(strings.aiExtraHeadersValidCount(n, lines), color = if (n == lines) OK_GREEN else ERR_RED, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp))
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
+
 import com.wa2port.core.engine.LineRef
 import com.wa2port.core.engine.VoiceRef
 import kotlinx.serialization.Serializable
@@ -496,7 +498,7 @@ class NotebookStore(val dir: File) {
             ).append('\n')
         }
         for (g in grammarList) {
-            val posJlpt = listOfNotNull("语法 Grammar", g.jlpt).joinToString(" · ")
+            val posJlpt = listOfNotNull(Wa2I18n.s.notebookGrammarTag, g.jlpt).joinToString(" · ")
             val src = buildSourceTag(g.speakerJp, g.scene, g.lineNo)
             sb.append(
                 listOf(

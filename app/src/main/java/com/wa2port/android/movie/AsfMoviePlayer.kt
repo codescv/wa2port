@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.wa2port.android.ui.LocalAppStrings
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
@@ -144,9 +145,10 @@ fun MovieSkipPill(gate: MovieSkipGate, modifier: Modifier = Modifier) {
         delay(MovieSkipGate.HINT_MS)
         gate.expireHint(token)
     }
+    val strings = LocalAppStrings.current
     Box(modifier.fillMaxSize()) {
         Text(
-            "再点一次跳过影片 ▶▶ / Tap again to skip",
+            strings.movieTapAgainToSkip,
             color = Color.White, fontSize = 14.sp,
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
                 .background(Color(0xCC101A30), RoundedCornerShape(50))

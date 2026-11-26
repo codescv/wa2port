@@ -59,6 +59,7 @@ import com.wa2port.android.data.OrientationMode
 import com.wa2port.android.data.Settings
 import com.wa2port.android.ui.CloseButton
 import com.wa2port.android.ui.DragHandle
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.LocalIsPortrait
 import com.wa2port.android.ui.LocalScreenInsets
@@ -179,6 +180,7 @@ fun BacklogOverlay(
     onClose: () -> Unit,
     onAi: ((LineRef) -> Unit)? = null,
 ) {
+    val strings = LocalAppStrings.current
     val density = LocalDensity.current
     val portrait = LocalIsPortrait.current
     val scope = rememberCoroutineScope()
@@ -192,7 +194,7 @@ fun BacklogOverlay(
             .padding(horizontal = if (LocalCompact.current) 16.dp else 24.dp, vertical = 8.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("回想 Backlog  バックログ", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
+            Text(strings.backlogTitle, color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
             CloseButton(onClose)
         }
         BoxWithConstraints(if (portrait) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxSize()) {
@@ -235,10 +237,10 @@ fun BacklogOverlay(
         if (portrait) {
             // Thumb-zone actions (2 fixed slots): jump back to the newest line, close.
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuButton("↓ 最新 Latest", enabled = state.canScrollForward, modifier = Modifier.weight(1f), compact = true) {
+                MenuButton(strings.backlogLatestBtn, enabled = state.canScrollForward, modifier = Modifier.weight(1f), compact = true) {
                     scope.launch { state.animateScrollToItem(entries.lastIndex.coerceAtLeast(0)) }
                 }
-                MenuButton("✕ 关闭 Close", modifier = Modifier.weight(1f), compact = true, onClick = onClose)
+                MenuButton("✕ ${strings.commonClose}", modifier = Modifier.weight(1f), compact = true, onClick = onClose)
             }
         }
     }
@@ -273,8 +275,9 @@ fun GameMenu(
     onConfig: () -> Unit,
     onTitle: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     var confirmTitle by remember { mutableStateOf(false) }
-    val exitLabel = if (inReplayMode) "结束回想 Exit Replay" else "返回标题 Title"
+    val exitLabel = if (inReplayMode) strings.menuExitReplay else strings.menuReturnTitle
     val compact = LocalCompact.current
     val portrait = LocalIsPortrait.current
     val insets = LocalScreenInsets.current
@@ -323,27 +326,27 @@ fun GameMenu(
                 if (portrait) DragHandle()
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("快捷控制 · 系统菜单  Quick Controls & Menu", color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                        Text(sceneLabel(scene), color = Wa2Colors.TextDim, fontSize = 12.sp)
+                        Text(strings.menuHeader, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(sceneLabel(scene, strings), color = Wa2Colors.TextDim, fontSize = 12.sp)
                     }
                     CloseButton(onResume)
                 }
             }
 
-            // Screen orientation (竖屏 default / 横屏 / 自动).
+            // Screen orientation (portrait default / landscape / auto).
             Segmented(
-                options = OrientationMode.entries.map { it to it.label },
+                options = OrientationMode.entries.map { it to it.localizedLabel(strings) },
                 selected = settings.orientation,
                 onSelect = { mode -> onUpdateSettings { it.copy(orientation = mode) } },
                 modifier = Modifier.fillMaxWidth(),
             )
-            // Secondary QuickBar controls: 3-way language (incl. single 中文), window mode, font size,
+            // Secondary QuickBar controls: 3-way script language, window mode, font size,
             // tap-to-analyze toggle, and hide window.
             Segmented(
                 options = listOf(
-                    DisplayLang.BOTH to "中/日 双",
-                    DisplayLang.JP to "日本語",
-                    DisplayLang.CN to "简体中文",
+                    DisplayLang.BOTH to strings.scriptLangBoth,
+                    DisplayLang.JP to strings.scriptLangJp,
+                    DisplayLang.CN to strings.scriptLangCn,
                 ),
                 selected = settings.lang,
                 onSelect = { lang -> onUpdateSettings { it.copy(lang = lang) } },
@@ -353,7 +356,7 @@ fun GameMenu(
             val chips: List<@Composable (Modifier) -> Unit> = listOf(
                 { m ->
                     QuickControlChip(
-                        label = "窗口: ${settings.windowMode.label} ⇄",
+                        label = strings.menuChipWindow(settings.windowMode.label),
                         active = false,
                         modifier = m,
                         onClick = { onUpdateSettings { it.copy(windowMode = it.windowMode.next()) } },
@@ -361,7 +364,7 @@ fun GameMenu(
                 },
                 { m ->
                     QuickControlChip(
-                        label = "字号: ${TextScale.clamp(settings.textScale)}%",
+                        label = strings.menuChipFont(TextScale.clamp(settings.textScale)),
                         active = settings.textScale != TextScale.DEFAULT,
                         modifier = m,
                         onClick = { onUpdateSettings { it.withTextScale(it.nextTextScale()) } },
@@ -369,14 +372,14 @@ fun GameMenu(
                 },
                 { m ->
                     QuickControlChip(
-                        label = if (settings.aiTapToAnalyze) "✨ 点词: 开 ON" else "✨ 点词: 关 OFF",
+                        label = if (settings.aiTapToAnalyze) strings.menuChipTapOn else strings.menuChipTapOff,
                         active = settings.aiTapToAnalyze,
                         modifier = m,
                         onClick = { onUpdateSettings { it.copy(aiTapToAnalyze = !it.aiTapToAnalyze) } },
                     )
                 },
-                { m -> QuickControlChip(label = "📒 学习记录", active = false, modifier = m, onClick = { onNotebook?.invoke() }) },
-                { m -> QuickControlChip(label = "👁 隐藏窗口", active = false, modifier = m, onClick = onHideWindow) },
+                { m -> QuickControlChip(label = strings.menuChipNotebook, active = false, modifier = m, onClick = { onNotebook?.invoke() }) },
+                { m -> QuickControlChip(label = strings.menuChipHideWindow, active = false, modifier = m, onClick = onHideWindow) },
             )
             if (compact) {
                 FlowRow(
@@ -398,16 +401,15 @@ fun GameMenu(
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x22FFFFFF)))
 
             if (compact) {
-                // Narrow: 2 per row — [保存][读取] / [快读 Q.LOAD][回想 Log] / [设置 Config][返回标题] / [返回游戏].
                 val exit: () -> Unit = { if (inReplayMode) onTitle() else confirmTitle = true }
                 val buttons = buildList<Pair<String, () -> Unit>> {
                     if (!inReplayMode) {
-                        add("保存 Save" to onSave)
-                        add("读取 Load" to onLoad)
-                        add("快读 Q.LOAD" to onQuickLoad)
+                        add(strings.menuSave to onSave)
+                        add(strings.menuLoad to onLoad)
+                        add(strings.menuQuickLoad to onQuickLoad)
                     }
-                    add("回想 Log" to onLog)
-                    add("设置 Config" to onConfig)
+                    add(strings.menuLog to onLog)
+                    add(strings.menuConfig to onConfig)
                     add(exitLabel to exit)
                 }
                 buttons.chunked(2).forEach { row ->
@@ -416,23 +418,23 @@ fun GameMenu(
                         if (row.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-                MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), compact = true, onClick = onResume)
+                MenuButton(strings.menuResume, modifier = Modifier.fillMaxWidth(), compact = true, onClick = onResume)
             } else {
                 if (!inReplayMode) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MenuButton("保存 Save", modifier = Modifier.weight(1f), onClick = onSave)
-                        MenuButton("读取 Load", modifier = Modifier.weight(1f), onClick = onLoad)
-                        MenuButton("快读 Q.LOAD", modifier = Modifier.weight(1f), onClick = onQuickLoad)
+                        MenuButton(strings.menuSave, modifier = Modifier.weight(1f), onClick = onSave)
+                        MenuButton(strings.menuLoad, modifier = Modifier.weight(1f), onClick = onLoad)
+                        MenuButton(strings.menuQuickLoad, modifier = Modifier.weight(1f), onClick = onQuickLoad)
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MenuButton("回想 Log", modifier = Modifier.weight(1f), onClick = onLog)
-                    MenuButton("设置 Config", modifier = Modifier.weight(1f), onClick = onConfig)
+                    MenuButton(strings.menuLog, modifier = Modifier.weight(1f), onClick = onLog)
+                    MenuButton(strings.menuConfig, modifier = Modifier.weight(1f), onClick = onConfig)
                     MenuButton(exitLabel, modifier = Modifier.weight(1f)) {
                         if (inReplayMode) onTitle() else confirmTitle = true
                     }
                 }
-                MenuButton("返回游戏 Resume", modifier = Modifier.fillMaxWidth(), onClick = onResume)
+                MenuButton(strings.menuResume, modifier = Modifier.fillMaxWidth(), onClick = onResume)
             }
         }
     }
@@ -440,8 +442,8 @@ fun GameMenu(
         AlertDialog(
             onDismissRequest = { confirmTitle = false },
             confirmButton = { TextButton(onClick = { confirmTitle = false; onTitle() }) { Text(exitLabel) } },
-            dismissButton = { TextButton(onClick = { confirmTitle = false }) { Text("取消 Cancel") } },
-            text = { Text("返回标题画面？（当前进度将自动保存至「继续」）\nタイトルに戻りますか？") },
+            dismissButton = { TextButton(onClick = { confirmTitle = false }) { Text(strings.commonCancel) } },
+            text = { Text(strings.menuReturnTitleConfirm) },
         )
     }
 }

@@ -52,6 +52,8 @@ import com.wa2port.android.game.GameSession
 import com.wa2port.android.game.NamePlate
 import com.wa2port.android.sync.CloudSyncManager
 import com.wa2port.android.update.UpdateController
+import com.wa2port.core.i18n.AppLanguage
+import com.wa2port.core.i18n.Wa2Strings
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
 import com.wa2port.core.update.AgentFeedbackHelper
@@ -95,20 +97,30 @@ fun ConfigScreen(
 }
 
 /** Top-level category filter tabs in [ConfigPanel] for 1-tap access without long scrolling. */
-enum class ConfigCategory(val label: String) {
-    ALL("全部 All"),
-    TEXT_DISPLAY("文字与显示 Text & Display"),
-    AUDIO("音频 Audio"),
-    CLOUD_SYNC("☁ 云端同步 Cloud Sync"),
-    AI("✨ AI 学习"),
-    UPDATE("版本与反馈 Update"),
+enum class ConfigCategory {
+    ALL,
+    TEXT_DISPLAY,
+    AUDIO,
+    CLOUD_SYNC,
+    AI,
+    UPDATE,
+    ;
+
+    fun localizedLabel(s: Wa2Strings): String = when (this) {
+        ALL -> s.configTabAll
+        TEXT_DISPLAY -> s.configTabTextDisplay
+        AUDIO -> s.configTabAudio
+        CLOUD_SYNC -> s.configTabCloudSync
+        AI -> s.configTabAi
+        UPDATE -> s.configTabUpdate
+    }
 }
 
-/** Preset values for `settings.windowOpacity`: 清晰 85%, 原作 70%, 通透 50%. */
-val WINDOW_OPACITY_PRESETS: List<Pair<Int, String>> = listOf(
-    85 to "清晰 85%",
-    70 to "原作 70%",
-    50 to "通透 50%",
+/** Preset values for `settings.windowOpacity`: 85%, 70%, 50%. */
+fun windowOpacityPresets(s: Wa2Strings): List<Pair<Int, String>> = listOf(
+    85 to s.opacityPresetClear,
+    70 to s.opacityPresetOriginal,
+    50 to s.opacityPresetTranslucent,
 )
 
 /**
@@ -147,13 +159,14 @@ fun ConfigPanel(
     // 撰写反馈: the in-layout AgentFeedbackDialog overlays the whole panel (not the scrolled list).
     var showFeedbackDialog by rememberSaveable { mutableStateOf(false) }
 
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     Box(Modifier.fillMaxSize()) {
         // Safe-area / IME padding exactly once here (not on the outer Box hosting AgentFeedbackDialog,
         // which pads itself, and not again on the scroll Column below).
         Column(Modifier.fillMaxSize().screenSafePadding().padding(horizontal = if (compact) 16.dp else 32.dp, vertical = 10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("设置 Config  コンフィグ", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
+                Text(strings.configTitle, color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
                 CloseButton(onClose)
             }
             // Sticky category tab bar: 1 tap jumps straight to ✨ AI 学习 or 版本更新 without scrolling.
@@ -179,7 +192,7 @@ fun ConfigPanel(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            tab.label,
+                            tab.localizedLabel(strings),
                             color = if (selected) Wa2Colors.Night else Wa2Colors.Text,
                             fontSize = 13.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -190,60 +203,76 @@ fun ConfigPanel(
 
             Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(scrollState)) {
                 if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.TEXT_DISPLAY) {
-                    SectionTitle("文字 Text")
+                    SectionTitle(strings.configSectionText)
                     LabeledSlider(
-                        "文字速度 Text speed", settings.textSpeed, 5..Settings.TEXT_SPEED_INSTANT,
-                        if (settings.instantText) "瞬间 Instant" else "${settings.textSpeed}/s",
+                        strings.configTextSpeed, settings.textSpeed, 5..Settings.TEXT_SPEED_INSTANT,
+                        if (settings.instantText) strings.configTextSpeedInstant else "${settings.textSpeed}/s",
                     ) { v -> onChange { it.copy(textSpeed = v) } }
-                    LabeledSlider("自动速度 Auto delay", settings.autoDelayMs / 100, 3..60, "%.1f s".format(Locale.ROOT, settings.autoDelayMs / 1000f)) { v ->
+                    LabeledSlider(strings.configAutoDelay, settings.autoDelayMs / 100, 3..60, "%.1f s".format(Locale.ROOT, settings.autoDelayMs / 1000f)) { v ->
                         onChange { it.copy(autoDelayMs = v * 100) }
                     }
                     FontSizeSection(settings.textScale, settings.lang) { v -> onChange { it.withTextScale(v) } }
-                    OptionRow("对话框不透明度预设") {
+                    OptionRow(strings.configWindowOpacityPresets) {
                         Segmented(
-                            WINDOW_OPACITY_PRESETS,
+                            windowOpacityPresets(strings),
                             settings.windowOpacity,
                             { v -> onChange { it.copy(windowOpacity = v) } },
                         )
                     }
-                    LabeledSlider("窗口透明度 Window", settings.windowOpacity, 0..100, "${settings.windowOpacity}%") { v -> onChange { it.copy(windowOpacity = v) } }
+                    LabeledSlider(strings.configWindowOpacity, settings.windowOpacity, 0..100, "${settings.windowOpacity}%") { v -> onChange { it.copy(windowOpacity = v) } }
 
-                    SectionTitle("显示 Display")
-                    OptionRow("屏幕方向 Orientation") {
+                    SectionTitle(strings.configSectionDisplay)
+                    OptionRow(strings.configAppLanguage) {
                         Segmented(
-                            OrientationMode.entries.map { it to it.label },
+                            listOf(
+                                AppLanguage.SYSTEM to strings.langSystemDefault,
+                                AppLanguage.ZH to "中文",
+                                AppLanguage.EN to "English",
+                                AppLanguage.JA to "日本語",
+                            ),
+                            settings.appLanguage,
+                            { v -> onChange { it.copy(appLanguage = v) } },
+                        )
+                    }
+                    OptionRow(strings.configOrientation) {
+                        Segmented(
+                            OrientationMode.entries.map { it to it.localizedLabel(strings) },
                             settings.orientation, { v -> onChange { it.copy(orientation = v) } },
                         )
                     }
                     Text(
-                        "竖屏（默认）：画面保持 16:9，台词显示在下方阅读区",
+                        strings.configOrientationHint,
                         color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
                     )
-                    OptionRow("显示语言 Language") {
+                    OptionRow(strings.configScriptLanguage) {
                         Segmented(
-                            listOf(DisplayLang.BOTH to "双语 中+日", DisplayLang.CN to "中文", DisplayLang.JP to "日本語"),
+                            listOf(
+                                DisplayLang.BOTH to strings.scriptLangBoth,
+                                DisplayLang.CN to strings.scriptLangCn,
+                                DisplayLang.JP to strings.scriptLangJp,
+                            ),
                             settings.lang, { v -> onChange { it.copy(lang = v) } },
                         )
                     }
-                    OptionRow("窗口模式 Window mode") {
+                    OptionRow(strings.configWindowMode) {
                         Segmented(
-                            listOf(WindowMode.ADV to "ADV 对话框", WindowMode.NOVEL to "NOVEL 全屏"),
+                            listOf(WindowMode.ADV to strings.windowModeAdv, WindowMode.NOVEL to strings.windowModeNovel),
                             settings.windowMode, { v -> onChange { it.copy(windowMode = v) } },
                         )
                     }
-                    OptionRow("快进 Skip") {
+                    OptionRow(strings.configSkip) {
                         Segmented(
-                            listOf(false to "仅已读 Read only (既読)", true to "全部 All"),
+                            listOf(false to strings.configSkipReadOnly, true to strings.configSkipAll),
                             settings.skipAll, { v -> onChange { it.copy(skipAll = v) } },
                         )
                     }
                 }
 
                 if (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.AUDIO) {
-                    SectionTitle("音量 Volume")
-                    LabeledSlider("音乐 BGM", settings.bgmVolume, 0..100, "${settings.bgmVolume}") { v -> onChange { it.copy(bgmVolume = v) } }
-                    LabeledSlider("音效 SE", settings.seVolume, 0..100, "${settings.seVolume}") { v -> onChange { it.copy(seVolume = v) } }
-                    LabeledSlider("语音 Voice", settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
+                    SectionTitle(strings.configSectionVolume)
+                    LabeledSlider(strings.configVolumeBgm, settings.bgmVolume, 0..100, "${settings.bgmVolume}") { v -> onChange { it.copy(bgmVolume = v) } }
+                    LabeledSlider(strings.configVolumeSe, settings.seVolume, 0..100, "${settings.seVolume}") { v -> onChange { it.copy(seVolume = v) } }
+                    LabeledSlider(strings.configVolumeVoice, settings.voiceVolume, 0..100, "${settings.voiceVolume}") { v -> onChange { it.copy(voiceVolume = v) } }
                 }
 
                 if (cloudSync != null && (activeCategory == ConfigCategory.ALL || activeCategory == ConfigCategory.CLOUD_SYNC)) {
@@ -281,17 +310,18 @@ fun ConfigPanel(
  */
 @Composable
 private fun FontSizeSection(textScale: Int, lang: DisplayLang, onSet: (Int) -> Unit) {
+    val strings = LocalAppStrings.current
     val current = TextScale.clamp(textScale)
-    OptionRow("字号预设 Presets") {
+    OptionRow(strings.configFontPresets) {
         Segmented(
-            TextScale.PRESETS.map { (p, label) -> p to "$label $p%" }, current, onSet,
+            TextScale.localizedPresets(strings).map { (p, label) -> p to "$label $p%" }, current, onSet,
         )
     }
     val compact = LocalCompact.current
     // Compact: label above a `[−][slider][+][%]` row; wide: label inline (unchanged).
-    if (compact) Text("文字大小 Text size", color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+    if (compact) Text(strings.configFontSize, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (!compact) Text("文字大小 Text size", color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.width(150.dp))
+        if (!compact) Text(strings.configFontSize, color = Wa2Colors.Text, fontSize = 14.sp, modifier = Modifier.width(150.dp))
         StepButton("−", enabled = current > TextScale.MIN) { onSet(TextScale.step(current, up = false)) }
         Slider(
             value = current.toFloat(),
@@ -344,10 +374,11 @@ private fun FontPreviewCard(percent: Int, lang: DisplayLang, portrait: Boolean =
     } else {
         MessageLayout.lineCap(MessageLayout.advSingleWidth(), textStage, MessageLayout.SINGLE_MAX_CHARS)
     }.toInt()
+    val strings = LocalAppStrings.current
     val lines = if (twoCol) MessageLayout.ADV_TWO_COL_LINES else MessageLayout.ADV_MIN_LINES
     val windowFrac = MessageLayout.ADV_BOTTOM - MessageLayout.advTop(t, twoCol)
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
-        Text("实时预览 Preview", color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+        Text(strings.configPreviewTitle, color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
         BoxWithConstraints(Modifier.fillMaxWidth().widthIn(max = 720.dp)) {
             // k: device px per stage px, taking the card width as the ADV window width.
             val k = with(density) { maxWidth.toPx() } / ((MessageLayout.ADV_RIGHT - MessageLayout.ADV_LEFT) * MessageLayout.STAGE_W)
@@ -387,8 +418,13 @@ private fun FontPreviewCard(percent: Int, lang: DisplayLang, portrait: Boolean =
             }
         }
         Text(
-            "$percent%${TextScale.presetLabel(percent)?.let { " · $it" } ?: ""} · ${lines}行 × ≤${capChars}字/行 · " +
-                "窗口 Window ${Math.round(windowFrac * 100)}%",
+            strings.configPreviewCaptionLandscape(
+                percent,
+                TextScale.presetLabel(percent, strings),
+                lines,
+                capChars,
+                Math.round(windowFrac * 100),
+            ),
             color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
         )
     }
@@ -408,11 +444,12 @@ private const val PREVIEW_STACKED_GAP_DP = 18f
  */
 @Composable
 private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
+    val strings = LocalAppStrings.current
     val t = TextScale.factor(percent)
     val density = LocalDensity.current
     val s = PREVIEW_DECK_SCALE
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)) {
-        Text("实时预览 Preview · 实际大小 1:1", color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+        Text(strings.configPreviewPortraitTitle, color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             fun spOfDp(v: Float) = with(density) { v.dp.toSp() }
             val bilingual = lang == DisplayLang.BOTH
@@ -467,8 +504,12 @@ private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
                     }
                 }
                 Text(
-                    "$percent%${TextScale.presetLabel(percent)?.let { " · $it" } ?: ""} · " +
-                        (if (twoCol) "双栏" else if (bilingual) "中日上下排" else "单语") + " · ≤${capChars}字/行",
+                    strings.configPreviewCaptionPortrait(
+                        percent,
+                        TextScale.presetLabel(percent, strings),
+                        if (twoCol) strings.configPreviewLayoutTwoCol else if (bilingual) strings.configPreviewLayoutStacked else strings.configPreviewLayoutSingle,
+                        capChars,
+                    ),
                     color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp),
                 )
             }

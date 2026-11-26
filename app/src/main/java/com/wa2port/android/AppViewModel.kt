@@ -30,6 +30,7 @@ import com.wa2port.android.update.UpdateController
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.SystemData
 import com.wa2port.core.engine.Wa2Engine
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.sync.SystemDataMerger
 import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 
 /** Top-level destinations (simple back stack; no navigation library needed). */
 sealed interface Screen {
@@ -190,12 +192,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ------------------------------------------------------------------ settings
 
+    private fun systemLocale(): Locale =
+        ctx.resources.configuration.locales[0] ?: Locale.getDefault()
+
     private fun loadInitialSettings(): Settings {
         val loaded = settingsStore.load()
         val prefEmail = feedbackPrefs.getString(AgentFeedbackHelper.PREF_KEY_EMAIL, "")
             ?.let(AgentFeedbackHelper::normalizeEmail)
             .orEmpty()
-        return if (loaded.agentFeedbackEmail.isEmpty() && prefEmail.isNotEmpty()) {
+        val resolved = if (loaded.agentFeedbackEmail.isEmpty() && prefEmail.isNotEmpty()) {
             loaded.copy(agentFeedbackEmail = prefEmail).also(settingsStore::save)
         } else {
             if (loaded.agentFeedbackEmail != prefEmail) {
@@ -203,6 +208,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             loaded
         }
+        Wa2I18n.applyPreference(resolved.appLanguage, systemLocale())
+        return resolved
     }
 
     fun updateSettings(f: (Settings) -> Settings) {
@@ -211,6 +218,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val next = if (normalizedEmail == rawNext.agentFeedbackEmail) rawNext else rawNext.copy(agentFeedbackEmail = normalizedEmail)
         if (next == settings) return
         val emailChanged = next.agentFeedbackEmail != settings.agentFeedbackEmail
+        if (next.appLanguage != settings.appLanguage) {
+            Wa2I18n.applyPreference(next.appLanguage, systemLocale())
+        }
         settings = next
         settingsStore.save(next)
         if (emailChanged) {
@@ -252,7 +262,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (!AssetLocator.isValid(dest)) {
                     importProgress = result.copy(
                         phase = ImportProgress.Phase.FAILED,
-                        message = "复制完成，但未找到 script.pak / ck-gal.pak。请选择游戏根目录。Copied, but no script.pak/ck-gal.pak found — pick the game's root folder.",
+                        message = Wa2I18n.s.importErrNoScriptPak,
                     )
                 }
                 rescanAssets()
@@ -288,7 +298,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun newSession(): GameSession? {
         val e = ensureEngine() ?: run {
-            error = "未找到游戏资源 Assets not found"
+            error = Wa2I18n.s.commonAssetNotFound
             return null
         }
         ai.close(session)
@@ -316,17 +326,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startGame(scene: String) {
         if (busy != null) return
         viewModelScope.launch {
-            busy = "载入中… Loading…"
+            busy = Wa2I18n.s.vmLoading
             try {
                 val s = newSession() ?: return@launch
                 if (!s.startNew(scene)) {
-                    error = "无法开始场景 Cannot start scene $scene"
+                    error = Wa2I18n.s.vmCannotStartScene(scene)
                     return@launch
                 }
                 resetTo(Screen.Title)
                 navigate(Screen.Game)
             } catch (t: Throwable) {
-                error = "启动失败 Start failed: ${t.message}"
+                error = Wa2I18n.s.vmStartFailed(t.message ?: t.javaClass.simpleName)
             } finally {
                 busy = null
             }
@@ -337,15 +347,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadGame(slot: Int) {
         if (busy != null) return
         viewModelScope.launch {
-            busy = "载入中… Loading…"
+            busy = Wa2I18n.s.vmLoading
             try {
-                val data = saves.read(slot) ?: run { error = "存档损坏 Save unreadable"; return@launch }
+                val data = saves.read(slot) ?: run { error = Wa2I18n.s.vmSaveUnreadable; return@launch }
                 val s = newSession() ?: return@launch
                 s.loadData(data)
                 resetTo(Screen.Title)
                 navigate(Screen.Game)
             } catch (t: Throwable) {
-                error = "读档失败 Load failed: ${t.message}"
+                error = Wa2I18n.s.vmLoadFailed(t.message ?: t.javaClass.simpleName)
             } finally {
                 busy = null
             }
@@ -356,16 +366,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startReplay(slotNumber: Int, fallbackScript: String? = null) {
         if (busy != null) return
         viewModelScope.launch {
-            busy = "载入回想… Loading replay…"
+            busy = Wa2I18n.s.vmLoadingReplay
             try {
                 val s = newSession() ?: return@launch
                 if (!s.startReplay(slotNumber, fallbackScript)) {
-                    error = "无法开始回想 Cannot start replay #$slotNumber"
+                    error = Wa2I18n.s.vmCannotStartReplay(slotNumber)
                     return@launch
                 }
                 if (backStack.lastOrNull() != Screen.Game) navigate(Screen.Game)
             } catch (t: Throwable) {
-                error = "启动失败 Start failed: ${t.message}"
+                error = Wa2I18n.s.vmStartFailed(t.message ?: t.javaClass.simpleName)
             } finally {
                 busy = null
             }

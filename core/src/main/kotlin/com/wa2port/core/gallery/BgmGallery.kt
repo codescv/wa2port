@@ -4,6 +4,8 @@ import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.Stage
 import com.wa2port.core.engine.SystemData
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import java.util.Locale
 
 /**
@@ -15,6 +17,12 @@ import java.util.Locale
 enum class BgmPage(val pageIndex: Int, val label: String) {
     PAGE_1(0, "Page 1 · IC"),
     PAGE_2(1, "Page 2 · CC / Coda"),
+    ;
+
+    fun localizedLabel(strings: Wa2Strings = Wa2I18n.s): String = when (this) {
+        PAGE_1 -> strings.bgmPage1Label
+        PAGE_2 -> strings.bgmPage2Label
+    }
 }
 
 /**

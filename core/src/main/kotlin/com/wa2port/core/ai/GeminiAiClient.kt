@@ -1,5 +1,6 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.SerializationException
 import java.io.IOException
 import java.net.HttpRetryException
@@ -167,13 +168,13 @@ class GeminiAiClient(
         s.validationError()?.let { throw AiException(AiErrorCode.NOT_CONFIGURED, it) }
         var host = ""
         try {
-            if (cancel?.isCancelled == true) throw AiException(AiErrorCode.CANCELLED, "Request cancelled")
+            if (cancel?.isCancelled == true) throw AiException(AiErrorCode.CANCELLED, Wa2I18n.s.errCancelled)
             val url = AiEndpoints.generateContentUrl(s, req.model)
             host = AiEndpoints.hostOf(url)
             val headers = AiEndpoints.headers(s, bearerToken(s, cancel))
             val body = ExplainJsonCodec.buildGenerateBody(req).toByteArray(Charsets.UTF_8)
             val res = transport.post(url, headers, body, req.timeoutMs, cancel)
-            if (cancel?.isCancelled == true) throw AiException(AiErrorCode.CANCELLED, "Request cancelled")
+            if (cancel?.isCancelled == true) throw AiException(AiErrorCode.CANCELLED, Wa2I18n.s.errCancelled)
             if (res.status !in 200..299) {
                 throw AiException(ExplainJsonCodec.mapHttpError(res.status, res.body), ExplainJsonCodec.extractErrorMessage(res.body, res.status), httpStatus = res.status)
             }
@@ -186,15 +187,15 @@ class GeminiAiClient(
     /** Translates any failure into an [AiException] (cancellation wins over the I/O error it causes). */
     private fun mapError(e: Exception, cancel: CancelToken?, host: String, timeoutMs: Int): AiException {
         if (e is AiException) return e
-        if (cancel?.isCancelled == true) return AiException(AiErrorCode.CANCELLED, "Request cancelled", e)
+        if (cancel?.isCancelled == true) return AiException(AiErrorCode.CANCELLED, Wa2I18n.s.errCancelled, e)
         val where = if (host.isNotEmpty()) " ($host)" else ""
         return when (e) {
-            is SocketTimeoutException -> AiException(AiErrorCode.TIMEOUT, "请求超时 Request timed out after $timeoutMs ms$where", e)
-            is UnknownServiceException -> AiException(AiErrorCode.NETWORK, "系统禁止明文 http：请使用 https 地址$where", e)
-            is UnknownHostException -> AiException(AiErrorCode.NETWORK, "无法解析服务器地址 Unknown host$where", e)
-            is IOException -> AiException(AiErrorCode.NETWORK, "网络错误 Network error$where: ${e.message ?: e.javaClass.simpleName}", e)
-            is SerializationException -> AiException(AiErrorCode.INVALID_RESPONSE, "模型返回了无法解析的内容: ${e.message?.take(160)}", e)
-            is IllegalArgumentException -> AiException(AiErrorCode.INVALID_ARGUMENT, "请求参数无效 Invalid request$where: ${e.message}", e)
+            is SocketTimeoutException -> AiException(AiErrorCode.TIMEOUT, Wa2I18n.s.errAiTimedOutMs(timeoutMs, where), e)
+            is UnknownServiceException -> AiException(AiErrorCode.NETWORK, Wa2I18n.s.errCleartextBlocked(where), e)
+            is UnknownHostException -> AiException(AiErrorCode.NETWORK, Wa2I18n.s.errUnknownHost(where), e)
+            is IOException -> AiException(AiErrorCode.NETWORK, Wa2I18n.s.errNetworkError(where, e.message ?: e.javaClass.simpleName), e)
+            is SerializationException -> AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiUnparseableContent(e.message?.take(160).orEmpty()), e)
+            is IllegalArgumentException -> AiException(AiErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errAiInvalidRequest(where, e.message.orEmpty()), e)
             else -> AiException(AiErrorCode.NETWORK, "${e.javaClass.simpleName}: ${e.message}$where", e)
         }
     }
@@ -212,7 +213,7 @@ class GeminiAiClient(
     fun explainSentence(req: ExplainRequest, cache: ExplainCache?, cancel: CancelToken? = null): SentenceExplanation {
         val s = settings()
         s.validationError()?.let { throw AiException(AiErrorCode.NOT_CONFIGURED, it) }
-        if (req.sentence.isBlank()) throw AiException(AiErrorCode.INVALID_ARGUMENT, "这一行没有日文 No Japanese text")
+        if (req.sentence.isBlank()) throw AiException(AiErrorCode.INVALID_ARGUMENT, Wa2I18n.s.aiNoJapaneseText)
         val model = AiEndpoints.sanitizeModel(s.model)
         val id = ExplainCache.key(req, model)
         val useCache = cache != null && s.cacheEnabled
@@ -249,7 +250,7 @@ class GeminiAiClient(
         } catch (e: AiException) {
             if (e.code != AiErrorCode.INVALID_RESPONSE) throw e
             if (res.finishReason == "MAX_TOKENS") {
-                throw AiException(AiErrorCode.INVALID_RESPONSE, "回答被截断：请提高 maxOutputTokens / 降低思考预算 (output truncated at MAX_TOKENS)", e)
+                throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiTruncatedMaxTokens, e)
             }
             null
         }
@@ -261,7 +262,7 @@ class GeminiAiClient(
         val expl = try {
             ExplainJsonCodec.toSentenceExplanation(raw, req, ExplanationMeta(id = id, model = res.model, usage = res.usage, now = now()))
         } catch (e: Exception) {
-            throw AiException(AiErrorCode.INVALID_RESPONSE, "无法对齐模型输出 Cannot assemble explanation: ${e.message}", e)
+            throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiCannotAssemble(e.message ?: e.javaClass.simpleName), e)
         }
         if (useCache) {
             runCatching {
@@ -287,7 +288,7 @@ class GeminiAiClient(
     ): FollowUpMessage {
         val s = settings()
         val q = question.trim()
-        if (q.isEmpty()) throw AiException(AiErrorCode.INVALID_ARGUMENT, "问题为空 Empty question")
+        if (q.isEmpty()) throw AiException(AiErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errAiEmptyQuestion)
         val prompt = buildFollowUpPrompt(expl, history, q, persona)
         val res = generate(
             GeminiRequest(
@@ -302,7 +303,7 @@ class GeminiAiClient(
             cancel,
         )
         val answer = res.text.trim()
-        if (answer.isEmpty()) throw AiException(AiErrorCode.INVALID_RESPONSE, "模型没有回答 Empty answer")
+        if (answer.isEmpty()) throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiEmptyAnswer)
         val t = now()
         val userMsg = FollowUpMessage(newId(), FollowUpMessage.ROLE_USER, q, t)
         val modelMsg = FollowUpMessage(newId(), FollowUpMessage.ROLE_MODEL, answer, t, res.usage)

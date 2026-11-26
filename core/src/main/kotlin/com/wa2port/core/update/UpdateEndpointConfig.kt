@@ -1,5 +1,7 @@
 package com.wa2port.core.update
 
+import com.wa2port.core.i18n.Wa2I18n
+
 /**
  * Where to look for releases, from one user-facing string:
  * - empty → the official GitHub Releases API;
@@ -30,11 +32,11 @@ data class UpdateEndpointConfig(val customUpdateUrl: String = "") {
         if (t.isEmpty()) return null
         val lower = t.lowercase()
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-            return "地址必须以 http:// 或 https:// 开头 URL must start with http(s)://"
+            return Wa2I18n.s.errUrlMustStartHttp
         }
-        if (t.any { it.isWhitespace() }) return "地址不能包含空格 URL must not contain spaces"
+        if (t.any { it.isWhitespace() }) return Wa2I18n.s.errUrlNoSpaces
         val host = t.substringAfter("://").substringBefore('/').substringBefore('?')
-        if (host.isEmpty()) return "地址缺少主机名 URL has no host"
+        if (host.isEmpty()) return Wa2I18n.s.errUrlMissingHost
         return null
     }
 

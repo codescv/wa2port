@@ -112,12 +112,13 @@ fun TitleScreen(vm: AppViewModel, onNotebook: (() -> Unit)? = null) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TitleHero(vm: AppViewModel, ready: Boolean, onNotebook: (() -> Unit)?, compact: Boolean) {
+    val strings = LocalAppStrings.current
     val isPortrait = LocalIsPortrait.current
     Text(
         "WHITE ALBUM 2", color = Wa2Colors.Text, fontSize = if (compact) 30.sp else 40.sp,
         fontWeight = FontWeight.Light, letterSpacing = if (compact) 4.sp else 6.sp,
     )
-    Text("白色相簿2  ·  ホワイトアルバム2  ·  v${vm.update.currentVersion}", color = Wa2Colors.Accent, fontSize = 18.sp)
+    Text(strings.titleSubtitle(vm.update.currentVersion), color = Wa2Colors.Accent, fontSize = 18.sp)
     Spacer(Modifier.height(10.dp))
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -129,15 +130,15 @@ private fun TitleHero(vm: AppViewModel, ready: Boolean, onNotebook: (() -> Unit)
                 if (vm.update.state is UpdateState.Idle || vm.update.state is UpdateState.Error) vm.update.checkForUpdates()
             }
         }
-        TitlePill("📒 学习记录 Notebook", Modifier.align(Alignment.CenterVertically)) { onNotebook?.invoke() }
+        TitlePill(strings.titleNotebookPill, Modifier.align(Alignment.CenterVertically)) { onNotebook?.invoke() }
         TitlePill(
-            if (isPortrait) "⟳ 横屏 Landscape" else "⟳ 竖屏 Portrait",
+            if (isPortrait) strings.titleLandscapePill else strings.titlePortraitPill,
             Modifier.align(Alignment.CenterVertically),
         ) { vm.updateSettings { it.copy(orientation = it.orientation.toggle(isPortrait)) } }
     }
     Spacer(Modifier.height(12.dp))
     Text(
-        if (ready) "资源 Assets: ${vm.assetRoot?.absolutePath}" else "未找到游戏资源 — 请先设置资源文件夹\nGame assets not found — open Asset Folder Setup",
+        if (ready) strings.titleAssetsReady(vm.assetRoot?.absolutePath.orEmpty()) else strings.titleAssetsMissing,
         color = if (ready) Wa2Colors.TextDim else Color(0xFFFFB0A0),
         fontSize = 12.sp,
         maxLines = if (compact) 2 else Int.MAX_VALUE,
@@ -168,33 +169,34 @@ private fun TitlePill(label: String, modifier: Modifier = Modifier, onClick: () 
  */
 @Composable
 private fun TitleButtons(vm: AppViewModel, ready: Boolean, singleColumn: Boolean, modifier: Modifier) {
+    val strings = LocalAppStrings.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {
         vm.latestContinuable?.let { latest ->
             TitleButton(
-                "继续 Continue",
-                "最近: ${sceneLabel(latest.scene)} · ${relativeTimeText(latest.timestamp)}",
+                strings.titleContinue,
+                strings.titleContinueSub(sceneLabel(latest.scene, strings), relativeTimeText(latest.timestamp, strings = strings)),
                 enabled = ready, primary = true, modifier = Modifier.fillMaxWidth(),
             ) { vm.continueLatest() }
         }
         TitleRow(
             singleColumn,
-            { m -> TitleButton("序章 IC", "はじめから 1001", enabled = ready, modifier = m) { vm.startGame("1001") } },
-            { m -> TitleButton("终章 CC", "はじめから 2001", enabled = ready, modifier = m) { vm.startGame("2001") } },
+            { m -> TitleButton(strings.titleIc, strings.titleIcSub, enabled = ready, modifier = m) { vm.startGame("1001") } },
+            { m -> TitleButton(strings.titleCc, strings.titleCcSub, enabled = ready, modifier = m) { vm.startGame("2001") } },
         )
         TitleRow(
             singleColumn,
-            { m -> TitleButton("读取进度 Load", "ロード", enabled = ready, modifier = m) { vm.navigate(Screen.Load) } },
-            { m -> TitleButton("场景回想 Scene Replay", "回想モード", enabled = ready, modifier = m) { vm.navigate(Screen.SceneReplay) } },
+            { m -> TitleButton(strings.titleLoad, null, enabled = ready, modifier = m) { vm.navigate(Screen.Load) } },
+            { m -> TitleButton(strings.titleSceneReplay, null, enabled = ready, modifier = m) { vm.navigate(Screen.SceneReplay) } },
         )
         TitleRow(
             singleColumn,
-            { m -> TitleButton("CG 鉴赏 Gallery", "CG モード", enabled = ready, modifier = m) { vm.navigate(Screen.Gallery) } },
-            { m -> TitleButton("音乐鉴赏 BGM", "音楽モード", enabled = ready, modifier = m) { vm.navigate(Screen.BgmGallery) } },
+            { m -> TitleButton(strings.titleCgGallery, null, enabled = ready, modifier = m) { vm.navigate(Screen.Gallery) } },
+            { m -> TitleButton(strings.titleBgmGallery, null, enabled = ready, modifier = m) { vm.navigate(Screen.BgmGallery) } },
         )
         TitleRow(
             singleColumn,
-            { m -> TitleButton("设置 Config", "コンフィグ", modifier = m) { vm.openConfig(ConfigCategory.ALL) } },
-            { m -> TitleButton("资源文件夹 Assets", "素材フォルダ設定", modifier = m) { vm.navigate(Screen.Assets) } },
+            { m -> TitleButton(strings.titleConfig, null, modifier = m) { vm.openConfig(ConfigCategory.ALL) } },
+            { m -> TitleButton(strings.titleAssets, null, modifier = m) { vm.navigate(Screen.Assets) } },
         )
     }
 }

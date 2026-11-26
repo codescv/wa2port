@@ -1,5 +1,6 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -37,12 +38,12 @@ object ServiceAccountJwt {
     /** Parses a service-account JSON key; [AiException] AUTH with a clear reason when unusable. */
     fun parse(json: String): ServiceAccountKey {
         val root = runCatching { AiJson.parseToJsonElement(json.trim()) as? JsonObject }.getOrNull()
-            ?: throw AiException(AiErrorCode.AUTH, "服务账号 JSON 无法解析 Service account key is not valid JSON")
+            ?: throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaNotValidJson)
         val type = root.str("type")
-        if (type != null && type != "service_account") throw AiException(AiErrorCode.AUTH, "JSON 不是服务账号密钥 (type=$type)")
-        val email = root.str("client_email") ?: throw AiException(AiErrorCode.AUTH, "服务账号 JSON 缺少 client_email")
-        val pk = root.str("private_key") ?: throw AiException(AiErrorCode.AUTH, "服务账号 JSON 缺少 private_key")
-        if (!pk.contains("PRIVATE KEY")) throw AiException(AiErrorCode.AUTH, "private_key 不是 PEM 格式 Not a PEM private key")
+        if (type != null && type != "service_account") throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaWrongType(type))
+        val email = root.str("client_email") ?: throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaMissingEmail)
+        val pk = root.str("private_key") ?: throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaMissingPrivateKey)
+        if (!pk.contains("PRIVATE KEY")) throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaNotPem)
         return ServiceAccountKey(
             clientEmail = email,
             privateKeyPem = pk,
@@ -56,7 +57,7 @@ object ServiceAccountJwt {
     fun pemToDer(pem: String): ByteArray {
         val text = pem.replace("\\n", "\n")
         if (text.contains("BEGIN RSA PRIVATE KEY")) {
-            throw AiException(AiErrorCode.AUTH, "需要 PKCS#8 私钥 (BEGIN PRIVATE KEY)；PKCS#8 key required, got PKCS#1")
+            throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaPkcs1NotSupported)
         }
         val body = text
             .replace(Regex("-----BEGIN [^-]+-----"), "")
@@ -65,7 +66,7 @@ object ServiceAccountJwt {
         return try {
             Base64.getDecoder().decode(body)
         } catch (e: IllegalArgumentException) {
-            throw AiException(AiErrorCode.AUTH, "private_key 不是有效的 base64 PEM", e)
+            throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaBadBase64Pem, e)
         }
     }
 
@@ -76,7 +77,7 @@ object ServiceAccountJwt {
     } catch (e: AiException) {
         throw e
     } catch (e: Exception) {
-        throw AiException(AiErrorCode.AUTH, "无法导入服务账号私钥 Cannot import private key: ${e.message}", e)
+        throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaCannotImportKey(e.message ?: e.javaClass.simpleName), e)
     }
 
     /**
@@ -136,18 +137,18 @@ class ServiceAccountTokenProvider(
         val res = try {
             transport.post(key.tokenUri, mapOf("Content-Type" to "application/x-www-form-urlencoded"), body.toByteArray(Charsets.UTF_8), timeoutMs, cancel)
         } catch (e: IOException) {
-            if (cancel?.isCancelled == true) throw AiException(AiErrorCode.CANCELLED, "Request cancelled", e)
-            val hint = if (viaProxy) "；服务账号换取令牌需直连 oauth2.googleapis.com，走代理时建议用 Access Token / Express Key 或由代理注入鉴权" else ""
-            throw AiException(AiErrorCode.NETWORK, "令牌服务器不可达 Token endpoint unreachable (${AiEndpoints.hostOf(key.tokenUri)}): ${e.message}$hint", e)
+            if (cancel?.isCancelled == true) throw AiException(AiErrorCode.CANCELLED, Wa2I18n.s.errCancelled, e)
+            val hint = if (viaProxy) Wa2I18n.s.errSaProxyHint else ""
+            throw AiException(AiErrorCode.NETWORK, Wa2I18n.s.errSaTokenEndpointUnreachable(AiEndpoints.hostOf(key.tokenUri), e.message ?: e.javaClass.simpleName, hint), e)
         }
         if (res.status !in 200..299) {
-            val skew = if (Regex("invalid_grant|Invalid JWT", RegexOption.IGNORE_CASE).containsMatchIn(res.body)) "（请检查设备时间是否准确 check device clock）" else ""
-            throw AiException(AiErrorCode.AUTH, "服务账号换取令牌失败 Token exchange failed (HTTP ${res.status}): ${res.body.take(200)}$skew", httpStatus = res.status)
+            val skew = if (Regex("invalid_grant|Invalid JWT", RegexOption.IGNORE_CASE).containsMatchIn(res.body)) Wa2I18n.s.errSaCheckClockHint else ""
+            throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaTokenExchangeFailed(res.status, res.body.take(200), skew), httpStatus = res.status)
         }
         val obj = runCatching { AiJson.parseToJsonElement(res.body) as? JsonObject }.getOrNull()
-            ?: throw AiException(AiErrorCode.AUTH, "令牌服务器返回了非 JSON Token endpoint returned non-JSON")
+            ?: throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaTokenNonJson)
         val token = (obj["access_token"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: throw AiException(AiErrorCode.AUTH, "令牌服务器未返回 access_token")
+            ?: throw AiException(AiErrorCode.AUTH, Wa2I18n.s.errSaTokenMissingAccessToken)
         val expiresIn = (obj["expires_in"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()?.takeIf { it > 0 } ?: 3600L
         cached = token to issuedAt + expiresIn * 1000
         return token

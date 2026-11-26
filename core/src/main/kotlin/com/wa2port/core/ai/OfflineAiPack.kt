@@ -1,6 +1,7 @@
 package com.wa2port.core.ai
 
 import com.wa2port.core.archive.PositionalFile
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.Serializable
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
@@ -761,15 +762,15 @@ class OfflineAiPack private constructor(
         fun readMeta(file: File): AiPackMeta = PositionalFile(file).use { pf -> readHeader(pf).first }
 
         private fun readHeader(pf: PositionalFile): Pair<AiPackMeta, Long> {
-            require(pf.length >= 24) { "文件过小，不是离线解读包 File too small" }
+            require(pf.length >= 24) { Wa2I18n.s.errPackTooSmall }
             val head = pf.read(0, 16)
             val magic = String(head, 0, 8, Charsets.US_ASCII)
-            require(magic == MAGIC) { "不是 WA2 离线解读包 Bad magic" }
+            require(magic == MAGIC) { Wa2I18n.s.errPackBadMagic }
             val bb = ByteBuffer.wrap(head).order(ByteOrder.BIG_ENDIAN)
             val version = bb.getInt(8)
-            require(version == FORMAT_VERSION) { "不支持的离线包格式版本 $version" }
+            require(version == FORMAT_VERSION) { Wa2I18n.s.errPackUnsupportedVersion(version) }
             val metaLen = bb.getInt(12)
-            require(metaLen in 2..(1 shl 20) && 16L + metaLen <= pf.length) { "离线包头损坏 Bad meta length" }
+            require(metaLen in 2..(1 shl 20) && 16L + metaLen <= pf.length) { Wa2I18n.s.errPackBadMeta }
             val meta = AiJson.decodeFromString(AiPackMeta.serializer(), String(pf.read(16, metaLen), Charsets.UTF_8))
             return meta to (16L + metaLen)
         }
@@ -782,7 +783,7 @@ class OfflineAiPack private constructor(
                 val lens = ByteBuffer.wrap(pf.read(idxPos, 8)).order(ByteOrder.BIG_ENDIAN)
                 val rawLen = lens.getInt(0)
                 val compLen = lens.getInt(4)
-                require(rawLen in 4..(256 shl 20) && compLen in 1..(256 shl 20) && idxPos + 8 + compLen <= pf.length) { "离线包索引损坏 Bad index" }
+                require(rawLen in 4..(256 shl 20) && compLen in 1..(256 shl 20) && idxPos + 8 + compLen <= pf.length) { Wa2I18n.s.errPackBadIndex }
                 val raw = PackCodec.inflate(pf.read(idxPos + 8, compLen), rawLen)
                 val d = DataInputStream(raw.inputStream())
                 val sceneCount = d.readInt()
@@ -808,7 +809,7 @@ class OfflineAiPack private constructor(
                 val bo = LongArray(bc); val bcl = IntArray(bc); val brl = IntArray(bc)
                 for (b in 0 until bc) {
                     bo[b] = dataBase + d.readLong(); bcl[b] = d.readInt(); brl[b] = d.readInt()
-                    require(bo[b] >= 0 && bcl[b] >= 0 && bo[b] + bcl[b] <= pf.length) { "离线包数据块越界 Block $b out of file" }
+                    require(bo[b] >= 0 && bcl[b] >= 0 && bo[b] + bcl[b] <= pf.length) { Wa2I18n.s.errPackBlockOutOfBounds(b) }
                 }
                 val entryCount = hc
                 require(entryCount <= bc.toLong() * per) { "entry count exceeds blocks" }

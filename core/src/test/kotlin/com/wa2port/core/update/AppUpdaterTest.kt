@@ -3,6 +3,8 @@ package com.wa2port.core.update
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import com.wa2port.core.ai.CancelToken
+import com.wa2port.core.i18n.ResolvedLanguage
+import com.wa2port.core.i18n.Wa2I18n
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -382,8 +384,14 @@ class AppUpdaterTest {
             assertEquals(UpdateErrorCode.HTTP, it.code); assertEquals(404, it.httpStatus)
             assertTrue(it.message!!.contains("No release found"))
         }
-        fails("$baseA/ratelimit").let { assertEquals(403, it.httpStatus); assertTrue(it.message!!.contains("限流")) }
-        fails("$baseA/toomany").let { assertEquals(429, it.httpStatus); assertTrue(it.message!!.contains("限流")) }
+        Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            fails("$baseA/ratelimit").let { assertEquals(403, it.httpStatus); assertTrue(it.message!!.contains("限流")) }
+            fails("$baseA/toomany").let { assertEquals(429, it.httpStatus); assertTrue(it.message!!.contains("限流")) }
+        }
+        Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            fails("$baseA/ratelimit").let { assertEquals(403, it.httpStatus); assertTrue(it.message!!.contains("rate limited", ignoreCase = true)) }
+            fails("$baseA/toomany").let { assertEquals(429, it.httpStatus); assertTrue(it.message!!.contains("rate limited", ignoreCase = true)) }
+        }
         fails("$baseA/bigerror").let {
             assertEquals(500, it.httpStatus)
             assertTrue(it.message!!.contains("upstream exploded"), it.message) // body prefix kept (N2)
@@ -430,9 +438,14 @@ class AppUpdaterTest {
 
     @Test
     fun redirectGuards() {
-        downloadFails("/loop/0", UpdateErrorCode.NETWORK).let { assertTrue(it.message!!.contains("Too many redirects")) }
-        assertEquals(1 + AppUpdater.MAX_REDIRECTS, seenA.size) // initial + 5 followed hops, 6th refused
-        downloadFails("/to-file", UpdateErrorCode.NETWORK).let { assertTrue(it.message!!.contains("不安全的重定向")) }
+        Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            downloadFails("/loop/0", UpdateErrorCode.NETWORK).let { assertTrue(it.message!!.contains("Too many redirects")) }
+            assertEquals(1 + AppUpdater.MAX_REDIRECTS, seenA.size) // initial + 5 followed hops, 6th refused
+            downloadFails("/to-file", UpdateErrorCode.NETWORK).let { assertTrue(it.message!!.contains("Insecure redirect")) }
+        }
+        Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            downloadFails("/to-file", UpdateErrorCode.NETWORK).let { assertTrue(it.message!!.contains("不安全的重定向")) }
+        }
         downloadFails("/no-location", UpdateErrorCode.HTTP)
         downloadFails("/blank-location", UpdateErrorCode.HTTP)
         downloadFails("/missing", UpdateErrorCode.HTTP).let { assertEquals(404, it.httpStatus) }
@@ -440,21 +453,32 @@ class AppUpdaterTest {
 
     @Test
     fun rejectsNonApkPayloads() {
-        downloadFails("/html-type", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("网页")) }
-        downloadFails("/html-body", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("APK")) }
+        Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            downloadFails("/html-type", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("网页")) }
+            downloadFails("/html-body", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("APK")) }
+        }
+        Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            downloadFails("/html-type", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("web page")) }
+            downloadFails("/html-body", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("APK")) }
+        }
     }
 
     @Test
     fun rejectsTruncatedDownloads() {
         // Fixed Content-Length 1000, only 500 bytes then the connection drops.
-        val e = assertThrows(UpdateException::class.java) {
-            AppUpdater().downloadApk("http://127.0.0.1:${raw.localPort}/truncated-fixed", dest(), readTimeoutMs = 5_000)
+        Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            val e = assertThrows(UpdateException::class.java) {
+                AppUpdater().downloadApk("http://127.0.0.1:${raw.localPort}/truncated-fixed", dest(), readTimeoutMs = 5_000)
+            }
+            assertEquals(UpdateErrorCode.CORRUPT_DOWNLOAD, e.code, e.message)
+            assertTrue(e.message!!.contains("下载不完整"), e.message)
+            assertNoLeftovers()
+            // Chunked (no length): starts with PK\x03\x04 but has no central directory.
+            downloadFails("/truncated-chunked", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("下载不完整或已损坏")) }
         }
-        assertEquals(UpdateErrorCode.CORRUPT_DOWNLOAD, e.code, e.message)
-        assertTrue(e.message!!.contains("下载不完整"), e.message)
-        assertNoLeftovers()
-        // Chunked (no length): starts with PK\x03\x04 but has no central directory.
-        downloadFails("/truncated-chunked", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("下载不完整或已损坏")) }
+        Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            downloadFails("/truncated-chunked", UpdateErrorCode.CORRUPT_DOWNLOAD).let { assertTrue(it.message!!.contains("incomplete or corrupt", ignoreCase = true)) }
+        }
         // Complete transfer but the release JSON promised a different size.
         downloadFails("/dl/start", UpdateErrorCode.CORRUPT_DOWNLOAD, expectedSize = apk.size + 1L)
     }

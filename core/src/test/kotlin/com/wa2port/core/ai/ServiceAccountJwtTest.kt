@@ -1,5 +1,7 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.ResolvedLanguage
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -113,9 +115,16 @@ class ServiceAccountJwtTest {
     @Test
     fun tokenProviderErrors() {
         val denied = ServiceAccountTokenProvider(saJson(), FakeTransport(HttpTransport.Response(400, """{"error":"invalid_grant","error_description":"Invalid JWT Signature."}""")))
-        val e = assertThrows(AiException::class.java) { denied.token() }
+        val e = Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            assertThrows(AiException::class.java) { denied.token() }
+        }
         assertEquals(AiErrorCode.AUTH, e.code)
         assertTrue(e.message!!.contains("设备时间"))
+        val deniedEn = ServiceAccountTokenProvider(saJson(), FakeTransport(HttpTransport.Response(400, """{"error":"invalid_grant","error_description":"Invalid JWT Signature."}""")))
+        val eEn = Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            assertThrows(AiException::class.java) { deniedEn.token() }
+        }
+        assertTrue(eEn.message!!.contains("device clock", ignoreCase = true))
         val noToken = ServiceAccountTokenProvider(saJson(), FakeTransport("""{"foo":1}"""))
         assertEquals(AiErrorCode.AUTH, assertThrows(AiException::class.java) { noToken.token() }.code)
         val offline = ServiceAccountTokenProvider(saJson(), FakeTransport(java.io.IOException("down")), viaProxy = true)

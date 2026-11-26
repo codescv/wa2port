@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.sp
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.data.SaveStore
 import com.wa2port.android.data.SlotMeta
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -93,6 +95,7 @@ fun SaveLoadPanel(
         }
     }
 
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     Column(Modifier.fillMaxSize().screenSafePadding().padding(horizontal = if (compact) 16.dp else 24.dp, vertical = 8.dp)) {
         Row(
@@ -101,7 +104,7 @@ fun SaveLoadPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                if (mode == SaveLoadMode.SAVE) "保存进度 Save  セーブ" else "读取进度 Load  ロード",
+                if (mode == SaveLoadMode.SAVE) strings.saveTitle else strings.loadTitle,
                 color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f),
                 maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
             )
@@ -113,7 +116,7 @@ fun SaveLoadPanel(
                         .clickable(onClick = onClose)
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                 ) {
-                    Text("返回游戏 Back", color = Wa2Colors.Text, fontSize = 13.sp)
+                    Text(strings.saveBackToGame, color = Wa2Colors.Text, fontSize = 13.sp)
                 }
             }
             CloseButton(onClose)
@@ -156,9 +159,9 @@ fun SaveLoadPanel(
     confirmSlot?.let { slot ->
         AlertDialog(
             onDismissRequest = { confirmSlot = null },
-            confirmButton = { TextButton(onClick = { confirmSlot = null; pick(slot) }) { Text("覆盖 Overwrite") } },
-            dismissButton = { TextButton(onClick = { confirmSlot = null }) { Text("取消 Cancel") } },
-            text = { Text("覆盖存档 ${slotName(slot)}？ / 上書きしますか？") },
+            confirmButton = { TextButton(onClick = { confirmSlot = null; pick(slot) }) { Text(strings.saveOverwrite) } },
+            dismissButton = { TextButton(onClick = { confirmSlot = null }) { Text(strings.commonCancel) } },
+            text = { Text(strings.saveOverwriteConfirm(slotName(slot))) },
         )
     }
     deleteConfirmSlot?.let { slot ->
@@ -176,10 +179,10 @@ fun SaveLoadPanel(
                             onMutated()
                         }
                     },
-                ) { Text("删除 Delete", color = Color(0xFFFF8A80)) }
+                ) { Text(strings.commonDelete, color = Color(0xFFFF8A80)) }
             },
-            dismissButton = { TextButton(onClick = { deleteConfirmSlot = null }) { Text("取消 Cancel") } },
-            text = { Text("确定删除存档 ${slotName(slot)}？此操作不可撤销。\nセーブデータ ${slotName(slot)} を削除しますか？") },
+            dismissButton = { TextButton(onClick = { deleteConfirmSlot = null }) { Text(strings.commonCancel) } },
+            text = { Text(strings.saveDeleteConfirm(slotName(slot))) },
         )
     }
 }
@@ -192,24 +195,24 @@ private fun slotName(slot: Int) = when (slot) {
     else -> "%02d".format(Locale.ROOT, slot)
 }
 
-/** Short relative age of a save for the title 「继续」 subtitle (e.g. `3 分钟前`), falling back to the date. */
-fun relativeTimeText(timestamp: Long, now: Long = System.currentTimeMillis()): String {
+/** Short relative age of a save for the title Continue subtitle, falling back to the date. */
+fun relativeTimeText(timestamp: Long, now: Long = System.currentTimeMillis(), strings: Wa2Strings = Wa2I18n.s): String {
     val diff = (now - timestamp).coerceAtLeast(0L)
     val min = diff / 60_000L
     return when {
-        min < 1 -> "刚刚 just now"
-        min < 60 -> "$min 分钟前"
-        min < 24 * 60 -> "${min / 60} 小时前"
-        min < 7 * 24 * 60 -> "${min / (24 * 60)} 天前"
+        min < 1 -> strings.timeJustNow
+        min < 60 -> strings.timeMinutesAgo(min)
+        min < 24 * 60 -> strings.timeHoursAgo(min / 60)
+        min < 7 * 24 * 60 -> strings.timeDaysAgo(min / (24 * 60))
         else -> dateFormat.format(Date(timestamp))
     }
 }
 
 /** Human label for a scene id (`1xxx` = IC, `2xxx` = CC, `3xxx` = coda). */
-fun sceneLabel(scene: String): String = when (scene.firstOrNull()) {
-    '1' -> "序章 IC · $scene"
-    '2' -> "终章 CC · $scene"
-    '3' -> "Coda · $scene"
+fun sceneLabel(scene: String, strings: Wa2Strings = Wa2I18n.s): String = when (scene.firstOrNull()) {
+    '1' -> strings.sceneLabelIc(scene)
+    '2' -> strings.sceneLabelCc(scene)
+    '3' -> strings.sceneLabelCoda(scene)
     else -> scene
 }
 
@@ -225,6 +228,7 @@ private fun SlotCard(
     onDelete: (() -> Unit)?,
     onClick: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(8.dp)
     val locked = meta?.locked == true
     // 🔒/🗑 touch boxes ≥ 36 dp on compact screens (WIDE keeps today's chip size).
@@ -248,8 +252,8 @@ private fun SlotCard(
             meta?.thumbnail?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             Text(
                 when (slot) {
-                    SaveStore.QUICK_SLOT -> "快速 QUICK"
-                    SaveStore.AUTO_SLOT -> "自动 AUTO"
+                    SaveStore.QUICK_SLOT -> strings.saveTagQuick
+                    SaveStore.AUTO_SLOT -> strings.saveTagAuto
                     else -> "No.${slotName(slot)}"
                 },
                 color = Color.White, fontSize = 11.sp,
@@ -286,24 +290,24 @@ private fun SlotCard(
             }
             if (locked && mode == SaveLoadMode.SAVE) {
                 Text(
-                    "🔒 已锁定 Locked",
+                    strings.saveTagLocked,
                     color = Color(0xFFFFCA64), fontSize = 11.sp,
                     modifier = Modifier.align(Alignment.BottomStart).background(Color(0xCC081020)).padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             } else if (justSaved) {
                 Text(
-                    "✓ 刚刚保存 Saved",
+                    strings.saveTagJustSaved,
                     color = Wa2Colors.Accent, fontSize = 11.sp,
                     modifier = Modifier.align(Alignment.BottomStart).background(Color(0xCC081020)).padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
         }
         if (meta == null) {
-            Text("— 空 Empty —", color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            Text(strings.saveSlotEmpty, color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             Text(" ", fontSize = 11.sp)
         } else {
-            val statusSuffix = if (locked) " · 🔒 已锁定" else ""
-            Text("${dateFormat.format(Date(meta.timestamp))}  ${sceneLabel(meta.scene)}$statusSuffix", color = Wa2Colors.Accent, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
+            val statusSuffix = if (locked) strings.saveStatusLockedSuffix else ""
+            Text("${dateFormat.format(Date(meta.timestamp))}  ${sceneLabel(meta.scene, strings)}$statusSuffix", color = Wa2Colors.Accent, fontSize = 11.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
             val preview = when (lang) {
                 DisplayLang.JP -> meta.previewJp
                 DisplayLang.CN -> meta.previewCn.ifBlank { meta.previewJp }

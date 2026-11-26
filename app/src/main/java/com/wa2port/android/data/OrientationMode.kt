@@ -1,6 +1,8 @@
 package com.wa2port.android.data
 
 import android.content.pm.ActivityInfo
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.serialization.Serializable
 
 /**
@@ -18,6 +20,12 @@ enum class OrientationMode(val label: String) {
 
     /** Title pill: flips to the orientation opposite to what is on screen now (AUTO included). */
     fun toggle(currentlyPortrait: Boolean): OrientationMode = if (currentlyPortrait) LANDSCAPE else PORTRAIT
+
+    fun localizedLabel(strings: Wa2Strings = Wa2I18n.s): String = when (this) {
+        PORTRAIT -> strings.orientationPortrait
+        LANDSCAPE -> strings.orientationLandscape
+        AUTO -> strings.orientationAuto
+    }
 
     /** `ActivityInfo.screenOrientation` value requested for this mode. */
     val activityOrientation: Int

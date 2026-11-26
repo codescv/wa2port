@@ -1,5 +1,6 @@
 package com.wa2port.android.sync
 
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.sync.CloudSyncSchema
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -161,7 +162,7 @@ class CloudSyncManager(
             }
         }.onFailure { err ->
             _uiState.update {
-                it.copy(lastError = "保存 OAuth 配置失败: ${redactSecrets(err.message ?: "Keystore error")}")
+                it.copy(lastError = Wa2I18n.s.syncErrSaveOAuth(redactSecrets(err.message ?: "Keystore error")))
             }
         }
     }
@@ -189,7 +190,7 @@ class CloudSyncManager(
         val creds = secretStore.load()
         val clientId = creds.clientId.trim().ifBlank { defaultClientId.trim() }
         if (clientId.isEmpty()) {
-            val msg = "请先配置 Google Android OAuth Client ID"
+            val msg = Wa2I18n.s.syncErrMissingClientId
             _uiState.update { it.copy(lastError = msg) }
             throw IllegalStateException(msg)
         }
@@ -247,7 +248,7 @@ class CloudSyncManager(
             _uiState.update { it.copy(isSigningIn = false) }
             throw e
         } catch (e: Exception) {
-            val msg = redactSecrets(e.message ?: "Google 登录失败")
+            val msg = redactSecrets(e.message ?: Wa2I18n.s.syncErrSignInFailed)
             _uiState.update { it.copy(isSigningIn = false, lastError = msg) }
             throw e
         } finally {
@@ -467,7 +468,7 @@ class CloudSyncManager(
         val gen = authGeneration.get()
         val creds = secretStore.load()
         if (!creds.isSignedIn) {
-            val err = "尚未登录 Google Drive"
+            val err = Wa2I18n.s.syncErrNotSignedIn
             _uiState.update { it.copy(isSignedIn = false, isSyncing = false, lastError = err) }
             return SyncResult(errors = listOf(err), syncedAtMs = clock.nowMs())
         }
@@ -475,7 +476,7 @@ class CloudSyncManager(
         _uiState.update {
             it.copy(
                 isSyncing = true,
-                progressMessage = "开始同步…",
+                progressMessage = Wa2I18n.s.syncProgressStart,
                 lastError = null,
             )
         }
@@ -521,7 +522,7 @@ class CloudSyncManager(
             }
             throw ce
         } catch (authErr: GDriveAuthException) {
-            val msg = redactSecrets(authErr.message ?: "Google Drive 登录已过期，请重新登录")
+            val msg = redactSecrets(authErr.message ?: Wa2I18n.s.syncErrSessionExpired)
             if (authGeneration.get() == gen) {
                 _uiState.update {
                     it.copy(

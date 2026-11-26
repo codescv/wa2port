@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -55,7 +56,10 @@ class SafImporter(private val context: Context) {
                 if (dest.usableSpace in 1 until needed) {
                     return@withContext ImportProgress(
                         ImportProgress.Phase.FAILED, 0, entries.size, 0, total,
-                        message = "空间不足 Not enough space: need %.1f GB, free %.1f GB".format(Locale.ROOT, needed / 1e9, dest.usableSpace / 1e9),
+                        message = Wa2I18n.s.importErrNotEnoughSpace(
+                            "%.1f".format(Locale.ROOT, needed / 1e9),
+                            "%.1f".format(Locale.ROOT, dest.usableSpace / 1e9),
+                        ),
                     ).also(onProgress)
                 }
                 var done = 0L
@@ -96,7 +100,7 @@ class SafImporter(private val context: Context) {
                 }
                 ImportProgress(ImportProgress.Phase.DONE, entries.size, entries.size, total, total).also(onProgress)
             } catch (c: kotlinx.coroutines.CancellationException) {
-                onProgress(ImportProgress(ImportProgress.Phase.CANCELLED, message = "已暂停，可继续 Paused — resume later"))
+                onProgress(ImportProgress(ImportProgress.Phase.CANCELLED, message = Wa2I18n.s.importPausedMsg))
                 throw c
             } catch (t: Throwable) {
                 ImportProgress(ImportProgress.Phase.FAILED, message = t.message ?: t.javaClass.simpleName).also(onProgress)

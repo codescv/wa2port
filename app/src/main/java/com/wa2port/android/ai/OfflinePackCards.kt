@@ -22,45 +22,43 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.MenuButton
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 
 private val PACK_GREEN = Color(0xFF8FD3A8)
 private val PACK_RED = Color(0xFFFF8A80)
 private val PACK_CARD = Color(0x33203050)
 
-/** `已下载 X.X / Y.Y MB (ZZ%)` (total unknown → `已下载 X.X MB`). */
-internal fun packProgressText(done: Long, total: Long): String =
+internal fun packProgressText(done: Long, total: Long, strings: Wa2Strings = Wa2I18n.s): String =
     if (total > 0) {
-        "已下载 ${AiPackController.mb(done)} / ${AiPackController.mb(total)} MB (${(done * 100 / total).coerceIn(0, 100)}%)"
+        strings.packProgressKnown(AiPackController.mb(done), AiPackController.mb(total), (done * 100 / total).coerceIn(0, 100))
     } else {
-        "已下载 ${AiPackController.mb(done)} MB"
+        strings.packProgressUnknown(AiPackController.mb(done))
     }
 
-/** `覆盖 N 幕 · M 句 · X.X MB`. */
-internal fun packCoverageText(s: AiPackState.Installed): String =
-    "覆盖 ${s.stats.sceneCount} 幕 · ${s.stats.occurrenceCount} 句 · ${AiPackController.mb(s.stats.fileBytes)} MB"
+internal fun packCoverageText(s: AiPackState.Installed, strings: Wa2Strings = Wa2I18n.s): String =
+    strings.packCoverage(s.stats.sceneCount, s.stats.occurrenceCount, AiPackController.mb(s.stats.fileBytes))
 
 @Composable
 private fun PackProgress(s: AiPackState.Downloading) {
+    val strings = LocalAppStrings.current
     val f = s.fraction
     if (f != null) {
         LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth(), color = Wa2Colors.Accent, trackColor = Wa2Colors.AccentDim.copy(alpha = 0.3f))
     } else {
         LinearProgressIndicator(Modifier.fillMaxWidth(), color = Wa2Colors.Accent, trackColor = Wa2Colors.AccentDim.copy(alpha = 0.3f))
     }
-    Text(packProgressText(s.downloadedBytes, s.totalBytes), color = Wa2Colors.TextDim, fontSize = 12.sp)
+    Text(packProgressText(s.downloadedBytes, s.totalBytes, strings), color = Wa2Colors.TextDim, fontSize = 12.sp)
 }
 
-/**
- * Top of 设置 → AI 学习: `📦 全剧本离线 AI 解读包 Offline AI Pack` — download / progress + cancel /
- * installed stats + update check + delete (in-layout two-step confirmation, no window dialog) /
- * error + resumable retry. Buttons wrap in a [FlowRow] so nothing clips at 360 dp.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OfflinePackSettingsCard(packs: AiPackController) {
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     val state = packs.state
     var confirmDelete by remember { mutableStateOf(false) }
@@ -71,62 +69,62 @@ fun OfflinePackSettingsCard(packs: AiPackController) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("📦 全剧本离线 AI 解读包 Offline AI Pack", color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text(strings.packSettingsTitle, color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         when (state) {
             is AiPackState.Installed -> {
-                Text("✓ 已安装离线解读包", color = PACK_GREEN, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text(packCoverageText(state), color = Wa2Colors.TextDim, fontSize = 12.sp)
-                Text("无需 API Key：✨ AI 解析、点词、生词本与原声跟读均可离线使用。已配置 API Key 时 ↻ 可在线重新生成。", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                Text(strings.packInstalled, color = PACK_GREEN, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(packCoverageText(state, strings), color = Wa2Colors.TextDim, fontSize = 12.sp)
+                Text(strings.packInstalledHint, color = Wa2Colors.TextDim, fontSize = 12.sp)
                 state.updateInfo?.let { u ->
                     Text(
-                        "发现新版本数据包" + (if (u.sizeBytes > 0) "（${AiPackController.mb(u.sizeBytes)} MB）" else ""),
+                        if (u.sizeBytes > 0) strings.packUpdateAvailableSize(AiPackController.mb(u.sizeBytes)) else strings.packUpdateAvailable,
                         color = Wa2Colors.Accent, fontSize = 13.sp,
                     )
                 }
-                if (state.checked && state.updateInfo == null) Text("已是最新数据包 Up to date", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                if (state.checked && state.updateInfo == null) Text(strings.packUpToDate, color = Wa2Colors.TextDim, fontSize = 12.sp)
             }
             is AiPackState.Downloading -> {
-                Text("正在下载离线解读包… Downloading", color = Wa2Colors.Accent, fontSize = 14.sp)
+                Text(strings.packDownloading, color = Wa2Colors.Accent, fontSize = 14.sp)
                 PackProgress(state)
             }
-            AiPackState.Checking -> Text("正在检查数据包… Checking…", color = Wa2Colors.TextDim, fontSize = 13.sp)
+            AiPackState.Checking -> Text(strings.packChecking, color = Wa2Colors.TextDim, fontSize = 13.sp)
             is AiPackState.Error -> {
                 Text("✗ ${state.message}", color = PACK_RED, fontSize = 13.sp)
-                if (state.resumableBytes > 0) Text("已保留 ${AiPackController.mb(state.resumableBytes)} MB，重试将断点续传", color = Wa2Colors.TextDim, fontSize = 12.sp)
-                state.previousInstalled?.let { Text("✓ 仍在使用已安装的离线包 · ${packCoverageText(it)}", color = PACK_GREEN, fontSize = 12.sp) }
+                if (state.resumableBytes > 0) Text(strings.packResumableHint(AiPackController.mb(state.resumableBytes)), color = Wa2Colors.TextDim, fontSize = 12.sp)
+                state.previousInstalled?.let { Text(strings.packStillUsingInstalled(packCoverageText(it, strings)), color = PACK_GREEN, fontSize = 12.sp) }
             }
             AiPackState.NotInstalled, is AiPackState.Available -> {
                 Text(
-                    "一键下载全剧本 AI 逐句精讲数据包，无需配置 API Key 即可全程离线使用 ✨ AI 解析、点词、生词本与原声跟读",
+                    strings.packNotInstalledDesc,
                     color = Wa2Colors.TextDim, fontSize = 12.sp,
                 )
                 (state as? AiPackState.Available)?.info?.sizeBytes?.takeIf { it > 0 }?.let {
-                    Text("数据包大小 ${AiPackController.mb(it)} MB", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                    Text(strings.packSizeLabel(AiPackController.mb(it)), color = Wa2Colors.TextDim, fontSize = 12.sp)
                 }
                 val partial = packs.partialBytes
-                if (partial > 0) Text("已下载 ${AiPackController.mb(partial)} MB，可继续下载", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                if (partial > 0) Text(strings.packPartialResumeHint(AiPackController.mb(partial)), color = Wa2Colors.TextDim, fontSize = 12.sp)
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             when (state) {
                 is AiPackState.Installed -> {
-                    if (state.updateInfo != null) MenuButton("⬇ 更新数据包 Update", compact = compact) { packs.download() }
-                    MenuButton("检查数据包更新", compact = compact) { packs.checkUpdate() }
+                    if (state.updateInfo != null) MenuButton(strings.packUpdateBtn, compact = compact) { packs.download() }
+                    MenuButton(strings.packCheckUpdateBtn, compact = compact) { packs.checkUpdate() }
                     if (!confirmDelete) {
-                        MenuButton("删除离线包", compact = compact) { confirmDelete = true }
+                        MenuButton(strings.packDeleteBtn, compact = compact) { confirmDelete = true }
                     } else {
-                        MenuButton("确认删除 Delete", subtitle = "释放 ${AiPackController.mb(state.stats.fileBytes)} MB", compact = compact) {
+                        MenuButton(strings.packConfirmDeleteBtn, subtitle = strings.packFreeSpaceSub(AiPackController.mb(state.stats.fileBytes)), compact = compact) {
                             confirmDelete = false
                             packs.delete()
                         }
-                        MenuButton("取消 Cancel", compact = compact) { confirmDelete = false }
+                        MenuButton(strings.commonCancel, compact = compact) { confirmDelete = false }
                     }
                 }
-                is AiPackState.Downloading -> MenuButton("取消 Cancel", compact = compact) { packs.cancel() }
-                AiPackState.Checking -> MenuButton("取消 Cancel", compact = compact) { packs.cancel() }
-                is AiPackState.Error -> MenuButton("重试下载 Retry", compact = compact) { packs.download() }
+                is AiPackState.Downloading -> MenuButton(strings.commonCancel, compact = compact) { packs.cancel() }
+                AiPackState.Checking -> MenuButton(strings.commonCancel, compact = compact) { packs.cancel() }
+                is AiPackState.Error -> MenuButton(strings.packRetryBtn, compact = compact) { packs.download() }
                 AiPackState.NotInstalled, is AiPackState.Available -> MenuButton(
-                    if (packs.partialBytes > 0) "⬇ 继续下载离线解读包" else "⬇ 一键下载离线解读包",
+                    if (packs.partialBytes > 0) strings.packResumeDownloadBtn else strings.packDownloadBtn,
                     compact = compact,
                 ) { packs.download() }
             }
@@ -134,13 +132,10 @@ fun OfflinePackSettingsCard(packs: AiPackController) {
     }
 }
 
-/**
- * In-sheet offer shown with a NOT_CONFIGURED / NETWORK / TIMEOUT error while no pack is installed:
- * `⬇ 一键下载全剧本离线包（免 API Key）` with live progress right inside the AI breakdown.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OfflinePackOfferCard(packs: AiPackController) {
+    val strings = LocalAppStrings.current
     val state = packs.state
     if (state is AiPackState.Installed) return
     val compact = LocalCompact.current
@@ -149,22 +144,22 @@ fun OfflinePackOfferCard(packs: AiPackController) {
         Modifier.fillMaxWidth().clip(shape).background(PACK_CARD).border(1.dp, Wa2Colors.Accent.copy(alpha = 0.6f), shape).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("📦 离线 AI 解读包一键下载", color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-        Text("全剧本逐句 AI 精讲，下载后无需 API Key、无需联网即可直接查看这句的完整解析。", color = Wa2Colors.TextDim, fontSize = 12.sp)
+        Text(strings.packOfferTitle, color = Wa2Colors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text(strings.packOfferDesc, color = Wa2Colors.TextDim, fontSize = 12.sp)
         when (state) {
             is AiPackState.Downloading -> PackProgress(state)
             is AiPackState.Error -> {
                 Text("✗ ${state.message}", color = PACK_RED, fontSize = 12.sp)
-                if (state.resumableBytes > 0) Text("已保留 ${AiPackController.mb(state.resumableBytes)} MB，重试将断点续传", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                if (state.resumableBytes > 0) Text(strings.packResumableHint(AiPackController.mb(state.resumableBytes)), color = Wa2Colors.TextDim, fontSize = 12.sp)
             }
-            AiPackState.Checking -> Text("正在检查数据包… Checking…", color = Wa2Colors.TextDim, fontSize = 12.sp)
+            AiPackState.Checking -> Text(strings.packChecking, color = Wa2Colors.TextDim, fontSize = 12.sp)
             else -> {}
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             when (state) {
-                is AiPackState.Downloading, AiPackState.Checking -> MenuButton("取消 Cancel", compact = compact) { packs.cancel() }
-                is AiPackState.Error -> MenuButton("重试下载 Retry", compact = compact) { packs.download() }
-                else -> MenuButton("⬇ 一键下载全剧本离线包（免 API Key）", compact = compact) { packs.download() }
+                is AiPackState.Downloading, AiPackState.Checking -> MenuButton(strings.commonCancel, compact = compact) { packs.cancel() }
+                is AiPackState.Error -> MenuButton(strings.packRetryBtn, compact = compact) { packs.download() }
+                else -> MenuButton(strings.packOfferBtn, compact = compact) { packs.download() }
             }
         }
     }

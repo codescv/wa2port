@@ -2,10 +2,32 @@ package com.wa2port.android.data
 
 import android.content.Context
 import com.wa2port.core.archive.Wa2Assets
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import java.io.File
 
+enum class AssetCandidateKind {
+    CUSTOM,
+    APP_STORAGE,
+    ADB_TMP,
+    ;
+
+    fun localizedLabel(s: Wa2Strings = Wa2I18n.s): String = when (this) {
+        CUSTOM -> s.assetsLabelCustom
+        APP_STORAGE -> s.assetsLabelAppStorage
+        ADB_TMP -> s.assetsLabelAdb
+    }
+}
+
 /** One place where WA2 assets may live, with its validation result. */
-data class AssetCandidate(val dir: File, val label: String, val exists: Boolean, val valid: Boolean)
+data class AssetCandidate(
+    val dir: File,
+    val kind: AssetCandidateKind,
+    val exists: Boolean,
+    val valid: Boolean,
+) {
+    val label: String get() = kind.localizedLabel()
+}
 
 /**
  * Finds a WA2 install on the device. Search order: user-chosen path → app-specific external
@@ -20,11 +42,11 @@ object AssetLocator {
 
     fun candidates(context: Context, settings: Settings): List<AssetCandidate> {
         val dirs = buildList {
-            settings.assetPath?.takeIf { it.isNotBlank() }?.let { add(File(it) to "自定义 Custom") }
-            add(importDir(context) to "应用目录 App storage")
-            add(File(TMP_DIR) to "adb /data/local/tmp")
+            settings.assetPath?.takeIf { it.isNotBlank() }?.let { add(File(it) to AssetCandidateKind.CUSTOM) }
+            add(importDir(context) to AssetCandidateKind.APP_STORAGE)
+            add(File(TMP_DIR) to AssetCandidateKind.ADB_TMP)
         }.distinctBy { it.first.absolutePath }
-        return dirs.map { (dir, label) -> AssetCandidate(dir, label, dir.isDirectory, isValid(dir)) }
+        return dirs.map { (dir, kind) -> AssetCandidate(dir, kind, dir.isDirectory, isValid(dir)) }
     }
 
     /** First valid candidate, or null. */

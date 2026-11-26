@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ui.CloseButton
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.screenSafePadding
@@ -59,6 +60,7 @@ import com.wa2port.core.ai.StarredGrammar
 import com.wa2port.core.ai.StarredVocab
 import com.wa2port.core.ai.partOfSpeechLabel
 import com.wa2port.core.engine.VoiceRef
+import com.wa2port.core.i18n.Wa2Strings
 
 private val NB_SCRIM = Color(0xFF060B18)
 private val NB_CARD = Color(0xFF111A2E)
@@ -66,14 +68,22 @@ private val NB_STAR = Color(0xFFFFD54F)
 private val NB_TEXTBOOK = Color(0xFF8FD3A8)
 private val NB_JP_STYLE = TextStyle(localeList = LocaleList(Locale("ja")))
 
-enum class NotebookTab(val label: String) {
-    VOCAB("生词 Vocab"),
-    GRAMMAR("语法 Grammar"),
-    SENTENCES("句子 Sentences"),
-    QA("追问 Q&A"),
+enum class NotebookTab {
+    VOCAB,
+    GRAMMAR,
+    SENTENCES,
+    QA,
+    ;
+
+    fun localizedLabel(s: Wa2Strings): String = when (this) {
+        VOCAB -> s.notebookTabVocab
+        GRAMMAR -> s.notebookTabGrammar
+        SENTENCES -> s.notebookTabSentences
+        QA -> s.notebookTabQa
+    }
 }
 
-private val JLPT_FILTERS = listOf("全部", "N5", "N4", "N3", "N2", "N1")
+private val JLPT_FILTERS: List<String?> = listOf(null, "N5", "N4", "N3", "N2", "N1")
 
 /**
  * Full-screen `📒 学习记录 Notebook` overlay (#9):
@@ -89,12 +99,13 @@ fun NotebookOverlay(
     onReplayVoice: ((VoiceRef) -> Unit)? = null,
     onClose: () -> Unit = { ai.closeNotebook() },
 ) {
+    val strings = LocalAppStrings.current
     val context = LocalContext.current
     val compact = LocalCompact.current
     val rev = ai.notebookRevision
     var tab by remember { mutableStateOf(NotebookTab.VOCAB) }
     var onlyStarred by remember { mutableStateOf(false) }
-    var jlptFilter by remember { mutableStateOf("全部") }
+    var jlptFilter by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var exportNotice by remember { mutableStateOf<String?>(null) }
 
@@ -111,7 +122,7 @@ fun NotebookOverlay(
         val starredLemmas = stars.vocab.mapTo(HashSet()) { it.lemma }
         allVocab.filter { v ->
             (!onlyStarred || v.lemma in starredLemmas) &&
-                (jlptFilter == "全部" || v.jlpt.equals(jlptFilter, ignoreCase = true)) &&
+                (jlptFilter == null || v.jlpt.equals(jlptFilter, ignoreCase = true)) &&
                 (q.isEmpty() ||
                     v.surface.lowercase().contains(q) ||
                     v.lemma.lowercase().contains(q) ||
@@ -126,7 +137,7 @@ fun NotebookOverlay(
         val starredPatterns = stars.grammar.mapTo(HashSet()) { it.pattern }
         allGrammar.filter { g ->
             (!onlyStarred || g.pattern in starredPatterns) &&
-                (jlptFilter == "全部" || g.jlpt.equals(jlptFilter, ignoreCase = true)) &&
+                (jlptFilter == null || g.jlpt.equals(jlptFilter, ignoreCase = true)) &&
                 (q.isEmpty() ||
                     g.pattern.lowercase().contains(q) ||
                     g.explanation.lowercase().contains(q) ||
@@ -181,14 +192,14 @@ fun NotebookOverlay(
             val exportTsv = {
                 val tsv = ai.notebook.exportAnkiTsv(onlyStarred = onlyStarred)
                 val rows = tsv.lines().count { it.isNotBlank() }
-                exportAnkiTsv(context, tsv)
-                exportNotice = "已复制并导出 $rows 条卡片（Anki 7 列 TSV）"
+                exportAnkiTsv(context, tsv, strings)
+                exportNotice = strings.notebookExportedNotice(rows)
             }
             // Top bar (compact: short title; the export chip moves into the scrollable chip row).
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (compact) "📒 学习记录 (${sentences.size}句 · ★$starCount)"
-                    else "📒 学习记录 Notebook (${sentences.size} 句 · ★ $starCount)",
+                    if (compact) strings.notebookTitleCompact(sentences.size, starCount)
+                    else strings.notebookTitleWide(sentences.size, starCount),
                     color = Wa2Colors.Text,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
@@ -197,7 +208,7 @@ fun NotebookOverlay(
                     modifier = Modifier.weight(1f),
                 )
                 if (!compact) {
-                    NbChip("📤 导出 Anki TSV", color = NB_TEXTBOOK, onClick = exportTsv)
+                    NbChip(strings.notebookExportAnki, color = NB_TEXTBOOK, onClick = exportTsv)
                     Spacer(Modifier.width(8.dp))
                 }
                 CloseButton(onClose)
@@ -223,7 +234,7 @@ fun NotebookOverlay(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (compact) {
-                    NbChip("📤 导出 Anki", color = NB_TEXTBOOK, onClick = exportTsv)
+                    NbChip(strings.notebookExportAnkiShort, color = NB_TEXTBOOK, onClick = exportTsv)
                     Spacer(Modifier.width(4.dp))
                 }
                 NotebookTab.entries.forEach { t ->
@@ -233,15 +244,15 @@ fun NotebookOverlay(
                         NotebookTab.SENTENCES -> filteredSentences.size
                         NotebookTab.QA -> filteredQa.size
                     }
-                    NbChip("${t.label} ($count)", selected = tab == t) { tab = t }
+                    NbChip("${t.localizedLabel(strings)} ($count)", selected = tab == t) { tab = t }
                 }
                 Spacer(Modifier.width(8.dp))
-                NbChip("全部 All", selected = !onlyStarred) { onlyStarred = false }
-                NbChip("★ 仅收藏 Starred", selected = onlyStarred, color = NB_STAR) { onlyStarred = true }
+                NbChip(strings.commonAll, selected = !onlyStarred) { onlyStarred = false }
+                NbChip(strings.notebookFilterStarred, selected = onlyStarred, color = NB_STAR) { onlyStarred = true }
                 if (tab == NotebookTab.VOCAB || tab == NotebookTab.GRAMMAR) {
                     Spacer(Modifier.width(4.dp))
                     JLPT_FILTERS.forEach { level ->
-                        NbChip(level, selected = jlptFilter == level, color = NB_TEXTBOOK) { jlptFilter = level }
+                        NbChip(level ?: strings.commonAll, selected = jlptFilter == level, color = NB_TEXTBOOK) { jlptFilter = level }
                     }
                 }
             }
@@ -252,7 +263,7 @@ fun NotebookOverlay(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("🔍 搜索词条、读音、释义、语法或台词原句… Search notebook", fontSize = 13.sp, color = Wa2Colors.TextDim) },
+                placeholder = { Text(strings.notebookSearchPlaceholder, fontSize = 13.sp, color = Wa2Colors.TextDim) },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = Wa2Colors.Text,
                     unfocusedTextColor = Wa2Colors.Text,
@@ -272,7 +283,7 @@ fun NotebookOverlay(
                     NotebookTab.VOCAB -> {
                         if (filteredVocab.isEmpty()) {
                             item(key = "empty-vocab") {
-                                EmptyNotebookCard("暂无符合条件的生词记录 · 在台词上点「✨ AI 解说」即可自动收入学习记录，点 ★ 可加入重点收藏。")
+                                EmptyNotebookCard(strings.notebookEmptyVocab)
                             }
                         } else {
                             items(filteredVocab, key = { "v-${it.lemma}" }) { v ->
@@ -294,7 +305,7 @@ fun NotebookOverlay(
                     NotebookTab.GRAMMAR -> {
                         if (filteredGrammar.isEmpty()) {
                             item(key = "empty-grammar") {
-                                EmptyNotebookCard("暂无符合条件的语法记录 · 打开任意台词的 AI 解说后将自动汇总。")
+                                EmptyNotebookCard(strings.notebookEmptyGrammar)
                             }
                         } else {
                             items(filteredGrammar, key = { "g-${it.pattern}" }) { g ->
@@ -316,7 +327,7 @@ fun NotebookOverlay(
                     NotebookTab.SENTENCES -> {
                         if (filteredSentences.isEmpty()) {
                             item(key = "empty-sentences") {
-                                EmptyNotebookCard("尚未记录任何台词解说 · 在游戏中点击「✨ AI 解说」分析过的句子都会持久保存在这里（清除缓存也不会丢失）。")
+                                EmptyNotebookCard(strings.notebookEmptySentences)
                             }
                         } else {
                             items(filteredSentences, key = { "s-${it.explanationId}" }) { s ->
@@ -336,7 +347,7 @@ fun NotebookOverlay(
                     NotebookTab.QA -> {
                         if (filteredQa.isEmpty()) {
                             item(key = "empty-qa") {
-                                EmptyNotebookCard("暂无追问记录 · 在 AI 解说底部向冬马和纱 / 小木曾雪菜提问后，对话会自动保存在这里。")
+                                EmptyNotebookCard(strings.notebookEmptyQa)
                             }
                         } else {
                             items(filteredQa, key = { "qa-${it.id}" }) { qa ->
@@ -356,7 +367,7 @@ fun NotebookOverlay(
     }
 }
 
-private fun exportAnkiTsv(context: Context, tsv: String) {
+private fun exportAnkiTsv(context: Context, tsv: String, strings: Wa2Strings) {
     runCatching {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         cm?.setPrimaryClip(ClipData.newPlainText("WA2 Notebook Anki TSV", tsv))
@@ -364,11 +375,11 @@ private fun exportAnkiTsv(context: Context, tsv: String) {
     runCatching {
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/tab-separated-values"
-            putExtra(Intent.EXTRA_SUBJECT, "WHITE ALBUM 2 · AI 学习记录 (Anki TSV)")
+            putExtra(Intent.EXTRA_SUBJECT, strings.notebookExportSubject)
             putExtra(Intent.EXTRA_TEXT, tsv)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        val chooser = Intent.createChooser(send, "导出 Anki TSV · Export Notebook").apply {
+        val chooser = Intent.createChooser(send, strings.notebookExportChooser).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(chooser)
@@ -398,6 +409,7 @@ private fun NotebookVocabCard(
     onReplayVoice: (() -> Unit)?,
     onOpenSentence: (() -> Unit)?,
 ) {
+    val strings = LocalAppStrings.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -421,19 +433,19 @@ private fun NotebookVocabCard(
                         Text("【${v.reading}】", color = Wa2Colors.Text, fontSize = 16.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
                     }
                 }
-                if (v.partOfSpeech.isNotBlank()) NbTag(partOfSpeechLabel(v.partOfSpeech), modifier = Modifier.align(Alignment.CenterVertically))
+                if (v.partOfSpeech.isNotBlank()) NbTag(partOfSpeechLabel(v.partOfSpeech, strings), modifier = Modifier.align(Alignment.CenterVertically))
                 v.jlpt?.let { NbTag(it, NB_TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
                 v.pitchAccent?.let { NbTag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim, modifier = Modifier.align(Alignment.CenterVertically)) }
                 if (v.surface != v.lemma) {
                     Text("（${v.surface}）", color = Wa2Colors.TextDim, fontSize = 13.sp, style = NB_JP_STYLE, modifier = Modifier.align(Alignment.CenterVertically))
                 }
             }
-            if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
+            if (onReplayVoice != null) NbChip(strings.aiVoiceBtn, onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
         }
         Text(v.meaning, color = Wa2Colors.Text, fontSize = 14.sp)
-        v.conjugation?.takeIf { it.isNotBlank() }?.let { Text("变形：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
-        v.notes?.takeIf { it.isNotBlank() }?.let { Text("注：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
+        v.conjugation?.takeIf { it.isNotBlank() }?.let { Text(strings.aiConjugationPrefix(it), color = Wa2Colors.TextDim, fontSize = 12.sp) }
+        v.notes?.takeIf { it.isNotBlank() }?.let { Text(strings.aiNotesPrefix(it), color = Wa2Colors.TextDim, fontSize = 12.sp) }
         if (v.exampleSentence.isNotBlank()) {
             SourceSentenceRow(
                 sentenceJp = v.exampleSentence,
@@ -454,6 +466,7 @@ private fun NotebookGrammarCard(
     onReplayVoice: (() -> Unit)?,
     onOpenSentence: (() -> Unit)?,
 ) {
+    val strings = LocalAppStrings.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -475,7 +488,7 @@ private fun NotebookGrammarCard(
                 )
                 g.jlpt?.let { NbTag(it, NB_TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
             }
-            if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
+            if (onReplayVoice != null) NbChip(strings.aiVoiceBtn, onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
         }
         Text(g.explanation, color = Wa2Colors.Text, fontSize = 14.sp)
@@ -498,6 +511,7 @@ private fun NotebookSentenceCard(
     onReplayVoice: (() -> Unit)?,
     onOpen: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -510,27 +524,25 @@ private fun NotebookSentenceCard(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val speaker = listOfNotNull(entry.speakerJp, entry.speakerCn?.takeIf { it != entry.speakerJp }).joinToString(" · ")
-            // Speaker + badges flow (wrap) in the weighted area so on 360 dp they never crush the
-            // speaker to zero width or push 🔊 原声 / ★ off the card.
             FlowRow(
                 Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    speaker.ifEmpty { "（旁白 / 内心独白）" },
+                    speaker.ifEmpty { strings.commonNarration },
                     color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name,
                     fontSize = 13.sp,
                     modifier = Modifier.align(Alignment.CenterVertically),
                 )
                 if (entry.scene > 0) {
-                    NbTag(sceneLabel(entry.scene.toString()), Color(0x33FFFFFF), Wa2Colors.TextDim, Modifier.align(Alignment.CenterVertically))
+                    NbTag(sceneLabel(entry.scene.toString(), strings), Color(0x33FFFFFF), Wa2Colors.TextDim, Modifier.align(Alignment.CenterVertically))
                 }
                 if (entry.vocabCount > 0 || entry.grammarCount > 0) {
-                    NbTag("${entry.vocabCount} 词 · ${entry.grammarCount} 语法", modifier = Modifier.align(Alignment.CenterVertically))
+                    NbTag(strings.notebookSentenceStats(entry.vocabCount, entry.grammarCount), modifier = Modifier.align(Alignment.CenterVertically))
                 }
             }
-            if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
+            if (onReplayVoice != null) NbChip(strings.aiVoiceBtn, onClick = onReplayVoice)
             StarButton(starred = starred, onClick = onToggleStar)
         }
         Text(entry.sentence, color = Wa2Colors.Text, fontSize = 17.sp, fontWeight = FontWeight.Medium, style = NB_JP_STYLE)
@@ -538,7 +550,7 @@ private fun NotebookSentenceCard(
         if (cn.isNotBlank()) {
             Text(cn, color = Wa2Colors.TextDim, fontSize = 14.sp)
         }
-        Text("点击打开完整 AI 解说与追问 →", color = Wa2Colors.Accent, fontSize = 12.sp)
+        Text(strings.notebookTapToOpen, color = Wa2Colors.Accent, fontSize = 12.sp)
     }
 }
 
@@ -548,6 +560,7 @@ private fun NotebookQaCard(
     onReplayVoice: (() -> Unit)?,
     onOpenSentence: (() -> Unit)?,
 ) {
+    val strings = LocalAppStrings.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -567,14 +580,14 @@ private fun NotebookQaCard(
                 style = NB_JP_STYLE,
                 modifier = Modifier.weight(1f),
             )
-            if (onReplayVoice != null) NbChip("🔊 原声", onClick = onReplayVoice)
+            if (onReplayVoice != null) NbChip(strings.aiVoiceBtn, onClick = onReplayVoice)
         }
         Row(Modifier.fillMaxWidth()) {
-            Text("问：", color = Wa2Colors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(strings.notebookQaQPrefix, color = Wa2Colors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(qa.question, color = Wa2Colors.Text, fontSize = 13.sp)
         }
         Row(Modifier.fillMaxWidth()) {
-            Text("答：", color = NB_TEXTBOOK, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(strings.notebookQaAPrefix, color = NB_TEXTBOOK, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text(qa.answer, color = Wa2Colors.Text, fontSize = 13.sp)
         }
     }
@@ -582,6 +595,7 @@ private fun NotebookQaCard(
 
 @Composable
 private fun SourceSentenceRow(sentenceJp: String, sentenceCn: String, onClick: (() -> Unit)?) {
+    val strings = LocalAppStrings.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -591,7 +605,7 @@ private fun SourceSentenceRow(sentenceJp: String, sentenceCn: String, onClick: (
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text("来源句：$sentenceJp", color = Wa2Colors.Accent, fontSize = 12.sp, style = NB_JP_STYLE)
+        Text(strings.notebookSourceSentencePrefix(sentenceJp), color = Wa2Colors.Accent, fontSize = 12.sp, style = NB_JP_STYLE)
         if (sentenceCn.isNotBlank()) {
             Text(sentenceCn, color = Wa2Colors.TextDim, fontSize = 11.sp)
         }
@@ -600,6 +614,7 @@ private fun SourceSentenceRow(sentenceJp: String, sentenceCn: String, onClick: (
 
 @Composable
 fun StarButton(starred: Boolean, onClick: () -> Unit) {
+    val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(14.dp)
     Box(
         Modifier
@@ -612,7 +627,7 @@ fun StarButton(starred: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (starred) "★ 已收藏" else "☆ 收藏",
+            if (starred) strings.notebookStarred else strings.notebookStar,
             color = if (starred) NB_STAR else Wa2Colors.TextDim,
             fontSize = 12.sp,
             maxLines = 1,

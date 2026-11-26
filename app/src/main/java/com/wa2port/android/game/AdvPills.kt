@@ -141,8 +141,10 @@ internal object AdvPills {
         shortAi: Boolean,
         minPx: Float,
         canvasWidth: Float,
+        aiLabel: String = AI_LABEL,
+        aiShortLabel: String = AI_SHORT_LABEL,
     ): Layout {
-        val label = if (shortAi) AI_SHORT_LABEL else AI_LABEL
+        val label = if (shortAi) aiShortLabel else aiLabel
         val t = pillTop(top, s)
         val b = t + PILL_H * s
         val voicePill = if (showVoice) Rect(anchorRight - VOICE_W * s, t, anchorRight, b) else null

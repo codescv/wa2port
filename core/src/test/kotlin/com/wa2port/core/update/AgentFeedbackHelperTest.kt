@@ -3,6 +3,8 @@ package com.wa2port.core.update
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.engine.LineRef
 import com.wa2port.core.engine.VoiceRef
+import com.wa2port.core.i18n.ResolvedLanguage
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.ScenarioTextParser
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -48,8 +50,13 @@ class AgentFeedbackHelperTest {
             assertTrue(AgentFeedbackHelper.isValidEmail(addr), "expected valid: $addr")
         }
 
-        assertTrue(AgentFeedbackHelper.validateEmail("")!!.contains("请先填写"))
-        assertTrue(AgentFeedbackHelper.validateEmail("   ")!!.contains("请先填写"))
+        Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            assertTrue(AgentFeedbackHelper.validateEmail("")!!.contains("请先填写"))
+            assertTrue(AgentFeedbackHelper.validateEmail("   ")!!.contains("请先填写"))
+        }
+        Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            assertTrue(AgentFeedbackHelper.validateEmail("")!!.contains("email", ignoreCase = true))
+        }
 
         val invalid = listOf(
             "not-an-email",
@@ -139,7 +146,12 @@ class AgentFeedbackHelperTest {
             textScalePercent = 115,
             inReplayMode = true,
         )
-        assertEquals("序章 IC · 1002 · #42 · 回想", ctx.summaryBadge())
+        Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            assertEquals("序章 IC · 1002 · #42 · 回想", ctx.summaryBadge())
+        }
+        Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            assertEquals("序章 IC · 1002 · #42 · Replay", ctx.summaryBadge())
+        }
 
         val ctxBody = AgentFeedbackHelper.buildBody(
             feedbackText = "这里的语音重听按钮位置很好，建议补充振动反馈。",
@@ -249,7 +261,7 @@ class AgentFeedbackHelperTest {
             attachmentName = "Screenshot_20261101.png",
         )
         assertTrue(
-            body.startsWith("标题 Title: 文字截断 问题\n\nNOVEL 模式下第 3 行被截断。\n复现：1002 #42\n\n---\nApp: wa2port v1.4.7\n"),
+            body.startsWith("Title: 文字截断 问题\n\nNOVEL 模式下第 3 行被截断。\n复现：1002 #42\n\n---\nApp: wa2port v1.4.7\n"),
             body,
         )
         assertTrue(body.contains("Device: Pixel 9 (Android 15, SDK 35)\nAttachment: Screenshot_20261101.png"), body)
@@ -290,7 +302,7 @@ class AgentFeedbackHelperTest {
         assertEquals("agent@example.com", mail.toEmail)
         assertEquals("wa2port: [v1.4.7] CG 缩略图错位", mail.subject)
         assertEquals("cg_bug.png", mail.attachmentName)
-        assertTrue(mail.body.startsWith("标题 Title: CG 缩略图错位\n\nCG 鉴赏缩略图错位 A+B & C\n详见截图\n\n---\nApp: wa2port v1.4.7"))
+        assertTrue(mail.body.startsWith("Title: CG 缩略图错位\n\nCG 鉴赏缩略图错位 A+B & C\n详见截图\n\n---\nApp: wa2port v1.4.7"))
         assertTrue(mail.body.contains("Attachment: cg_bug.png"))
 
         val query = URI.create(mail.mailtoUri).rawSchemeSpecificPart.substringAfter('?')
@@ -303,7 +315,7 @@ class AgentFeedbackHelperTest {
         assertEquals("wa2port: [v1.4.15] 首行摘要", plain.subject)
         assertNull(plain.attachmentName)
         assertFalse(plain.body.contains("Attachment:"))
-        assertFalse(plain.body.contains("标题 Title:"))
+        assertFalse(plain.body.contains("Title:"))
     }
 
     private fun percentDecodeOnly(encoded: String): String =

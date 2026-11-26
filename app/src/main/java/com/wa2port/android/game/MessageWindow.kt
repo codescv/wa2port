@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.text.BilingualTextDecoder
@@ -438,6 +439,7 @@ fun AdvWindow(
     hitBox: AdvHitBox? = null,
     frame: AdvFrame? = null,
 ) {
+    val strings = LocalAppStrings.current
     val state = hitBox ?: remember { AdvHitBox() }
     DisposableEffect(state) {
         onDispose { state.clearGeometry() }
@@ -480,7 +482,10 @@ fun AdvWindow(
                 left + pad, allNames.map { painter.glyphCount(it.rich) * it.size }, pad, stageScale, anchor, showAi, showVoice,
             )
         }
-        val pills = AdvPills.layout(anchor, top, textTop, stageScale, showAi, showVoice, fit?.shortAi ?: false, 48.dp.toPx(), size.width)
+        val pills = AdvPills.layout(
+            anchor, top, textTop, stageScale, showAi, showVoice, fit?.shortAi ?: false, 48.dp.toPx(), size.width,
+            aiLabel = strings.advPillAi, aiShortLabel = strings.advPillAiShort,
+        )
         // Speaker name tab (see NamePlate): glyph ems centred in the tab (the painter's y is the line
         // box top, glyphs sit glyphInkTop below it); tab fill + border drawn over the frame's top
         // border, which is cut out under the tab and the rim pills so it never strikes the name.
@@ -506,7 +511,7 @@ fun AdvWindow(
                 }
             }
         }
-        drawRimPills(pills, stageScale, opacity, opaque = frame != null)
+        drawRimPills(pills, stageScale, opacity, opaque = frame != null, voiceLabel = strings.advPillVoice)
         state.aiRect = pills.aiTouch
         state.voiceRect = pills.voiceTouch
         val avail = DeckText.avail(bottom, pad, textTop)
@@ -711,9 +716,15 @@ private fun DrawScope.drawNameTab(tab: Rect, stageScale: Float, opacity: Float, 
  * Draws the rim pills of [pills] (see [AdvPills.layout]); touch targets are stored by the caller.
  * Portrait deck pills ([opaque]) are fully opaque over the cut-out deck border.
  */
-private fun DrawScope.drawRimPills(pills: AdvPills.Layout, stageScale: Float, opacity: Float, opaque: Boolean = false) {
+private fun DrawScope.drawRimPills(
+    pills: AdvPills.Layout,
+    stageScale: Float,
+    opacity: Float,
+    opaque: Boolean = false,
+    voiceLabel: String,
+) {
     pills.aiPill?.let { drawAiPill(it, pills.aiLabel, stageScale, opacity, opaque) }
-    pills.voicePill?.let { drawVoicePill(it, stageScale, opacity, opaque) }
+    pills.voicePill?.let { drawVoicePill(it, voiceLabel, stageScale, opacity, opaque) }
 }
 
 /** Pill background + border shared by both rim pills. */
@@ -742,7 +753,7 @@ private fun DrawScope.drawPillLabel(label: String, x: Float, maxRight: Float, cy
  * Draws the `🔊 重听` pill into [r] (straddling the window top edge like the name box; bounds and
  * touch target from [AdvPills.layout]).
  */
-private fun DrawScope.drawVoicePill(r: Rect, stageScale: Float, opacity: Float, opaque: Boolean = false) {
+private fun DrawScope.drawVoicePill(r: Rect, label: String, stageScale: Float, opacity: Float, opaque: Boolean = false) {
     drawPillShell(r, Wa2Colors.Accent, stageScale, opacity, opaque)
     // Speaker icon: body + cone + two sound waves.
     val cy = r.center.y
@@ -762,7 +773,7 @@ private fun DrawScope.drawVoicePill(r: Rect, stageScale: Float, opacity: Float, 
             style = Stroke(1.6f * stageScale),
         )
     }
-    drawPillLabel("重听", r.left + 44f * stageScale, r.right - 8f * stageScale, cy, stageScale)
+    drawPillLabel(label, r.left + 44f * stageScale, r.right - 8f * stageScale, cy, stageScale)
 }
 
 /** Concave 4-point sparkle centred on ([cx], [cy]) with tip radius [radius]. */
@@ -817,6 +828,7 @@ fun NovelPage(
     frame: AdvFrame? = null,
     hitBox: AdvHitBox? = null,
 ) {
+    val strings = LocalAppStrings.current
     if (hitBox != null) {
         DisposableEffect(hitBox) {
             onDispose { hitBox.clearGeometry() }
@@ -851,7 +863,7 @@ fun NovelPage(
         if (frame != null) {
             // Until trimPage() lands, show only the newest line so the overflowing frame never flashes.
             val shown = if (overflow && page.size > 1) listOf(page.last()) else page
-            drawNovelDeck(NovelDeck(painter, lang, textScale, frame), shown, visibleJp, visibleCn, waiting, opacity, hitBox, blink)
+            drawNovelDeck(NovelDeck(painter, lang, textScale, frame), shown, visibleJp, visibleCn, waiting, opacity, hitBox, blink, strings.advPillVoice)
             return@Canvas
         }
         // Landscape NOVEL keeps no hit geometry (e.g. left over from a portrait deck before a rotation).
@@ -990,6 +1002,7 @@ private fun DrawScope.drawNovelDeck(
     opacity: Float,
     hitBox: AdvHitBox?,
     blink: Float,
+    voiceLabel: String,
 ) {
     val frame = deck.frame
     val stageScale = deck.stageScale
@@ -1070,7 +1083,7 @@ private fun DrawScope.drawNovelDeck(
     if (maxScroll > 0.5f) {
         drawAdvScrollbar(frame.right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
     }
-    drawRimPills(pills, stageScale, opacity, opaque = true)
+    drawRimPills(pills, stageScale, opacity, opaque = true, voiceLabel = voiceLabel)
     hitBox?.aiRect = pills.aiTouch
     hitBox?.voiceRect = pills.voiceTouch
     if (waiting) drawWaitMark(frame.right - pad * 0.45f, DeckText.waitMarkY(y, 10.dp.toPx(), frame.bottom, pad), 6.5f * stageScale, blink)

@@ -54,6 +54,7 @@ import com.wa2port.core.engine.SystemData
 import com.wa2port.core.gallery.ReplayCategory
 import com.wa2port.core.gallery.SceneReplayEntry
 import com.wa2port.core.gallery.SceneReplayGallery
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -61,11 +62,19 @@ import java.util.Locale
 private const val REPLAY_CACHE_BUDGET_BYTES = 48 * 1024 * 1024
 
 /** Filter tabs for the 24-slot Scene Replay screen (`WA2.exe` `.data 0x4c1bf0`). */
-enum class ReplayFilter(val label: String, val category: ReplayCategory?) {
-    ALL("全部 All (24)", null),
-    IC("IC 序章 (1)", ReplayCategory.IC),
-    CC("CC 终章 (13)", ReplayCategory.CC),
-    CODA("Coda (10)", ReplayCategory.CODA),
+enum class ReplayFilter(val category: ReplayCategory?) {
+    ALL(null),
+    IC(ReplayCategory.IC),
+    CC(ReplayCategory.CC),
+    CODA(ReplayCategory.CODA),
+    ;
+
+    fun localizedLabel(s: Wa2Strings): String = when (this) {
+        ALL -> s.replayFilterAll(24)
+        IC -> s.replayFilterIc(1)
+        CC -> s.replayFilterCc(13)
+        CODA -> s.replayFilterCoda(10)
+    }
 }
 
 /**
@@ -81,12 +90,13 @@ fun SceneReplayScreen(
     vm: AppViewModel,
     onClose: () -> Unit = { vm.back() },
 ) {
+    val strings = LocalAppStrings.current
     val root = vm.assetRoot
     if (root == null) {
         Box(Modifier.fillMaxSize().background(Wa2Colors.Night), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("未找到游戏资源 Assets not found", color = Wa2Colors.Text, fontSize = 16.sp)
-                MenuButton("返回 Back", onClick = onClose)
+                Text(strings.commonAssetNotFound, color = Wa2Colors.Text, fontSize = 16.sp)
+                MenuButton(strings.commonBack, onClick = onClose)
             }
         }
         return
@@ -139,6 +149,7 @@ private fun SceneReplayContent(
     val visibleEntries = remember(filter) { SceneReplayGallery.filter(filter.category) }
     val unlockedCount = remember(system) { allEntries.count { it.isUnlocked(system) } }
 
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     BoxWithConstraints(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
         val columns = if (maxWidth < 520.dp) 2 else 3
@@ -151,7 +162,7 @@ private fun SceneReplayContent(
             val titleBlock: @Composable (Modifier) -> Unit = { m ->
                 Column(m) {
                     Text(
-                        "场景回想  Scene Replay  ·  回想モード",
+                        strings.replayTitle,
                         color = Wa2Colors.Text,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Medium,
@@ -159,7 +170,7 @@ private fun SceneReplayContent(
                         overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
                     )
                     Text(
-                        "已解锁 $unlockedCount / ${allEntries.size} 幕  ·  当前分类 ${visibleEntries.size} 幕",
+                        strings.replayCountSummary(unlockedCount, allEntries.size, visibleEntries.size),
                         color = Wa2Colors.TextDim,
                         fontSize = 12.sp,
                     )
@@ -180,9 +191,9 @@ private fun SceneReplayContent(
                         Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        ReplayFilter.entries.forEach { tab -> ReplayTab(tab.label, filter == tab) { filter = tab } }
+                        ReplayFilter.entries.forEach { tab -> ReplayTab(tab.localizedLabel(strings), filter == tab) { filter = tab } }
                     }
-                    ReplayShowAllPill(showAll, if (showAll) "解锁全部 ON" else "解锁全部 OFF") { onShowAllChange(!showAll) }
+                    ReplayShowAllPill(showAll, if (showAll) strings.galleryShowAllShortOn else strings.galleryShowAllShortOff) { onShowAllChange(!showAll) }
                 }
             } else {
                 // ---- Top bar
@@ -192,8 +203,8 @@ private fun SceneReplayContent(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     titleBlock(Modifier.weight(1f))
-                    ReplayFilter.entries.forEach { tab -> ReplayTab(tab.label, filter == tab) { filter = tab } }
-                    ReplayShowAllPill(showAll, if (showAll) "解锁全部 Show All: ON" else "解锁全部 Show All: OFF") { onShowAllChange(!showAll) }
+                    ReplayFilter.entries.forEach { tab -> ReplayTab(tab.localizedLabel(strings), filter == tab) { filter = tab } }
+                    ReplayShowAllPill(showAll, if (showAll) strings.galleryShowAllOn else strings.galleryShowAllOff) { onShowAllChange(!showAll) }
                     CloseButton(onClose)
                 }
             }
@@ -322,12 +333,11 @@ private fun ReplayCard(
                     modifier = Modifier.fillMaxSize(),
                 )
             } else if (!unlocked) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("LOCKED", color = Wa2Colors.TextDim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("未解锁", color = Wa2Colors.TextDim.copy(alpha = 0.7f), fontSize = 11.sp)
-                }
+                val strings = LocalAppStrings.current
+                Text(strings.commonLocked, color = Wa2Colors.TextDim, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             } else {
-                Text("Loading…", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                val strings = LocalAppStrings.current
+                Text(strings.commonLoading, color = Wa2Colors.TextDim, fontSize = 12.sp)
             }
 
             // Top-left slot + category badge
@@ -371,14 +381,15 @@ private fun ReplayCard(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             if (!unlocked) {
+                val strings = LocalAppStrings.current
                 Text(
-                    "？？？（未解锁场景）",
+                    strings.replayLockedTitle,
                     color = Wa2Colors.TextDim,
                     fontSize = 13.sp,
                     maxLines = 1,
                 )
                 Text(
-                    "Script ${entry.scriptName} · Flag ${entry.gflagId}",
+                    strings.replayScriptFlag(entry.scriptName, entry.gflagId),
                     color = Wa2Colors.TextDim.copy(alpha = 0.6f),
                     fontSize = 10.sp,
                     maxLines = 1,

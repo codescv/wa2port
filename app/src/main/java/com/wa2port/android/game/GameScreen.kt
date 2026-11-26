@@ -58,12 +58,14 @@ import com.wa2port.android.movie.LocalMovieSkipGate
 import com.wa2port.android.movie.MovieSkipGate
 import com.wa2port.android.movie.MovieSkipPill
 import com.wa2port.android.ui.ConfigPanel
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.LocalIsPortrait
 import com.wa2port.android.ui.LocalScreenInsets
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadPanel
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.ai.JpSentence
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.text.DeckLayout
 import com.wa2port.core.text.MessageLayout
 import kotlinx.coroutines.delay
@@ -83,6 +85,7 @@ private const val TAG = "Wa2Game"
  */
 @Composable
 fun GameScreen(vm: AppViewModel, session: GameSession) {
+    val strings = LocalAppStrings.current
     val settings = vm.settings
     val scope = rememberCoroutineScope()
     val view = LocalView.current
@@ -105,7 +108,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             }
             if (failure != null) {
                 Log.e(TAG, "engine failure", failure)
-                vm.error = "引擎错误 Engine error: ${failure.message ?: failure.javaClass.simpleName}"
+                vm.error = Wa2I18n.s.vmEngineError(failure.message ?: failure.javaClass.simpleName)
                 vm.exitToTitle()
                 break
             }
@@ -202,7 +205,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
     val aiAction = if (QuickBarLayout.showsAiKey(isNovelMode, isPortrait)) {
         QuickAction("✨ AI", vm.ai.breakdown != null, shortLabel = "✨AI", onClick = act {
             val l = session.line
-            if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = "没有可解析的台词 No line"
+            if (l != null) vm.ai.open(session, l, null, session.overlay) else session.toast = Wa2I18n.s.commonNoLine
         })
     } else {
         null
@@ -224,7 +227,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 onClick = act {
                     val nextLang = settings.lang.toggleJpBoth()
                     vm.updateSettings { it.copy(lang = nextLang) }
-                    session.toast = if (nextLang == DisplayLang.BOTH) "语言: 中/日双语 Bilingual" else "语言: 日本語 Japanese"
+                    session.toast = if (nextLang == DisplayLang.BOTH) Wa2I18n.s.toastLangBilingual else Wa2I18n.s.toastLangJapanese
                 },
             ),
         )
@@ -234,7 +237,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
             // glyphs instead (`QuickBarLayout.fitScale`), never clips.
             add(QuickAction("Q.SAVE", false, onClick = act { scope.launch { session.quickSave() } }))
         } else {
-            add(QuickAction("结束回想", false, shortLabel = "退出", onClick = act { vm.exitToTitle() }))
+            add(QuickAction(strings.quickBarExitReplay, false, shortLabel = strings.quickBarExitReplayShort, onClick = act { vm.exitToTitle() }))
         }
         add(QuickAction("MENU", false, onClick = act { session.overlay = Overlay.MENU }))
     }
@@ -392,13 +395,13 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                             Modifier.heightIn(min = 48.dp).widthIn(min = 48.dp).clip(RoundedCornerShape(24.dp))
                                 .clickable {
                                     vm.updateSettings { it.copy(aiTapToAnalyze = false) }
-                                    session.toast = "已关闭点词解析 Tap-to-analyze off"
+                                    session.toast = Wa2I18n.s.gameTapAnalyzeOffToast
                                 }
                                 .padding(4.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                "✨ 点词 ×", color = Wa2Colors.Accent, fontSize = 12.sp,
+                                strings.gameTapAnalyzeBadge, color = Wa2Colors.Accent, fontSize = 12.sp,
                                 modifier = Modifier.background(Color(0x99000000), RoundedCornerShape(12.dp))
                                     .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(12.dp))
                                     .padding(horizontal = 8.dp, vertical = 2.dp),
@@ -488,7 +491,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                         store = vm.saves,
                         lang = settings.lang,
                         onPick = { slot ->
-                            session.toast = if (session.saveTo(slot, thumb)) "已保存 Saved" else "存档失败 Save failed"
+                            session.toast = if (session.saveTo(slot, thumb)) Wa2I18n.s.toastSaved else Wa2I18n.s.toastSaveFailed
                         },
                         onClose = { session.overlay = Overlay.NONE },
                         refreshKey = vm.savesRevision,
@@ -502,8 +505,8 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                     store = vm.saves,
                     lang = settings.lang,
                     onPick = { slot ->
-                        // Success shows the 「已读取存档 · 撤销 Undo」 pill (plain toast when nothing to undo).
-                        if (!session.loadFrom(slot)) session.toast = "读档失败 Load failed" else if (session.undoAction == null) session.toast = "已读取 Loaded"
+                        // Success shows the undo pill (plain toast when nothing to undo).
+                        if (!session.loadFrom(slot)) session.toast = Wa2I18n.s.toastLoadFailed else if (session.undoAction == null) session.toast = Wa2I18n.s.toastLoaded
                     },
                     onClose = { session.overlay = Overlay.NONE },
                     refreshKey = vm.savesRevision,
@@ -532,7 +535,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                 persona = vm.ai.persona,
                 onPersona = { id ->
                     vm.updateSettings { it.copy(aiPersonaId = id) }
-                    session.toast = "人设已切换，后续追问生效 Persona switched"
+                    session.toast = Wa2I18n.s.toastPersonaSwitched
                 },
                 onReplayVoice = st.voice?.let { v -> { session.audio.replayVoice(v) } },
                 onOpenSettings = {
@@ -572,7 +575,7 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                         .clickable { scope.launch { undo.perform() } }
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center,
-                ) { Text("撤销 Undo", color = Wa2Colors.Accent, fontSize = 14.sp) }
+                ) { Text(strings.toastUndoBtn, color = Wa2Colors.Accent, fontSize = 14.sp) }
             }
         }
 

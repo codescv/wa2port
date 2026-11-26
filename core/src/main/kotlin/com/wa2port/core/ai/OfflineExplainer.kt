@@ -1,5 +1,7 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
+
 /**
  * Offline fallback breakdown (no network, no key): splits the sentence into punctuation-delimited
  * phrases, keeps the script's own furigana and shows the official CK-GAL translation. Lets the AI
@@ -31,8 +33,8 @@ object OfflineExplainer {
                     reading = chunkRuby.joinToString("") { it.ruby ?: it.base },
                     ruby = chunkRuby,
                     textbookForm = surface,
-                    role = "离线分段 Offline phrase",
-                    meaning = "配置 AI 服务后可查看逐词解析",
+                    role = Wa2I18n.s.aiOfflineChunkRole,
+                    meaning = Wa2I18n.s.aiOfflineChunkMeaning,
                 )
             }
         }
@@ -40,7 +42,7 @@ object OfflineExplainer {
             id = "offline_" + ExplainCache.sha256Hex(s).take(16),
             sentence = s,
             ruby = ruby,
-            translation = req.officialCnTranslation?.takeIf { it.isNotBlank() } ?: "（离线模式：尚未配置 AI 服务）",
+            translation = req.officialCnTranslation?.takeIf { it.isNotBlank() } ?: Wa2I18n.s.aiOfflineTranslationFallback,
             officialCnTranslation = req.officialCnTranslation,
             chunks = chunks,
             speakerJp = req.speakerJp,

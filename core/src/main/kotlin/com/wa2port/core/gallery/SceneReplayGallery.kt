@@ -2,6 +2,8 @@ package com.wa2port.core.gallery
 
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.SystemData
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import java.util.Locale
 
 /** Chapter filter for Scene Replay (`WA2.exe` `0x42e300`, `.data 0x4c1bf0`). */
@@ -9,6 +11,13 @@ enum class ReplayCategory(val id: Int, val label: String) {
     IC(0, "IC 序章"),
     CC(1, "CC 终章"),
     CODA(2, "Coda"),
+    ;
+
+    fun localizedLabel(strings: Wa2Strings = Wa2I18n.s): String = when (this) {
+        IC -> strings.replayCategoryIc
+        CC -> strings.replayCategoryCc
+        CODA -> strings.replayCategoryCoda
+    }
 }
 
 /**

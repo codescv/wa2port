@@ -1,6 +1,7 @@
 package com.wa2port.core.update
 
 import com.wa2port.core.ai.CancelToken
+import com.wa2port.core.i18n.Wa2I18n
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -55,7 +56,7 @@ class AppUpdater(
         try {
             conn = openFollowingRedirects(apiUrl, headers, cancel, timeoutMs, timeoutMs)
             val status = conn.responseCode
-            if (status !in 200..299) throw httpError(conn, status, "检查更新失败")
+            if (status !in 200..299) throw httpError(conn, status, Wa2I18n.s.errCheckUpdateFailed)
             val text = readLimited(conn.inputStream, MAX_JSON_BYTES, cancel)
             if (cancel?.isCancelled == true) throw cancelled()
             val parsed = ReleaseJson.parse(text)
@@ -103,16 +104,16 @@ class AppUpdater(
         try {
             conn = openFollowingRedirects(url, headers, cancelToken, connectTimeoutMs, readTimeoutMs)
             val status = conn.responseCode
-            if (status != 200) throw httpError(conn, status, "下载失败")
+            if (status != 200) throw httpError(conn, status, Wa2I18n.s.errDownloadFailed)
             val contentType = conn.contentType.orEmpty()
             if (contentType.trim().startsWith("text/html", ignoreCase = true)) {
-                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "服务器返回了网页而不是 APK Server returned a web page, not an APK")
+                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errServerReturnedWebPageApk)
             }
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: expectedSize
             val written = streamToFile(conn.inputStream, tmp, total, cancelToken, onProgress)
             verifyDownload(tmp, written, total, expectedSize)
             destFile.delete()
-            if (!tmp.renameTo(destFile)) throw UpdateException(UpdateErrorCode.NETWORK, "无法保存文件 Cannot save ${destFile.name}")
+            if (!tmp.renameTo(destFile)) throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errCannotSaveFile(destFile.name))
             ok = true
             return destFile
         } catch (e: Exception) {
@@ -159,7 +160,7 @@ class AppUpdater(
                         if (cancel?.isCancelled == true) throw cancelled()
                         throw UpdateException(
                             UpdateErrorCode.CORRUPT_DOWNLOAD,
-                            "下载不完整 Download interrupted (${written}/${if (total > 0) total else "?"}): ${e.message ?: e.javaClass.simpleName}",
+                            Wa2I18n.s.errDownloadInterrupted(written, if (total > 0) total.toString() else "?", e.message ?: e.javaClass.simpleName),
                             e,
                         )
                     }
@@ -172,10 +173,10 @@ class AppUpdater(
                     }
                     written += n
                     if (total > 0 && written > total) {
-                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件大小不符 Download larger than expected (${written}/${total})")
+                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errDownloadLarger(written, total))
                     }
                     if (total <= 0 && written > MAX_UNKNOWN_SIZE_BYTES) {
-                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件过大 Download exceeds ${MAX_UNKNOWN_SIZE_BYTES shr 20} MiB")
+                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errDownloadTooLarge(MAX_UNKNOWN_SIZE_BYTES shr 20))
                     }
                     val now = System.currentTimeMillis()
                     if (!reported || now - lastReportAt >= PROGRESS_INTERVAL_MS || written - lastReportBytes >= PROGRESS_INTERVAL_BYTES) {
@@ -202,25 +203,25 @@ class AppUpdater(
     /** Rejects anything that is not a complete ZIP/APK. */
     private fun verifyDownload(tmp: File, written: Long, total: Long, expectedSize: Long) {
         if (total > 0 && written != total) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "下载不完整 Incomplete download (${written}/${total})")
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errIncompleteDownload(written, total))
         }
         if (expectedSize > 0 && written != expectedSize) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件大小不符 Size mismatch (${written}/${expectedSize})")
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errSizeMismatch(written, expectedSize))
         }
         val head = ByteArray(4)
         val n = if (written >= 4) tmp.inputStream().use { readFully(it, head) } else 0
         if (n < 4 || !head.contentEquals(APK_MAGIC)) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "不是有效的 APK 文件 Not a valid APK file")
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errNotValidApk)
         }
         // The magic survives truncation; opening the archive validates the end-of-central-directory
         // record, which only a complete ZIP has (matters when the length was unknown).
         val hasManifest = try {
             ZipFile(tmp).use { it.getEntry("AndroidManifest.xml") != null }
         } catch (e: Exception) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "下载不完整或已损坏 Download incomplete or corrupt", e)
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errDownloadCorrupt, e)
         }
         if (!hasManifest) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "不是有效的 APK 文件（缺少 AndroidManifest.xml） Not an APK")
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errNotApkMissingManifest)
         }
     }
 
@@ -241,7 +242,7 @@ class AppUpdater(
         var current = try {
             URL(url)
         } catch (e: MalformedURLException) {
-            throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, "地址无效 Invalid URL: $url", e)
+            throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errInvalidUrl(url), e)
         }
         requireHttp(current, initial = true)
         var hops = 0
@@ -264,17 +265,17 @@ class AppUpdater(
                 }
                 val location = conn.getHeaderField("Location")?.trim()
                 if (location.isNullOrEmpty()) {
-                    throw UpdateException(UpdateErrorCode.HTTP, "重定向缺少 Location Redirect without Location (HTTP $status)", httpStatus = status)
+                    throw UpdateException(UpdateErrorCode.HTTP, Wa2I18n.s.errRedirectMissingLocation(status), httpStatus = status)
                 }
-                if (++hops > MAX_REDIRECTS) throw UpdateException(UpdateErrorCode.NETWORK, "重定向过多 Too many redirects")
+                if (++hops > MAX_REDIRECTS) throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errTooManyRedirects)
                 val next = try {
                     URL(current, location)
                 } catch (e: MalformedURLException) {
-                    throw UpdateException(UpdateErrorCode.HTTP, "重定向地址无效 Invalid redirect: $location", e, status)
+                    throw UpdateException(UpdateErrorCode.HTTP, Wa2I18n.s.errInvalidRedirect(location), e, status)
                 }
                 requireHttp(next, initial = false)
                 if (current.protocol.equals("https", true) && next.protocol.equals("http", true)) {
-                    throw UpdateException(UpdateErrorCode.NETWORK, "不安全的重定向 Insecure redirect (https → http)")
+                    throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errInsecureRedirectHttps)
                 }
                 current = next
             } finally {
@@ -292,8 +293,8 @@ class AppUpdater(
         val rateLimited = status == 429 ||
             (status == 403 && (conn.getHeaderField("X-RateLimit-Remaining")?.trim() == "0" || body.contains("rate limit", ignoreCase = true)))
         val msg = when {
-            rateLimited -> "GitHub API 限流 rate limited，请稍后再试或设置代理地址 (HTTP $status)"
-            status == 404 -> "没有找到发布版本 No release found (HTTP 404)"
+            rateLimited -> Wa2I18n.s.errRateLimitedWithHint(status)
+            status == 404 -> Wa2I18n.s.errNoReleaseFound404
             else -> "$what HTTP $status" + body.trim().take(160).let { if (it.isNotEmpty()) ": $it" else "" }
         }
         return UpdateException(UpdateErrorCode.HTTP, msg, httpStatus = status)
@@ -303,33 +304,33 @@ class AppUpdater(
     private fun mapError(e: Exception, cancel: CancelToken?, host: String, timeoutMs: Int): UpdateException {
         if (cancel?.isCancelled == true) {
             return if (e is UpdateException && e.code == UpdateErrorCode.CANCELLED) e
-            else UpdateException(UpdateErrorCode.CANCELLED, "已取消 Cancelled", e)
+            else UpdateException(UpdateErrorCode.CANCELLED, Wa2I18n.s.errCancelled, e)
         }
         if (e is UpdateException) return e
         val where = if (host.isNotEmpty()) " ($host)" else ""
         return when (e) {
-            is SocketTimeoutException -> UpdateException(UpdateErrorCode.TIMEOUT, "连接超时 Timed out after $timeoutMs ms$where", e)
-            is UnknownServiceException -> UpdateException(UpdateErrorCode.NETWORK, "系统禁止明文 http：请使用 https 地址$where", e)
-            is UnknownHostException -> UpdateException(UpdateErrorCode.NETWORK, "无法解析服务器地址 Unknown host$where", e)
-            is IOException -> UpdateException(UpdateErrorCode.NETWORK, "网络错误 Network error$where: ${e.message ?: e.javaClass.simpleName}", e)
-            is IllegalArgumentException -> UpdateException(UpdateErrorCode.INVALID_ARGUMENT, "参数无效 Invalid argument$where: ${e.message}", e)
+            is SocketTimeoutException -> UpdateException(UpdateErrorCode.TIMEOUT, Wa2I18n.s.errTimedOutMs(timeoutMs, where), e)
+            is UnknownServiceException -> UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errCleartextBlocked(where), e)
+            is UnknownHostException -> UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errUnknownHost(where), e)
+            is IOException -> UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errNetworkError(where, e.message ?: e.javaClass.simpleName), e)
+            is IllegalArgumentException -> UpdateException(UpdateErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errInvalidArg(where, e.message ?: ""), e)
             else -> UpdateException(UpdateErrorCode.NETWORK, "${e.javaClass.simpleName}: ${e.message}$where", e)
         }
     }
 
-    private fun cancelled() = UpdateException(UpdateErrorCode.CANCELLED, "已取消 Cancelled")
+    private fun cancelled() = UpdateException(UpdateErrorCode.CANCELLED, Wa2I18n.s.errCancelled)
 
     private fun storageError(e: IOException) =
-        UpdateException(UpdateErrorCode.NETWORK, "存储空间不足/无法写入 Cannot write file: ${e.message ?: e.javaClass.simpleName}", e)
+        UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errStorageWrite(e.message ?: e.javaClass.simpleName), e)
 
     /** Only http(s) URLs are ever opened (a `file:`/`jar:` Location must not reach [openConnection]). */
     private fun requireHttp(url: URL, initial: Boolean) {
         val proto = url.protocol.lowercase()
         if (proto != "http" && proto != "https") {
-            val msg = if (initial) "不支持的协议 Unsupported URL scheme: $proto" else "不安全的重定向 Insecure redirect to $proto:"
+            val msg = if (initial) Wa2I18n.s.errUnsupportedScheme(proto) else Wa2I18n.s.errInsecureRedirectScheme(proto)
             throw UpdateException(if (initial) UpdateErrorCode.INVALID_ARGUMENT else UpdateErrorCode.NETWORK, msg)
         }
-        if (url.host.isNullOrEmpty()) throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, "地址缺少主机名 URL has no host: $url")
+        if (url.host.isNullOrEmpty()) throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errUrlNoHost(url.toString()))
     }
 
     private fun userAgent(version: String?) = "wa2port-android" + (version?.let { "/$it" } ?: "")
@@ -346,7 +347,7 @@ class AppUpdater(
                 val n = ins.read(buf)
                 if (n < 0) break
                 out.write(buf, 0, n)
-                if (out.size() > limit) throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "更新信息过大 Response too large")
+                if (out.size() > limit) throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errResponseTooLarge)
             }
             return out.toString(Charsets.UTF_8.name())
         }

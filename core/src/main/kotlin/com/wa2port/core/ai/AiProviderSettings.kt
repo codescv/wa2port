@@ -1,5 +1,7 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.serialization.Serializable
 import java.net.URLEncoder
 
@@ -57,27 +59,27 @@ data class AiProviderSettings(
     /** True when a request could be attempted (credentials present for the selected provider). */
     val isConfigured: Boolean get() = validationError() == null
 
-    /** Human-readable (zh / en) reason why the settings are incomplete, or null when usable. */
-    fun validationError(): String? {
-        if (AiEndpoints.sanitizeModel(model).isEmpty()) return "未设置模型 Model is empty"
+    /** Localized reason why the settings are incomplete, or null when usable. */
+    fun validationError(strings: Wa2Strings = Wa2I18n.s): String? {
+        if (AiEndpoints.sanitizeModel(model).isEmpty()) return strings.errAiModelEmpty
         if (!isVertex) {
             // A proxy may inject the key server-side, so a custom base URL alone is enough.
             return if (AiEndpoints.sanitizeValue(geminiApiKey).isEmpty() && AiEndpoints.normalizeBaseUrl(customBaseUrl).isEmpty()) {
-                "未填写 Gemini API Key"
+                strings.errAiMissingGeminiKey
             } else {
                 null
             }
         }
         return when (vertexAuthMode) {
-            VERTEX_AUTH_EXPRESS -> if (AiEndpoints.sanitizeValue(vertexApiKey).isEmpty()) "未填写 Vertex Express API Key" else null
+            VERTEX_AUTH_EXPRESS -> if (AiEndpoints.sanitizeValue(vertexApiKey).isEmpty()) strings.errAiMissingVertexExpressKey else null
             VERTEX_AUTH_ACCESS_TOKEN -> when {
-                AiEndpoints.sanitizeValue(vertexProject).isEmpty() -> "未填写 Vertex 项目 Project"
-                AiEndpoints.sanitizeValue(vertexAccessToken).isEmpty() -> "未填写 Access Token"
+                AiEndpoints.sanitizeValue(vertexProject).isEmpty() -> strings.errAiMissingVertexProject
+                AiEndpoints.sanitizeValue(vertexAccessToken).isEmpty() -> strings.errAiMissingVertexToken
                 else -> null
             }
             else -> when {
-                AiEndpoints.sanitizeValue(vertexProject).isEmpty() -> "未填写 Vertex 项目 Project"
-                vertexServiceAccountJson.isBlank() -> "未填写服务账号 JSON Service account JSON"
+                AiEndpoints.sanitizeValue(vertexProject).isEmpty() -> strings.errAiMissingVertexProject
+                vertexServiceAccountJson.isBlank() -> strings.errAiMissingVertexSaJson
                 else -> null
             }
         }
@@ -98,11 +100,11 @@ data class AiProviderSettings(
      * Non-blocking warning for the settings UI: plain `http://` is only allowed by the app's network
      * security config for localhost / 127.0.0.1 / 10.0.2.2 (emulator host).
      */
-    fun connectionWarning(): String? {
+    fun connectionWarning(strings: Wa2Strings = Wa2I18n.s): String? {
         val base = AiEndpoints.normalizeBaseUrl(customBaseUrl)
         if (!base.startsWith("http://", ignoreCase = true)) return null
         val host = AiEndpoints.hostOf(base).lowercase()
-        return if (host in AiEndpoints.CLEARTEXT_HOSTS) null else "系统禁止明文 http：请使用 https 地址 (cleartext http is blocked)"
+        return if (host in AiEndpoints.CLEARTEXT_HOSTS) null else strings.errAiCleartextWarning
     }
 
     /** Redacts every secret so settings can never leak through logs / crash reports. */

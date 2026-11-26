@@ -1,5 +1,6 @@
 package com.wa2port.android.data
 
+import com.wa2port.core.i18n.AppLanguage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
@@ -132,5 +133,23 @@ class SettingsStoreTest {
         file.writeText("""{ "orientation": "LANDSCAPE", "portraitDefaultMigrated": false }""")
         assertEquals(OrientationMode.PORTRAIT, SettingsStore(file).load().orientation)
         assertEquals(true, migratedOnDisk())
+    }
+
+    @Test
+    fun appLanguageDefaultsToSystemAndRoundTrips() {
+        assertEquals(AppLanguage.SYSTEM, Settings().appLanguage)
+        val store = SettingsStore(file)
+        assertEquals(AppLanguage.SYSTEM, store.load().appLanguage)
+
+        for (lang in AppLanguage.entries) {
+            store.save(store.load().copy(appLanguage = lang))
+            assertEquals(lang, SettingsStore(file).load().appLanguage)
+        }
+
+        // Legacy settings.json without appLanguage key falls back cleanly to SYSTEM.
+        file.writeText("""{ "textSpeed": 75, "portraitDefaultMigrated": true }""")
+        val legacy = SettingsStore(file).load()
+        assertEquals(AppLanguage.SYSTEM, legacy.appLanguage)
+        assertEquals(75, legacy.textSpeed)
     }
 }

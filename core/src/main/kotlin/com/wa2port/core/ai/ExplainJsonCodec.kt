@@ -1,5 +1,6 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -196,11 +197,11 @@ object ExplainJsonCodec {
     fun parseModelJson(text: String): JsonElement {
         val trimmed = text.trim()
         val body = FENCE.find(trimmed)?.groupValues?.get(1) ?: trimmed
-        if (body.isEmpty()) throw AiException(AiErrorCode.INVALID_RESPONSE, "模型返回了空内容 Empty model output")
+        if (body.isEmpty()) throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiEmptyModelOutput)
         return try {
             AiJson.parseToJsonElement(body)
         } catch (e: Exception) {
-            throw AiException(AiErrorCode.INVALID_RESPONSE, "模型返回了无法解析的 JSON: ${e.message?.take(120)}", e)
+            throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiInvalidModelJson(e.message?.take(120).orEmpty()), e)
         }
     }
 
@@ -236,9 +237,9 @@ object ExplainJsonCodec {
 
     /** Tolerant parse of the model output; throws INVALID_RESPONSE only when the root is not an object or `translation` is missing. */
     fun parseRawExplanation(el: JsonElement): RawExplanation {
-        val root = el as? JsonObject ?: throw AiException(AiErrorCode.INVALID_RESPONSE, "模型输出不是 JSON 对象 Output is not an object")
+        val root = el as? JsonObject ?: throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiOutputNotObject)
         val translation = root["translation"].primitiveOrNull()?.contentOrNull
-            ?: throw AiException(AiErrorCode.INVALID_RESPONSE, "模型输出缺少 translation Missing translation")
+            ?: throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiOutputMissingTranslation)
         val chunks = root.objects("chunks").map { c ->
             val evo = (c["spokenEvolution"] as? JsonObject)?.let { e ->
                 RawSpokenEvolution(e.reqString("kind"), e.reqString("derivation"), e.optNumber("formality"))
@@ -495,7 +496,7 @@ object ExplainJsonCodec {
             AiJson.parseToJsonElement(body) as? JsonObject
         } catch (e: Exception) {
             null
-        } ?: throw AiException(AiErrorCode.INVALID_RESPONSE, "Gemini 返回了非 JSON 内容 Non-JSON body: ${body.take(120)}")
+        } ?: throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiNonJsonBody(body.take(120)))
         val block = (root["promptFeedback"] as? JsonObject)?.optString("blockReason")
         if (block != null) throw AiException(AiErrorCode.SAFETY, "Prompt blocked: $block")
         val candidates = root.objects("candidates")
@@ -506,7 +507,7 @@ object ExplainJsonCodec {
             .joinToString("")
         val finish = first?.optString("finishReason")
         if (finish != null && finish in SAFETY_REASONS && text.isEmpty()) throw AiException(AiErrorCode.SAFETY, "Response blocked: $finish")
-        if (first == null) throw AiException(AiErrorCode.INVALID_RESPONSE, "Gemini 未返回候选结果 No candidates")
+        if (first == null) throw AiException(AiErrorCode.INVALID_RESPONSE, Wa2I18n.s.errAiNoCandidates)
         val usage = (root["usageMetadata"] as? JsonObject)?.let { u ->
             TokenUsage(
                 promptTokens = u.optNumber("promptTokenCount")?.toInt() ?: 0,

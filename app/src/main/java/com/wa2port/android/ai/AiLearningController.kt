@@ -40,6 +40,8 @@ import com.wa2port.core.ai.formatContextLine
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.engine.LineRef
 import com.wa2port.core.engine.VoiceRef
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.TextLang
 import kotlinx.coroutines.CancellationException
@@ -305,7 +307,7 @@ class AiLearningController(
         val decoder = session.engine.decoder
         val sentence = JpSentence.fromRich(line.jp, decoder)
         if (sentence.text.isBlank()) {
-            session.toast = "这一行没有日文 No Japanese text"
+            session.toast = Wa2I18n.s.aiNoJapaneseText
             return
         }
         val req = buildRequest(session, line, focusCharIndex, persona, forceRefresh = false)
@@ -345,7 +347,7 @@ class AiLearningController(
             speakerCn = AiSampleExplanation.SPEAKER_CN,
             officialCn = AiSampleExplanation.OFFICIAL_CN,
             contextBefore = AiSampleExplanation.request().contextBefore,
-            sceneHint = "WHITE ALBUM 2 · 示例 Sample",
+            sceneHint = Wa2I18n.s.aiSampleSceneHint,
             voice = null,
             returnTo = back,
             isSample = true,
@@ -415,7 +417,7 @@ class AiLearningController(
             speakerCn = expl.speakerCn ?: entry.speakerCn,
             officialCn = expl.officialCnTranslation ?: entry.officialCn,
             contextBefore = emptyList(),
-            sceneHint = if (entry.scene > 0) "WHITE ALBUM 2 · ${sceneLabel(entry.scene.toString())}" else "WHITE ALBUM 2 · 笔记本",
+            sceneHint = if (entry.scene > 0) "WHITE ALBUM 2 · ${sceneLabel(entry.scene.toString())}" else Wa2I18n.s.aiNotebookSceneHint,
             voice = entry.voiceRef,
             returnTo = back,
             returnToNotebook = true,
@@ -791,7 +793,7 @@ class AiLearningController(
                 // Keep the pack breakdown on screen; only (re)load it when it is not shown yet.
                 if (st.isFromOfflinePack) return
             } else if (pack == null && !ai.cacheEnabled) {
-                st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, ai.validationError() ?: "尚未配置 AI 服务")
+                st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, ai.validationError() ?: errorText(AiErrorCode.NOT_CONFIGURED))
                 return
             }
         }
@@ -833,7 +835,7 @@ class AiLearningController(
                     notebookRevision++
                 }
                 configured -> startOnline(st, req, force = false)
-                else -> st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, validationError ?: "尚未配置 AI 服务")
+                else -> st.status = AiStatus.Error(AiErrorCode.NOT_CONFIGURED, validationError ?: errorText(AiErrorCode.NOT_CONFIGURED))
             }
         }
     }
@@ -895,7 +897,7 @@ class AiLearningController(
                 onFailure = { t ->
                     val ae = t as? AiException
                     st.status = when {
-                        timedOut -> AiStatus.Error(AiErrorCode.TIMEOUT, "请求超时 Request timed out after ${deadlineMs / 1000} s")
+                        timedOut -> AiStatus.Error(AiErrorCode.TIMEOUT, Wa2I18n.s.aiRequestTimedOutAfter(deadlineMs / 1000))
                         ae?.code == AiErrorCode.CANCELLED -> return@fold
                         ae != null -> AiStatus.Error(ae.code, ae.message ?: ae.code.name)
                         else -> AiStatus.Error(AiErrorCode.NETWORK, "${t.javaClass.simpleName}: ${t.message}")
@@ -935,12 +937,12 @@ class AiLearningController(
         val q = question.trim()
         if (q.isEmpty() || st.followUpPending) return
         if (!isConfigured) {
-            st.followUpError = if (OfflineAiPack.isPackExplanation(expl)) PACK_FOLLOW_UP_NOTICE else "追问需要先配置 AI 服务（设置 → AI 学习）"
+            st.followUpError = if (OfflineAiPack.isPackExplanation(expl)) PACK_FOLLOW_UP_NOTICE else Wa2I18n.s.aiFollowUpNeedConfig
             st.failedQuestion = q
             return
         }
         if (expl.model == OfflineExplainer.MODEL) {
-            st.followUpError = "离线分段不支持追问，请先生成 AI 解说"
+            st.followUpError = Wa2I18n.s.aiFollowUpOfflineUnsupported
             st.failedQuestion = q
             return
         }
@@ -988,7 +990,7 @@ class AiLearningController(
                 onFailure = { t ->
                     val ae = t as? AiException
                     if (ae?.code == AiErrorCode.CANCELLED && !timedOut) return@fold
-                    st.followUpError = if (timedOut) "请求超时 Request timed out" else errorText(ae?.code ?: AiErrorCode.NETWORK) + (ae?.message?.let { "：$it" } ?: "")
+                    st.followUpError = if (timedOut) Wa2I18n.s.aiRequestTimedOut else errorText(ae?.code ?: AiErrorCode.NETWORK) + (ae?.message?.let { ": $it" } ?: "")
                     st.failedQuestion = q
                 },
             )
@@ -1038,10 +1040,10 @@ class AiLearningController(
         const val PREFETCH_DEBOUNCE_MS = 600L
 
         /** ↻ pressed on an offline-pack breakdown without an API key. */
-        const val PACK_REGENERATE_NOTICE = "当前为离线解读包模式；配置 API Key 后可在线重新生成"
+        val PACK_REGENERATE_NOTICE: String get() = Wa2I18n.s.aiPackRegenerateNotice
 
         /** Follow-up asked on an offline-pack breakdown without an API key. */
-        const val PACK_FOLLOW_UP_NOTICE = "离线解读包不含实时对话模型；配置 API Key 后可继续追问"
+        val PACK_FOLLOW_UP_NOTICE: String get() = Wa2I18n.s.aiPackFollowUpNotice
 
         /**
          * Pure request builder shared by [open] and background prefetch so their [ExplainCache.key]
@@ -1075,18 +1077,7 @@ class AiLearningController(
             )
         }
 
-        /** zh-CN text for an error code (AI sheet / follow-up errors). */
-        fun errorText(code: AiErrorCode): String = when (code) {
-            AiErrorCode.NOT_CONFIGURED -> "尚未配置 AI 服务 (Gemini / Vertex AI)"
-            AiErrorCode.AUTH -> "密钥无效或未授权"
-            AiErrorCode.QUOTA -> "配额不足 / 请求过于频繁"
-            AiErrorCode.TIMEOUT -> "请求超时"
-            AiErrorCode.NETWORK -> "网络错误：请检查网络或自定义服务器地址"
-            AiErrorCode.INVALID_ARGUMENT -> "请求参数无效：检查模型名 / 服务器地址 / 请求头"
-            AiErrorCode.NOT_FOUND -> "模型不存在：检查模型名"
-            AiErrorCode.SAFETY -> "内容被安全策略拦截"
-            AiErrorCode.INVALID_RESPONSE -> "模型返回了无法解析的内容"
-            AiErrorCode.CANCELLED -> "已取消"
-        }
+        /** Localized text for an error code (AI sheet / follow-up errors). */
+        fun errorText(code: AiErrorCode, strings: Wa2Strings = Wa2I18n.s): String = strings.aiErrorText(code)
     }
 }

@@ -44,6 +44,7 @@ import com.wa2port.android.data.SaveStore
 import com.wa2port.android.sync.ConflictChoice
 import com.wa2port.android.sync.ConflictSideInfo
 import com.wa2port.android.sync.SyncConflict
+import com.wa2port.core.sync.CloudSyncSchema
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,6 +70,7 @@ fun CloudSyncConflictOverlay(
     onChooseAll: (ConflictChoice) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     val conflict = conflicts.firstOrNull() ?: return
     val total = conflicts.size
 
@@ -109,7 +111,7 @@ fun CloudSyncConflictOverlay(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            "☁ 同步冲突",
+                            strings.syncConflictTitle,
                             color = Wa2Colors.Text,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -121,7 +123,7 @@ fun CloudSyncConflictOverlay(
                                 .border(1.dp, Wa2Colors.AccentDim, RoundedCornerShape(6.dp))
                                 .padding(horizontal = 8.dp, vertical = 2.dp),
                         ) {
-                            Text(conflict.displayLabel, color = Wa2Colors.Accent, fontSize = 12.sp)
+                            Text(CloudSyncSchema.displayLabelForPath(conflict.relativePath, strings), color = Wa2Colors.Accent, fontSize = 12.sp)
                         }
                         Box(
                             Modifier
@@ -133,7 +135,7 @@ fun CloudSyncConflictOverlay(
                         }
                     }
                     Text(
-                        conflict.reason.label,
+                        conflict.reason.localizedLabel(strings),
                         color = CONFLICT_WARN,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 4.dp),
@@ -173,14 +175,14 @@ fun CloudSyncConflictOverlay(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         ConflictSideCard(
-                            title = "📱 本地存档 Local",
+                            title = strings.syncLocalSaveTitle,
                             side = conflict.local,
                             accent = CONFLICT_LOCAL_ACCENT,
                             isNewer = localNewer,
                             modifier = Modifier.weight(1f),
                         )
                         ConflictSideCard(
-                            title = "☁ 云端存档 Cloud",
+                            title = strings.syncCloudSaveTitle,
                             side = conflict.remote,
                             accent = CONFLICT_CLOUD_ACCENT,
                             isNewer = remoteNewer,
@@ -193,14 +195,14 @@ fun CloudSyncConflictOverlay(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         ConflictSideCard(
-                            title = "📱 本地存档 Local",
+                            title = strings.syncLocalSaveTitle,
                             side = conflict.local,
                             accent = CONFLICT_LOCAL_ACCENT,
                             isNewer = localNewer,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         ConflictSideCard(
-                            title = "☁ 云端存档 Cloud",
+                            title = strings.syncCloudSaveTitle,
                             side = conflict.remote,
                             accent = CONFLICT_CLOUD_ACCENT,
                             isNewer = remoteNewer,
@@ -224,7 +226,7 @@ fun CloudSyncConflictOverlay(
                         color = Wa2Colors.Accent,
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text("正在同步所选版本…", color = Wa2Colors.Text, fontSize = 13.sp)
+                    Text(strings.syncResolving, color = Wa2Colors.Text, fontSize = 13.sp)
                 }
             } else {
                 // Primary two-choice buttons.
@@ -233,15 +235,15 @@ fun CloudSyncConflictOverlay(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     ConflictActionButton(
-                        label = "📱 保留本地",
-                        subtitle = if (conflict.local.exists) "上传覆盖云端" else "同步删除云端",
+                        label = strings.syncKeepLocal,
+                        subtitle = if (conflict.local.exists) strings.syncKeepLocalUpload else strings.syncKeepLocalDeleteCloud,
                         highlight = true,
                         modifier = Modifier.weight(1f),
                         onClick = { onChoose(conflict, ConflictChoice.KEEP_LOCAL) },
                     )
                     ConflictActionButton(
-                        label = "☁ 使用云端",
-                        subtitle = if (conflict.remote.exists) "下载覆盖本地" else "删除本地存档",
+                        label = strings.syncUseCloud,
+                        subtitle = if (conflict.remote.exists) strings.syncUseCloudDownload else strings.syncUseCloudDeleteLocal,
                         highlight = true,
                         modifier = Modifier.weight(1f),
                         onClick = { onChoose(conflict, ConflictChoice.USE_CLOUD) },
@@ -250,21 +252,21 @@ fun CloudSyncConflictOverlay(
 
                 Spacer(Modifier.height(8.dp))
 
-                // Secondary controls: 稍后处理 + batch resolve when N > 1.
+                // Secondary controls: Handle later + batch resolve when N > 1.
                 FlowRow(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     if (total > 1) {
-                        ConflictSecondaryButton("全部保留本地 ($total)") {
+                        ConflictSecondaryButton(strings.syncKeepAllLocal(total)) {
                             onChooseAll(ConflictChoice.KEEP_LOCAL)
                         }
-                        ConflictSecondaryButton("全部使用云端 ($total)") {
+                        ConflictSecondaryButton(strings.syncUseAllCloud(total)) {
                             onChooseAll(ConflictChoice.USE_CLOUD)
                         }
                     }
-                    ConflictSecondaryButton("稍后处理") { onDismiss() }
+                    ConflictSecondaryButton(strings.syncHandleLater) { onDismiss() }
                 }
             }
         }
@@ -279,6 +281,7 @@ private fun ConflictSideCard(
     isNewer: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(10.dp)
     val thumb = remember(side.thumbnailBase64) { SaveStore.decodeThumbnail(side.thumbnailBase64) }
     val borderColor = when {
@@ -304,7 +307,7 @@ private fun ConflictSideCard(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (side.isLocked) {
                     Text(
-                        "🔒 已锁定",
+                        strings.saveTagLocked,
                         color = CONFLICT_LOCK,
                         fontSize = 11.sp,
                         modifier = Modifier
@@ -315,7 +318,7 @@ private fun ConflictSideCard(
                 }
                 if (isNewer) {
                     Text(
-                        "较新",
+                        strings.syncNewerTag,
                         color = Color(0xFF8FD3A8),
                         fontSize = 11.sp,
                         modifier = Modifier
@@ -336,7 +339,7 @@ private fun ConflictSideCard(
                     .background(Color(0x44080C16)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("— 此侧已删除 / 无存档 —", color = Wa2Colors.TextDim, fontSize = 13.sp)
+                Text(strings.syncDeletedOrEmpty, color = Wa2Colors.TextDim, fontSize = 13.sp)
             }
             return
         }
@@ -356,14 +359,14 @@ private fun ConflictSideCard(
 
         val timeLine = if (side.timestampMs > 0L) {
             val formatted = conflictDateFormat.format(Date(side.timestampMs))
-            if (side.timestampReliable) formatted else "$formatted（非存档内时间戳）"
+            if (side.timestampReliable) formatted else strings.syncUnreliableTs(formatted)
         } else {
-            "无时间戳"
+            strings.syncNoTimestamp
         }
         Text(timeLine, color = Wa2Colors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
 
         if (side.scene.isNotBlank()) {
-            Text(sceneLabel(side.scene), color = Wa2Colors.Accent, fontSize = 12.sp)
+            Text(sceneLabel(side.scene, strings), color = Wa2Colors.Accent, fontSize = 12.sp)
         }
 
         val cn = side.previewCn.replace('\n', ' ').trim()

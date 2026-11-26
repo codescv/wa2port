@@ -2,6 +2,8 @@ package com.wa2port.core.gallery
 
 import com.wa2port.core.archive.Wa2Assets
 import com.wa2port.core.engine.SystemData
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import java.util.Locale
 
 /** Chapter bucket for event CG cards (`IC` = records 0–26, `CC` = records 36–161). */
@@ -10,6 +12,12 @@ enum class CgCategory(val labelCn: String, val labelEn: String) {
     CC("CC 终章·Coda", "Closing Chapter / Coda"),
     OTHER("其他", "Other"),
     ;
+
+    fun localizedLabel(strings: Wa2Strings = Wa2I18n.s): String = when (this) {
+        IC -> strings.cgFilterIc
+        CC -> strings.cgFilterCc
+        OTHER -> strings.cgCategoryOther
+    }
 
     companion object {
         /** Maps the first digit of a CG stem (`1` = IC, `2`/`3` = CC/Coda, others = OTHER). */

@@ -57,19 +57,19 @@ fun AssetSetupScreen(vm: AppViewModel) {
     }
     var path by remember { mutableStateOf(vm.settings.assetPath ?: AssetLocator.TMP_DIR) }
 
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     Column(Modifier.fillMaxSize().screenSafePadding().padding(horizontal = if (compact) 16.dp else 32.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("资源文件夹 Asset Folder Setup", color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
+            Text(strings.assetsTitle, color = Wa2Colors.Text, fontSize = 22.sp, modifier = Modifier.weight(1f))
             CloseButton { vm.back() }
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(
-                "复制 PC 版游戏文件夹（含 script.pak / ck-gal.pak / fon.pak 等）。Copy your PC WA2 folder (with the CK-GAL patch). " +
-                    "adb: adb push WA2/. ${AssetLocator.importDir(view.context).absolutePath}",
+                strings.assetsGuide(AssetLocator.importDir(view.context).absolutePath),
                 color = Wa2Colors.TextDim, fontSize = 12.sp,
             )
-            SectionTitle("搜索位置 Search locations")
+            SectionTitle(strings.assetsSectionSearch)
             vm.candidates.forEach { c ->
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(6.dp)).background(Color(0x33203050)).padding(10.dp),
@@ -84,15 +84,15 @@ fun AssetSetupScreen(vm: AppViewModel) {
                         color = if (c.valid) Color(0xFF8FE3A0) else Wa2Colors.TextDim, fontSize = 18.sp, modifier = Modifier.width(32.dp),
                     )
                     Column(Modifier.weight(1f)) {
-                        Text(c.label, color = Wa2Colors.Text, fontSize = 14.sp)
+                        Text(c.kind.localizedLabel(strings), color = Wa2Colors.Text, fontSize = 14.sp)
                         Text(c.dir.absolutePath, color = Wa2Colors.TextDim, fontSize = 11.sp)
                     }
                     Text(
                         when {
-                            c.valid && c.dir.absolutePath == vm.assetRoot?.absolutePath -> "使用中 In use"
-                            c.valid -> "有效 Valid"
-                            c.exists -> "缺少 script.pak"
-                            else -> "不存在 Not found"
+                            c.valid && c.dir.absolutePath == vm.assetRoot?.absolutePath -> strings.assetsStatusInUse
+                            c.valid -> strings.assetsStatusValid
+                            c.exists -> strings.assetsStatusMissingPak
+                            else -> strings.assetsStatusNotFound
                         },
                         color = Wa2Colors.TextDim, fontSize = 12.sp,
                     )
@@ -100,20 +100,20 @@ fun AssetSetupScreen(vm: AppViewModel) {
             }
             Spacer(Modifier.height(8.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                MenuButton("从文件夹导入 Import folder…", "SAF 选择游戏根目录", enabled = !running) { picker.launch(null) }
+                MenuButton(strings.assetsImportBtn, strings.assetsImportSub, enabled = !running) { picker.launch(null) }
                 if (!running && vm.settings.importTreeUri != null && progress?.phase != ImportProgress.Phase.DONE) {
-                    MenuButton("继续导入 Resume import", "跳过已复制文件") { vm.resumeImport() }
+                    MenuButton(strings.assetsResumeBtn, strings.assetsResumeSub) { vm.resumeImport() }
                 }
-                if (running) MenuButton("暂停 Pause", "可稍后继续") { vm.cancelImport() }
-                MenuButton("重新扫描 Rescan", enabled = !running) { vm.rescanAssets() }
+                if (running) MenuButton(strings.commonPause, strings.assetsPauseSub) { vm.cancelImport() }
+                MenuButton(strings.assetsRescanBtn, enabled = !running) { vm.rescanAssets() }
             }
             if (progress != null) ImportStatus(progress)
 
-            SectionTitle("自定义路径 Custom path")
+            SectionTitle(strings.assetsSectionCustomPath)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(value = path, onValueChange = { path = it }, singleLine = true, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(12.dp))
-                MenuButton("使用 Use") { vm.useCustomPath(path) }
+                MenuButton(strings.commonUse) { vm.useCustomPath(path) }
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -122,13 +122,19 @@ fun AssetSetupScreen(vm: AppViewModel) {
 
 @Composable
 private fun ImportStatus(p: ImportProgress) {
+    val strings = LocalAppStrings.current
     Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
         val title = when (p.phase) {
-            ImportProgress.Phase.SCANNING -> "扫描中… Scanning…"
-            ImportProgress.Phase.COPYING -> "复制中 Copying %d/%d  %.2f / %.2f GB".format(Locale.ROOT, p.filesDone + 1, p.filesTotal, p.bytesDone / 1e9, p.bytesTotal / 1e9)
-            ImportProgress.Phase.DONE -> "完成 Done (%d files, %.2f GB)".format(Locale.ROOT, p.filesTotal, p.bytesTotal / 1e9)
-            ImportProgress.Phase.FAILED -> "失败 Failed"
-            ImportProgress.Phase.CANCELLED -> "已暂停 Paused"
+            ImportProgress.Phase.SCANNING -> strings.importPhaseScanning
+            ImportProgress.Phase.COPYING -> strings.importPhaseCopying(
+                p.filesDone + 1,
+                p.filesTotal,
+                "%.2f".format(Locale.ROOT, p.bytesDone / 1e9),
+                "%.2f".format(Locale.ROOT, p.bytesTotal / 1e9),
+            )
+            ImportProgress.Phase.DONE -> strings.importPhaseDone(p.filesTotal, "%.2f".format(Locale.ROOT, p.bytesTotal / 1e9))
+            ImportProgress.Phase.FAILED -> strings.importPhaseFailed
+            ImportProgress.Phase.CANCELLED -> strings.importPhaseCancelled
         }
         Text(title, color = Wa2Colors.Text, fontSize = 14.sp)
         if (p.phase == ImportProgress.Phase.SCANNING) {

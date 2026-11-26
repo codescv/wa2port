@@ -2,6 +2,8 @@ package com.wa2port.core.ai
 
 import com.wa2port.core.ai.AiProviderSettings.Companion.PROVIDER_VERTEX_AI
 import com.wa2port.core.ai.AiProviderSettings.Companion.VERTEX_AUTH_ACCESS_TOKEN
+import com.wa2port.core.i18n.ResolvedLanguage
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -143,10 +145,18 @@ class GeminiAiClientTest {
     @Test
     fun maxTokensSkipsRetry() {
         val t = FakeTransport(FakeTransport.geminiBody("{\"translation\":\"tru", finishReason = "MAX_TOKENS"))
-        val e = assertThrows(AiException::class.java) { client(AiProviderSettings(geminiApiKey = "K"), t).explainSentence(req, null) }
+        val e = Wa2I18n.withLanguage(ResolvedLanguage.ZH) {
+            assertThrows(AiException::class.java) { client(AiProviderSettings(geminiApiKey = "K"), t).explainSentence(req, null) }
+        }
         assertEquals(AiErrorCode.INVALID_RESPONSE, e.code)
         assertTrue(e.message!!.contains("截断"))
         assertEquals(1, t.calls.size)
+        val eEn = Wa2I18n.withLanguage(ResolvedLanguage.EN) {
+            assertThrows(AiException::class.java) {
+                client(AiProviderSettings(geminiApiKey = "K"), FakeTransport(FakeTransport.geminiBody("{\"translation\":\"tru", finishReason = "MAX_TOKENS"))).explainSentence(req, null)
+            }
+        }
+        assertTrue(eEn.message!!.contains("truncated", ignoreCase = true))
     }
 
     @Test
@@ -171,7 +181,7 @@ class GeminiAiClientTest {
         assertEquals(AiErrorCode.NETWORK, net.code)
         assertTrue(net.message!!.contains("proxy.example.com"))
         assertFalse(net.message!!.contains("key="))
-        assertTrue(codeOf(UnknownServiceException("CLEARTEXT communication not permitted")).message!!.contains("https"))
+        assertTrue(codeOf(UnknownServiceException("CLEARTEXT communication not permitted")).message!!.contains("https", ignoreCase = true))
         assertEquals(AiErrorCode.INVALID_ARGUMENT, codeOf(IllegalArgumentException("bad header")).code)
         assertEquals(AiErrorCode.NETWORK, codeOf(IllegalStateException("weird")).code)
     }

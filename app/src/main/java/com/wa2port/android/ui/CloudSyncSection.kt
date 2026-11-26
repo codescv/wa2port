@@ -66,6 +66,7 @@ fun CloudSyncSettingsSection(
     onChange: ((Settings) -> Settings) -> Unit,
     cloudSync: CloudSyncManager,
 ) {
+    val strings = LocalAppStrings.current
     val state by cloudSync.uiState.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -74,7 +75,7 @@ fun CloudSyncSettingsSection(
     var draftClientId by remember(state.clientId) { mutableStateOf(state.clientId) }
     var savedNotice by remember { mutableStateOf<String?>(null) }
 
-    SectionTitle("☁ 云端同步 Cloud Sync · Google Drive")
+    SectionTitle(strings.syncSectionTitle)
 
     // Status card.
     val cardShape = RoundedCornerShape(10.dp)
@@ -90,7 +91,7 @@ fun CloudSyncSettingsSection(
     ) {
         if (state.isSignedIn) {
             val accountLine = buildString {
-                append("✓ 已连接 Google Drive")
+                append(strings.syncConnected)
                 if (state.accountEmail.isNotBlank()) {
                     append(" · ").append(state.accountEmail)
                 } else if (state.accountName.isNotBlank()) {
@@ -108,7 +109,7 @@ fun CloudSyncSettingsSection(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        state.progressMessage ?: "正在同步… Syncing…",
+                        state.progressMessage ?: strings.syncSyncing,
                         color = Wa2Colors.Text,
                         fontSize = 13.sp,
                     )
@@ -116,30 +117,30 @@ fun CloudSyncSettingsSection(
             } else {
                 state.lastResult?.let { res ->
                     val timeStr = if (state.lastSyncedAtMs > 0L) {
-                        " · 上次同步 ${formatSyncTimestamp(state.lastSyncedAtMs)}"
+                        strings.syncLastSynced(formatSyncTimestamp(state.lastSyncedAtMs))
                     } else {
                         ""
                     }
                     Text(
-                        "${res.summaryText()}$timeStr",
+                        "${res.summaryText(strings)}$timeStr",
                         color = if (res.hasPendingConflicts) SYNC_WARN else Wa2Colors.TextDim,
                         fontSize = 12.sp,
                     )
                 } ?: Text(
-                    "同步目录: Google Drive / WA2Port Sync（与 iOS 互通）",
+                    strings.syncDirInfo,
                     color = Wa2Colors.TextDim,
                     fontSize = 12.sp,
                 )
             }
         } else {
             Text(
-                if (state.isSigningIn) "正在浏览器中等待 Google 授权…" else "未登录 Google Drive",
+                if (state.isSigningIn) strings.syncSigningIn else strings.syncNotSignedIn,
                 color = if (state.isSigningIn) Wa2Colors.Accent else Wa2Colors.Text,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
             )
             Text(
-                "登录后可将自动存档、快速存档、槽位 01–36、锁定状态与已读/CG 进度同步至 Google Drive / WA2Port Sync。",
+                strings.syncSignInDesc,
                 color = Wa2Colors.TextDim,
                 fontSize = 12.sp,
             )
@@ -157,11 +158,11 @@ fun CloudSyncSettingsSection(
         ) {
             if (!state.isSignedIn) {
                 if (state.isSigningIn) {
-                    MenuButton("取消登录 Cancel", compact = true) {
+                    MenuButton(strings.syncCancelSignInBtn, compact = true) {
                         cloudSync.cancelSignIn()
                     }
                 } else {
-                    MenuButton("登录 Google Drive", subtitle = "Sign in", compact = true) {
+                    MenuButton(strings.syncSignInBtn, compact = true) {
                         cloudSync.startSignInAndSync { url ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                                 addCategory(Intent.CATEGORY_BROWSABLE)
@@ -170,14 +171,14 @@ fun CloudSyncSettingsSection(
                             try {
                                 context.startActivity(intent)
                             } catch (e: ActivityNotFoundException) {
-                                throw IllegalStateException("未找到可用的浏览器应用，请先安装浏览器", e)
+                                throw IllegalStateException(strings.syncNoBrowserErr, e)
                             }
                         }
                     }
                 }
             } else {
                 MenuButton(
-                    title = if (state.isSyncing) "同步中… Syncing" else "立即同步 Sync Now",
+                    title = if (state.isSyncing) strings.syncSyncingBtn else strings.syncSyncNowBtn,
                     enabled = !state.isSyncing && !state.isResolvingConflict,
                     compact = true,
                 ) {
@@ -185,7 +186,7 @@ fun CloudSyncSettingsSection(
                 }
                 if (!confirmSignOut) {
                     MenuButton(
-                        title = "退出登录 Sign out",
+                        title = strings.syncSignOutBtn,
                         enabled = !state.isSyncing,
                         compact = true,
                     ) {
@@ -193,14 +194,14 @@ fun CloudSyncSettingsSection(
                     }
                 } else {
                     MenuButton(
-                        title = "确认退出 Confirm",
+                        title = strings.syncConfirmSignOutBtn,
                         compact = true,
                     ) {
                         confirmSignOut = false
                         scope.launch { cloudSync.signOut() }
                     }
                     MenuButton(
-                        title = "取消 Cancel",
+                        title = strings.commonCancel,
                         compact = true,
                     ) {
                         confirmSignOut = false
@@ -210,15 +211,15 @@ fun CloudSyncSettingsSection(
         }
     }
 
-    OptionRow("自动同步 Auto-Sync") {
+    OptionRow(strings.syncAutoLabel) {
         Segmented(
-            listOf(true to "开 On", false to "关 Off"),
+            listOf(true to strings.commonOn, false to strings.commonOff),
             settings.cloudSyncAutoEnabled,
             { enabled -> onChange { it.copy(cloudSyncAutoEnabled = enabled) } },
         )
     }
     Text(
-        "启动、返回前台以及存档 / 自动存档后自动后台同步。冲突时优先按时间解决（≥5 秒差值），无法自动判断或本地已锁定时弹窗二选一。",
+        strings.syncAutoDesc,
         color = Wa2Colors.TextDim,
         fontSize = 11.sp,
         modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
@@ -227,7 +228,7 @@ fun CloudSyncSettingsSection(
     // Collapsible Advanced OAuth section.
     TextButton(onClick = { advancedOpen = !advancedOpen }) {
         Text(
-            (if (advancedOpen) "▼" else "▶") + " 高级：自定义 Google OAuth 配置 Advanced",
+            (if (advancedOpen) "▼ " else "▶ ") + strings.syncAdvancedToggle,
             color = Wa2Colors.Accent,
             fontSize = 13.sp,
         )
@@ -249,7 +250,7 @@ fun CloudSyncSettingsSection(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                "通常无需修改（已内置默认 Android OAuth 客户端，采用 PKCE 授权，无需 Client Secret）。仅在使用自编译 APK 与自定义 Android OAuth Client ID 时才需覆盖。",
+                strings.syncAdvancedDesc,
                 color = Wa2Colors.TextDim,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(start = 4.dp),
@@ -274,7 +275,7 @@ fun CloudSyncSettingsSection(
             }
             if (draftClientId.isNotBlank() && derivedRedirectScheme == null) {
                 Text(
-                    "⚠ Android OAuth Client ID 需以 .apps.googleusercontent.com 结尾。",
+                    strings.syncClientIdInvalidWarn,
                     color = SYNC_WARN,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(start = 4.dp),
@@ -285,7 +286,7 @@ fun CloudSyncSettingsSection(
                 !derivedRedirectScheme.equals(defaultRedirectScheme, ignoreCase = true)
             ) {
                 Text(
-                    "⚠ 当前 APK 清单仅注册默认回调 scheme（$defaultRedirectScheme），改用其他 Client ID 需同步修改 AndroidManifest 并重新编译。",
+                    strings.syncManifestSchemeWarn(defaultRedirectScheme),
                     color = SYNC_WARN,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(start = 4.dp),
@@ -295,14 +296,14 @@ fun CloudSyncSettingsSection(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MenuButton("保存配置 Save", compact = true) {
+                MenuButton(strings.syncSaveConfigBtn, compact = true) {
                     cloudSync.saveOAuthConfig(draftClientId)
-                    savedNotice = "✓ 已保存 OAuth 配置"
+                    savedNotice = strings.syncSavedNotice
                 }
-                MenuButton("恢复默认 Reset", compact = true) {
+                MenuButton(strings.commonReset, compact = true) {
                     cloudSync.saveOAuthConfig("")
                     draftClientId = cloudSync.uiState.value.clientId
-                    savedNotice = "✓ 已恢复默认配置"
+                    savedNotice = strings.syncResetNotice
                 }
             }
             savedNotice?.let { Text(it, color = SYNC_OK, fontSize = 12.sp, modifier = Modifier.padding(start = 4.dp)) }

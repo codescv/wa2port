@@ -24,6 +24,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -37,8 +38,10 @@ import com.wa2port.android.ui.CgGalleryScreen
 import com.wa2port.android.ui.CloudSyncConflictOverlay
 import com.wa2port.android.ui.ConfigCategory
 import com.wa2port.android.ui.ConfigScreen
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.LocalIsPortrait
+import com.wa2port.android.ui.LocalResolvedLanguage
 import com.wa2port.android.ui.LocalScreenInsets
 import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadScreen
@@ -48,7 +51,10 @@ import com.wa2port.android.ui.TitleScreen
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.android.ui.Wa2Theme
 import com.wa2port.android.ui.rememberScreenInsets
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /** Single activity: portrait by default (landscape / auto via [OrientationMode]), immersive full-screen, Compose UI. */
 class MainActivity : ComponentActivity() {
@@ -108,6 +114,11 @@ class MainActivity : ComponentActivity() {
  */
 @Composable
 fun Wa2App(vm: AppViewModel) {
+    val configuration = LocalConfiguration.current
+    val systemLocale = configuration.locales[0] ?: Locale.getDefault()
+    val resolvedLanguage = vm.settings.appLanguage.resolve(systemLocale)
+    Wa2I18n.currentLanguage = resolvedLanguage
+    val appStrings = Wa2Strings.forLanguage(resolvedLanguage)
     BoxWithConstraints(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
         val portrait = ScreenClass.isPortrait(maxWidth.value, maxHeight.value)
         val compact = ScreenClass.isCompact(portrait, maxWidth.value)
@@ -115,6 +126,8 @@ fun Wa2App(vm: AppViewModel) {
             LocalIsPortrait provides portrait,
             LocalCompact provides compact,
             LocalScreenInsets provides rememberScreenInsets(),
+            LocalResolvedLanguage provides resolvedLanguage,
+            LocalAppStrings provides appStrings,
         ) { Wa2Routes(vm) }
     }
 }
@@ -211,9 +224,10 @@ private fun Wa2Routes(vm: AppViewModel) {
             }
         }
         vm.error?.let { msg ->
+            val strings = LocalAppStrings.current
             AlertDialog(
                 onDismissRequest = { vm.error = null },
-                confirmButton = { TextButton(onClick = { vm.error = null }) { Text("OK") } },
+                confirmButton = { TextButton(onClick = { vm.error = null }) { Text(strings.commonOk) } },
                 text = { Text(msg) },
             )
         }

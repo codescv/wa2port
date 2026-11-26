@@ -1,5 +1,6 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.update.UpdateErrorCode
 import com.wa2port.core.update.UpdateException
 import kotlinx.serialization.json.JsonArray
@@ -62,7 +63,7 @@ class AiPackDownloader(
         /** Parses a GitHub release JSON for [assetName]; null when the release has no such asset. */
         fun parseRelease(text: String, assetName: String): AiPackRemoteInfo? {
             val root = runCatching { AiJson.parseToJsonElement(text) }.getOrNull() as? JsonObject
-                ?: throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "离线包发布信息不是有效的 JSON Invalid release JSON")
+                ?: throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errPackInvalidReleaseJson)
             fun JsonObject.s(k: String) = (this[k] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.contentOrNull
             val tag = root.s("tag_name") ?: AiPackEndpointConfig.TAG
             val asset = (root["assets"] as? JsonArray)?.filterIsInstance<JsonObject>()?.firstOrNull { it.s("name") == assetName } ?: return null
@@ -116,9 +117,9 @@ class AiPackDownloader(
             if (status in 200..299) {
                 val info = parseRelease(readLimited(conn.inputStream, MAX_JSON_BYTES, cancel), endpoint.assetName)
                 if (info != null) return info.copy(downloadUrl = endpoint.route(info.downloadUrl))
-                "发布中没有 ${endpoint.assetName} Release has no pack asset"
+                Wa2I18n.s.errPackAssetMissing(endpoint.assetName)
             } else {
-                httpError(conn, status, "查询离线包失败").message ?: "HTTP $status"
+                httpError(conn, status, Wa2I18n.s.errPackQueryFailed).message ?: "HTTP $status"
             }
         } catch (e: Exception) {
             val mapped = mapError(e, cancel, apiUrl, timeoutMs)
@@ -229,14 +230,14 @@ class AiPackDownloader(
                     part.delete()
                     return true
                 }
-                else -> throw httpError(conn, status, "下载离线包失败")
+                else -> throw httpError(conn, status, Wa2I18n.s.errPackDownloadFailed)
             }
             if (conn.contentType.orEmpty().trim().startsWith("text/html", ignoreCase = true)) {
-                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "服务器返回了网页而不是离线包 Server returned a web page")
+                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errServerReturnedWebPagePack)
             }
             if (info.sizeBytes > 0 && total > 0 && total != info.sizeBytes) {
                 part.delete()
-                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件大小不符 Size mismatch (${total}/${info.sizeBytes})")
+                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errSizeMismatch(total, info.sizeBytes))
             }
             stream(conn.inputStream, part, append, if (append) existing else 0L, total, cancel, onProgress)
             return false
@@ -268,7 +269,7 @@ class AiPackDownloader(
                         throw e
                     } catch (e: IOException) {
                         if (cancel?.isCancelled == true) throw cancelled()
-                        throw UpdateException(UpdateErrorCode.NETWORK, "网络中断，可重试继续下载 Connection dropped at ${written}/${if (total > 0) total else "?"} (resumable)", e)
+                        throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errPackConnectionDropped(written, if (total > 0) total.toString() else "?"), e)
                     }
                     if (n < 0) break
                     if (n == 0) continue
@@ -279,10 +280,10 @@ class AiPackDownloader(
                     }
                     written += n
                     if (total > 0 && written > total) {
-                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件大小不符 Download larger than expected (${written}/${total})")
+                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errDownloadLarger(written, total))
                     }
                     if (total <= 0 && written > MAX_UNKNOWN_SIZE_BYTES) {
-                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件过大 Download exceeds ${MAX_UNKNOWN_SIZE_BYTES shr 20} MiB")
+                        throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errDownloadTooLarge(MAX_UNKNOWN_SIZE_BYTES shr 20))
                     }
                     val now = System.currentTimeMillis()
                     if (lastBytes < 0 || now - lastAt >= PROGRESS_INTERVAL_MS || written - lastBytes >= PROGRESS_INTERVAL_BYTES) {
@@ -302,7 +303,7 @@ class AiPackDownloader(
         if (cancel?.isCancelled == true) throw cancelled()
         if (lastBytes != written) onProgress(written, total)
         if (total > 0 && written != total) {
-            throw UpdateException(UpdateErrorCode.NETWORK, "下载不完整，可重试继续 Incomplete download (${written}/${total}, resumable)")
+            throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errIncompleteDownloadResumable(written, total))
         }
     }
 
@@ -315,35 +316,35 @@ class AiPackDownloader(
         readTimeoutMs: Int,
         sidecarLookup: Boolean,
     ) {
-        if (!part.isFile) throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "下载文件丢失 Download missing")
+        if (!part.isFile) throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errPackDownloadMissing)
         if (info.sizeBytes > 0 && part.length() != info.sizeBytes) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "文件大小不符 Size mismatch (${part.length()}/${info.sizeBytes})")
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errSizeMismatch(part.length(), info.sizeBytes))
         }
         val expectedSha = info.sha256 ?: if (sidecarLookup) fetchSidecar(info.downloadUrl, cancel, connectTimeoutMs, readTimeoutMs) else null
         if (cancel?.isCancelled == true) throw cancelled()
         if (expectedSha != null) {
             val actual = sha256(part)
             if (!actual.equals(expectedSha, ignoreCase = true)) {
-                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "校验失败 SHA-256 mismatch (got ${actual.take(12)}…, want ${expectedSha.take(12)}…)")
+                throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errPackSha256Mismatch(actual.take(12), expectedSha.take(12)))
             }
         }
         try {
             OfflineAiPack.open(part).use { pack ->
-                require(pack.entryCount > 0) { "离线包为空 Empty pack" }
+                require(pack.entryCount > 0) { Wa2I18n.s.errPackEmpty }
                 // Touch the first and last block so a truncated tail is caught before install.
-                requireNotNull(pack.entry(0)) { "离线包数据损坏 Corrupt first block" }
-                requireNotNull(pack.entry(pack.entryCount - 1)) { "离线包数据损坏 Corrupt last block" }
+                requireNotNull(pack.entry(0)) { Wa2I18n.s.errPackCorruptFirstBlock }
+                requireNotNull(pack.entry(pack.entryCount - 1)) { Wa2I18n.s.errPackCorruptLastBlock }
             }
         } catch (e: UpdateException) {
             throw e
         } catch (e: Exception) {
-            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, "离线包已损坏 Invalid pack: ${e.message ?: e.javaClass.simpleName}", e)
+            throw UpdateException(UpdateErrorCode.CORRUPT_DOWNLOAD, Wa2I18n.s.errPackInvalid(e.message ?: e.javaClass.simpleName), e)
         }
         try {
             Files.move(part.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (e: Exception) {
             dest.delete()
-            if (!part.renameTo(dest)) throw UpdateException(UpdateErrorCode.NETWORK, "无法保存离线包 Cannot save ${dest.name}", e)
+            if (!part.renameTo(dest)) throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errCannotSavePack(dest.name), e)
         }
     }
 
@@ -374,7 +375,7 @@ class AiPackDownloader(
         var current = try {
             URL(url)
         } catch (e: MalformedURLException) {
-            throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, "地址无效 Invalid URL: $url", e)
+            throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errInvalidUrl(url), e)
         }
         requireHttp(current, initial = true)
         var hops = 0
@@ -396,16 +397,16 @@ class AiPackDownloader(
                     return conn
                 }
                 val location = conn.getHeaderField("Location")?.trim()
-                if (location.isNullOrEmpty()) throw UpdateException(UpdateErrorCode.HTTP, "重定向缺少 Location (HTTP $status)", httpStatus = status)
-                if (++hops > MAX_REDIRECTS) throw UpdateException(UpdateErrorCode.NETWORK, "重定向过多 Too many redirects")
+                if (location.isNullOrEmpty()) throw UpdateException(UpdateErrorCode.HTTP, Wa2I18n.s.errRedirectMissingLocation(status), httpStatus = status)
+                if (++hops > MAX_REDIRECTS) throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errTooManyRedirects)
                 val next = try {
                     URL(current, location)
                 } catch (e: MalformedURLException) {
-                    throw UpdateException(UpdateErrorCode.HTTP, "重定向地址无效 Invalid redirect: $location", e, status)
+                    throw UpdateException(UpdateErrorCode.HTTP, Wa2I18n.s.errInvalidRedirect(location), e, status)
                 }
                 requireHttp(next, initial = false)
                 if (current.protocol.equals("https", true) && next.protocol.equals("http", true)) {
-                    throw UpdateException(UpdateErrorCode.NETWORK, "不安全的重定向 Insecure redirect (https → http)")
+                    throw UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errInsecureRedirectHttps)
                 }
                 current = next
             } finally {
@@ -420,10 +421,10 @@ class AiPackDownloader(
     private fun requireHttp(url: URL, initial: Boolean) {
         val proto = url.protocol.lowercase()
         if (proto != "http" && proto != "https") {
-            val msg = if (initial) "不支持的协议 Unsupported URL scheme: $proto" else "不安全的重定向 Insecure redirect to $proto:"
+            val msg = if (initial) Wa2I18n.s.errUnsupportedScheme(proto) else Wa2I18n.s.errInsecureRedirectScheme(proto)
             throw UpdateException(if (initial) UpdateErrorCode.INVALID_ARGUMENT else UpdateErrorCode.NETWORK, msg)
         }
-        if (url.host.isNullOrEmpty()) throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, "地址缺少主机名 URL has no host: $url")
+        if (url.host.isNullOrEmpty()) throw UpdateException(UpdateErrorCode.INVALID_ARGUMENT, Wa2I18n.s.errUrlNoHost(url.toString()))
     }
 
     private fun httpError(conn: HttpURLConnection, status: Int, what: String): UpdateException {
@@ -431,8 +432,8 @@ class AiPackDownloader(
         val rateLimited = status == 429 ||
             (status == 403 && (conn.getHeaderField("X-RateLimit-Remaining")?.trim() == "0" || body.contains("rate limit", ignoreCase = true)))
         val msg = when {
-            rateLimited -> "GitHub API 限流 rate limited (HTTP $status)"
-            status == 404 -> "没有找到离线解读包 Pack not found (HTTP 404)"
+            rateLimited -> Wa2I18n.s.errRateLimited(status)
+            status == 404 -> Wa2I18n.s.errPackNotFound404
             else -> "$what HTTP $status" + body.trim().take(160).let { if (it.isNotEmpty()) ": $it" else "" }
         }
         return UpdateException(UpdateErrorCode.HTTP, msg, httpStatus = status)
@@ -440,23 +441,23 @@ class AiPackDownloader(
 
     private fun mapError(e: Exception, cancel: CancelToken?, url: String, timeoutMs: Int): UpdateException {
         if (cancel?.isCancelled == true) {
-            return if (e is UpdateException && e.code == UpdateErrorCode.CANCELLED) e else UpdateException(UpdateErrorCode.CANCELLED, "已取消 Cancelled", e)
+            return if (e is UpdateException && e.code == UpdateErrorCode.CANCELLED) e else UpdateException(UpdateErrorCode.CANCELLED, Wa2I18n.s.errCancelled, e)
         }
         if (e is UpdateException) return e
         val host = runCatching { URL(url).host }.getOrDefault("")
         val where = if (host.isNotEmpty()) " ($host)" else ""
         return when (e) {
-            is SocketTimeoutException -> UpdateException(UpdateErrorCode.TIMEOUT, "连接超时 Timed out after $timeoutMs ms$where", e)
-            is UnknownHostException -> UpdateException(UpdateErrorCode.NETWORK, "无法连接网络 / 解析服务器 Unknown host$where", e)
-            is IOException -> UpdateException(UpdateErrorCode.NETWORK, "网络错误 Network error$where: ${e.message ?: e.javaClass.simpleName}", e)
+            is SocketTimeoutException -> UpdateException(UpdateErrorCode.TIMEOUT, Wa2I18n.s.errTimedOutMs(timeoutMs, where), e)
+            is UnknownHostException -> UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errUnknownHost(where), e)
+            is IOException -> UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errNetworkError(where, e.message ?: e.javaClass.simpleName), e)
             else -> UpdateException(UpdateErrorCode.NETWORK, "${e.javaClass.simpleName}: ${e.message}$where", e)
         }
     }
 
-    private fun cancelled() = UpdateException(UpdateErrorCode.CANCELLED, "已取消 Cancelled")
+    private fun cancelled() = UpdateException(UpdateErrorCode.CANCELLED, Wa2I18n.s.errCancelled)
 
     private fun storageError(e: IOException) =
-        UpdateException(UpdateErrorCode.NETWORK, "存储空间不足/无法写入 Cannot write file: ${e.message ?: e.javaClass.simpleName}", e)
+        UpdateException(UpdateErrorCode.NETWORK, Wa2I18n.s.errStorageWrite(e.message ?: e.javaClass.simpleName), e)
 
     private fun readLimited(input: InputStream, limit: Int, cancel: CancelToken?, truncate: Boolean = false): String {
         input.use { ins ->
@@ -469,7 +470,7 @@ class AiPackDownloader(
                 out.write(buf, 0, n)
                 if (out.size() > limit) {
                     if (truncate) break
-                    throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "响应过大 Response too large")
+                    throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errResponseTooLarge)
                 }
             }
             return out.toString(Charsets.UTF_8.name())

@@ -2,6 +2,7 @@ package com.wa2port.android.data
 
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.AiProviderSettings
+import com.wa2port.core.i18n.AppLanguage
 import com.wa2port.core.text.TextScale
 import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.serialization.Serializable
@@ -49,6 +50,8 @@ data class Settings(
     val voiceVolume: Int = 100,
     /** false = skip only already-read lines (既読スキップ, default); true = skip everything. */
     val skipAll: Boolean = false,
+    /** App UI language (`SYSTEM` = follow OS locale, `ZH`, `EN`, `JA`). Applies immediately without restart. */
+    val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     val lang: DisplayLang = DisplayLang.BOTH,
     val windowMode: WindowMode = WindowMode.ADV,
     /** Message window background opacity, percent. */

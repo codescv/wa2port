@@ -69,6 +69,7 @@ import com.wa2port.android.data.Settings
 import com.wa2port.android.game.GameSession
 import com.wa2port.android.update.UpdateController
 import com.wa2port.android.update.UpdateState
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.update.AgentFeedbackHelper
 import com.wa2port.core.update.AgentFeedbackMail
 import com.wa2port.core.update.FeedbackEmailTargetResolver
@@ -122,16 +123,17 @@ fun UpdateDialog(
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = 12.dp),
         ) {
+            val strings = LocalAppStrings.current
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("版本更新 App Update", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                Text(strings.updateDialogTitle, color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
                 CloseButton(onDismiss)
             }
-            Text("当前版本 Current: v${update.currentVersion}", color = Wa2Colors.TextDim, fontSize = 12.sp)
+            Text(strings.updateCurrentVersion(update.currentVersion), color = Wa2Colors.TextDim, fontSize = 12.sp)
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                 UpdateStatusBlock(update, compact = false, onDismiss = onDismiss)
                 if (onOpenFeedback != null) {
                     FlowRow(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        UpdateButton("发送反馈给 Agent", onClick = onOpenFeedback)
+                        UpdateButton(strings.updateSendFeedbackBtn, onClick = onOpenFeedback)
                     }
                 }
             }
@@ -142,15 +144,16 @@ fun UpdateDialog(
 /** Title-screen pill: shows the update state at a glance and opens [UpdateDialog]. */
 @Composable
 fun UpdatePill(update: UpdateController, onClick: () -> Unit) {
+    val strings = LocalAppStrings.current
     val s = update.state
     val highlight = s is UpdateState.Available || s is UpdateState.Downloaded
     val label = when (s) {
-        UpdateState.Idle, is UpdateState.Error -> "检查更新 Update"
-        UpdateState.Checking -> "检查中… Checking"
-        is UpdateState.UpToDate -> "已是最新 ✓ Up to date"
-        is UpdateState.Available -> "发现新版本 v${s.latest.version} · 点击下载"
-        is UpdateState.Downloading -> "下载中 Downloading ${s.fraction?.let { "${Math.round(it * 100)}%" } ?: mb(s.downloadedBytes)}"
-        is UpdateState.Downloaded -> "安装 v${s.latest.version} Install"
+        UpdateState.Idle, is UpdateState.Error -> strings.updatePillCheck
+        UpdateState.Checking -> strings.updatePillChecking
+        is UpdateState.UpToDate -> strings.updatePillUpToDate
+        is UpdateState.Available -> strings.updatePillAvailable(s.latest.version)
+        is UpdateState.Downloading -> strings.updatePillDownloading(s.fraction?.let { "${Math.round(it * 100)}%" } ?: mb(s.downloadedBytes))
+        is UpdateState.Downloaded -> strings.updatePillInstall(s.latest.version)
     }
     val shape = RoundedCornerShape(18.dp)
     Box(
@@ -185,45 +188,46 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    val strings = LocalAppStrings.current
     // Action rows wrap (FlowRow) instead of scrolling sideways, so no button hides off-screen.
     val actions = Modifier.fillMaxWidth().padding(vertical = 6.dp)
     val rowGap = Arrangement.spacedBy(6.dp)
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         when (val s = update.state) {
             UpdateState.Idle -> if (!compact) {
-                Text("点击「检查更新」从 GitHub 获取最新版本\nTap Check to look for a newer release", color = Wa2Colors.TextDim, fontSize = 13.sp)
+                Text(strings.updateIdleHint, color = Wa2Colors.TextDim, fontSize = 13.sp)
                 FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
-                    UpdateButton("检查更新 Check", primary = true) { update.checkForUpdates() }
+                    UpdateButton(strings.updateCheckBtn, primary = true) { update.checkForUpdates() }
                 }
             }
             UpdateState.Checking -> {
                 LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 6.dp), color = Wa2Colors.Accent, trackColor = Wa2Colors.Button)
-                Text("正在检查更新… Checking for updates", color = Wa2Colors.TextDim, fontSize = 13.sp)
-                FlowRow(actions, verticalArrangement = rowGap) { UpdateButton("取消 Cancel") { update.cancelDownload() } }
+                Text(strings.updateCheckingHint, color = Wa2Colors.TextDim, fontSize = 13.sp)
+                FlowRow(actions, verticalArrangement = rowGap) { UpdateButton(strings.commonCancel) { update.cancelDownload() } }
             }
             is UpdateState.UpToDate -> {
-                Text("✓ 已是最新版本 v${update.currentVersion} Up to date", color = UPDATE_OK, fontSize = 14.sp)
-                Text("最新发布 Latest release: ${s.latest.tagName}", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                Text(strings.updateUpToDateMsg(update.currentVersion), color = UPDATE_OK, fontSize = 14.sp)
+                Text(strings.updateLatestRelease(s.latest.tagName), color = Wa2Colors.TextDim, fontSize = 12.sp)
                 FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
-                    UpdateButton("重新检查 Check again") { update.checkForUpdates() }
-                    UpdateButton("浏览器打开 GitHub") { update.openInBrowser(context) }
+                    UpdateButton(strings.updateCheckAgainBtn) { update.checkForUpdates() }
+                    UpdateButton(strings.updateOpenGithubBtn) { update.openInBrowser(context) }
                 }
             }
             is UpdateState.Available -> {
-                Text("发现新版本 New version: v${s.latest.version}", color = Wa2Colors.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(strings.updateNewVersion(s.latest.version), color = Wa2Colors.Accent, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 ReleaseMeta(s.latest)
                 if (!compact) ReleaseNotes(s.latest)
                 if (s.latest.apkAsset == null) {
-                    Text("该版本没有 APK 附件 This release has no APK", color = UPDATE_ERR, fontSize = 13.sp)
+                    Text(strings.updateNoApk, color = UPDATE_ERR, fontSize = 13.sp)
                 }
                 FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
                     if (s.latest.apkAsset != null) {
-                        UpdateButton(if (compact) "下载并安装 Download & Install" else "立即下载并安装 Download & Install", primary = true) {
+                        UpdateButton(if (compact) strings.updateDownloadInstallBtn else strings.updateDownloadInstallNowBtn, primary = true) {
                             update.downloadUpdate(context)
                         }
                     }
-                    UpdateButton("浏览器下载 Open in browser") { update.openInBrowser(context) }
-                    if (onDismiss != null) UpdateButton("取消 Later") { onDismiss() }
+                    UpdateButton(strings.updateOpenBrowserBtn) { update.openInBrowser(context) }
+                    if (onDismiss != null) UpdateButton(strings.updateLaterBtn) { onDismiss() }
                 }
             }
             is UpdateState.Downloading -> {
@@ -233,37 +237,38 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
                 } else {
                     LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 6.dp), color = Wa2Colors.Accent, trackColor = Wa2Colors.Button)
                 }
+                val progText = mb(s.downloadedBytes) +
+                    (if (s.totalBytes > 0) " / ${mb(s.totalBytes)}" else "") +
+                    (f?.let { " · ${Math.round(it * 100)}%" } ?: "")
                 Text(
-                    "下载 v${s.latest.version} · ${mb(s.downloadedBytes)}" +
-                        (if (s.totalBytes > 0) " / ${mb(s.totalBytes)}" else "") +
-                        (f?.let { " · ${Math.round(it * 100)}%" } ?: ""),
+                    strings.updateDownloadingLine(s.latest.version, progText),
                     color = Wa2Colors.Text, fontSize = 13.sp,
                 )
-                FlowRow(actions, verticalArrangement = rowGap) { UpdateButton("取消下载 Cancel") { update.cancelDownload() } }
+                FlowRow(actions, verticalArrangement = rowGap) { UpdateButton(strings.updateCancelDownloadBtn) { update.cancelDownload() } }
             }
             is UpdateState.Downloaded -> {
-                Text("✓ v${s.latest.version} 已下载并校验 Downloaded & verified", color = UPDATE_OK, fontSize = 14.sp)
+                Text(strings.updateDownloadedMsg(s.latest.version), color = UPDATE_OK, fontSize = 14.sp)
                 Text(
-                    "下载校验完成后会直接启动安装；如需授予「安装未知应用」权限，返回后将自动继续安装。若关闭了安装窗口，可点击「重新安装」。更新会保留存档与设置。",
+                    strings.updateDownloadedHint,
                     color = Wa2Colors.TextDim, fontSize = 12.sp,
                 )
                 if (!compact) ReleaseNotes(s.latest)
                 FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
-                    UpdateButton("重新安装 Install", primary = true) { update.installApk(context) }
+                    UpdateButton(strings.updateReinstallBtn, primary = true) { update.installApk(context) }
                     if (s.latest.apkAsset != null) {
-                        UpdateButton("重新下载 Re-download") { update.downloadUpdate(context) }
+                        UpdateButton(strings.updateRedownloadBtn) { update.downloadUpdate(context) }
                     } else {
-                        UpdateButton("检查更新 Check") { update.checkForUpdates() }
+                        UpdateButton(strings.updateCheckBtn) { update.checkForUpdates() }
                     }
                 }
             }
             is UpdateState.Error -> {
                 Text("✗ ${s.message}", color = UPDATE_ERR, fontSize = 13.sp)
                 FlowRow(actions, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = rowGap) {
-                    UpdateButton("重试 Retry", primary = true) {
+                    UpdateButton(strings.commonRetry, primary = true) {
                         if (s.lastRelease?.apkAsset != null) update.downloadUpdate(context) else update.checkForUpdates()
                     }
-                    UpdateButton("浏览器打开 GitHub") { update.openInBrowser(context) }
+                    UpdateButton(strings.updateOpenGithubBtn) { update.openInBrowser(context) }
                 }
             }
         }
@@ -273,10 +278,11 @@ fun UpdateStatusBlock(update: UpdateController, compact: Boolean, onDismiss: (()
 /** 设置 → 版本与更新: current version + 检查更新 and the shared status block (GitHub releases only). */
 @Composable
 fun UpdateSettingsSection(update: UpdateController) {
-    SectionTitle("版本与更新 App Update")
-    OptionRow("当前版本 Version") {
+    val strings = LocalAppStrings.current
+    SectionTitle(strings.updateSectionTitle)
+    OptionRow(strings.updateVersionRow) {
         Text("v${update.currentVersion}", color = Wa2Colors.Text, fontSize = 15.sp, modifier = Modifier.padding(end = 12.dp))
-        UpdateButton(if (update.state is UpdateState.Checking) "检查中… Checking" else "检查更新 Check Update", enabled = !update.busy) {
+        UpdateButton(if (update.state is UpdateState.Checking) strings.updatePillChecking else strings.updateCheckUpdateBtn, enabled = !update.busy) {
             update.checkForUpdates()
         }
     }
@@ -284,24 +290,25 @@ fun UpdateSettingsSection(update: UpdateController) {
 }
 
 /**
- * 设置 → Agent 反馈: a compact single-row trigger (local email status + one **撰写反馈 Feedback**
- * button). [onOpenFeedback] opens the in-layout [AgentFeedbackDialog].
+ * 设置 → Agent 反馈: a compact single-row trigger (local email status + one button).
+ * [onOpenFeedback] opens the in-layout [AgentFeedbackDialog].
  */
 @Composable
 fun AgentFeedbackSection(
     settings: Settings,
     onOpenFeedback: () -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     val email = settings.agentFeedbackEmail
-    val emailError = if (email.isEmpty()) null else AgentFeedbackHelper.validateEmail(email)
-    SectionTitle("Agent 反馈 Agent Feedback")
+    val emailError = if (email.isEmpty()) null else AgentFeedbackHelper.validateEmail(email, strings)
+    SectionTitle(strings.feedbackSectionTitle)
     val compact = LocalCompact.current
     val status: @Composable (Modifier) -> Unit = { extra ->
         Text(
             when {
-                email.isEmpty() -> "未配置邮箱 Email not set"
+                email.isEmpty() -> strings.feedbackEmailNotSet
                 emailError == null -> "✓ $email"
-                else -> "✗ 邮箱无效 Invalid email"
+                else -> strings.feedbackEmailInvalid
             },
             color = when {
                 email.isEmpty() -> Wa2Colors.TextDim
@@ -314,16 +321,16 @@ fun AgentFeedbackSection(
             modifier = Modifier.widthIn(max = 280.dp).padding(end = 12.dp).then(extra),
         )
     }
-    OptionRow("反馈给 Agent") {
+    OptionRow(strings.feedbackRowLabel) {
         if (compact) {
             // Narrow panels: the button wraps below the status instead of being crushed.
             WrapRow(compact = true, gap = 0.dp) {
                 status(Modifier.align(Alignment.CenterVertically))
-                UpdateButton("撰写反馈 Feedback", primary = true, onClick = onOpenFeedback)
+                UpdateButton(strings.feedbackWriteBtn, primary = true, onClick = onOpenFeedback)
             }
         } else {
             status(Modifier)
-            UpdateButton("撰写反馈 Feedback", primary = true, onClick = onOpenFeedback)
+            UpdateButton(strings.feedbackWriteBtn, primary = true, onClick = onOpenFeedback)
         }
     }
 }
@@ -368,12 +375,13 @@ fun AgentFeedbackDialog(
     currentVersion: String = AgentFeedbackHelper.DEFAULT_APP_VERSION,
     session: GameSession? = null,
 ) {
+    val strings = LocalAppStrings.current
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val resolvedVersion = AgentFeedbackHelper.normalizeVersion(currentVersion)
     val email = settings.agentFeedbackEmail
-    val emailError = AgentFeedbackHelper.validateEmail(email)
+    val emailError = AgentFeedbackHelper.validateEmail(email, strings)
 
     var title by rememberSaveable { mutableStateOf("") }
     var feedbackText by rememberSaveable { mutableStateOf("") }
@@ -425,7 +433,7 @@ fun AgentFeedbackDialog(
             return
         }
         if (title.isBlank() && feedbackText.isBlank()) {
-            statusMessage = "请先输入标题或问题描述 Please enter a title or description" to true
+            statusMessage = strings.feedbackErrEnterContent to true
             return
         }
         val imageUri = attachedImageUri
@@ -454,10 +462,10 @@ fun AgentFeedbackDialog(
                         val contentUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                         launchImageMail(context, mail, contentUri, mimeType)
                     } catch (e: Exception) {
-                        "无法共享图片 Cannot share image: ${e.message ?: e.javaClass.simpleName}" to true
+                        strings.feedbackErrShareImage(e.message ?: e.javaClass.simpleName) to true
                     }
                 },
-                onFailure = { e -> "无法读取图片 Cannot read image: ${e.message ?: e.javaClass.simpleName}" to true },
+                onFailure = { e -> strings.feedbackErrReadImage(e.message ?: e.javaClass.simpleName) to true },
             )
         }
     }
@@ -489,11 +497,11 @@ fun AgentFeedbackDialog(
                 .padding(horizontal = if (compact) 16.dp else 20.dp, vertical = 10.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Agent 反馈 Agent Feedback", color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
+                Text(strings.feedbackDialogTitle, color = Wa2Colors.Text, fontSize = 20.sp, modifier = Modifier.weight(1f))
                 CloseButton(onDismiss)
             }
             Text(
-                "主题自动使用 wa2port: [v$resolvedVersion] 前缀；邮箱仅保存在本机。",
+                strings.feedbackDialogHint(resolvedVersion),
                 color = Wa2Colors.TextDim,
                 fontSize = 12.sp,
             )
@@ -512,15 +520,15 @@ fun AgentFeedbackDialog(
                     },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     singleLine = true,
-                    label = { Text("Agent 反馈邮箱 Agent Email", fontSize = 12.sp) },
+                    label = { Text(strings.feedbackEmailFieldLabel, fontSize = 12.sp) },
                     placeholder = { Text(AgentFeedbackHelper.PLACEHOLDER_EMAIL, fontSize = 13.sp, color = Wa2Colors.TextDim) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                     colors = feedbackFieldColors(),
                 )
                 Text(
                     when {
-                        email.isEmpty() -> "仅保存在设备本地（默认留空，示例格式：${AgentFeedbackHelper.PLACEHOLDER_EMAIL}）"
-                        emailError == null -> "✓ 已保存在本机：$email"
+                        email.isEmpty() -> strings.feedbackEmailHelperEmpty(AgentFeedbackHelper.PLACEHOLDER_EMAIL)
+                        emailError == null -> strings.feedbackEmailHelperSaved(email)
                         else -> "✗ $emailError"
                     },
                     color = when {
@@ -540,8 +548,8 @@ fun AgentFeedbackDialog(
                     },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                     singleLine = true,
-                    label = { Text("标题 Title", fontSize = 12.sp) },
-                    placeholder = { Text("一句话概括问题或需求（留空则取描述首行）", fontSize = 12.sp, color = Wa2Colors.TextDim) },
+                    label = { Text(strings.feedbackTitleFieldLabel, fontSize = 12.sp) },
+                    placeholder = { Text(strings.feedbackTitlePlaceholder, fontSize = 12.sp, color = Wa2Colors.TextDim) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                     colors = feedbackFieldColors(),
                 )
@@ -553,10 +561,10 @@ fun AgentFeedbackDialog(
                         statusMessage = null
                     },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    label = { Text("问题描述 Description", fontSize = 12.sp) },
+                    label = { Text(strings.feedbackDescFieldLabel, fontSize = 12.sp) },
                     placeholder = {
                         Text(
-                            "复现步骤、排版异常，或希望 Agent 自动开发的新功能…",
+                            strings.feedbackDescPlaceholder,
                             fontSize = 12.sp,
                             color = Wa2Colors.TextDim,
                         )
@@ -568,14 +576,14 @@ fun AgentFeedbackDialog(
 
                 WrapRow(compact, Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     UpdateButton(
-                        if (attachedImageUri == null) "增加图片 Add Image" else "更换图片 Change Image",
+                        if (attachedImageUri == null) strings.feedbackAddImage else strings.feedbackChangeImage,
                         enabled = !sending,
                     ) {
                         focusManager.clearFocus()
                         try {
                             pickImage.launch("image/*")
                         } catch (_: ActivityNotFoundException) {
-                            statusMessage = "未找到图片选择器 No image picker found" to true
+                            statusMessage = strings.feedbackNoImagePicker to true
                         }
                     }
                     if (attachedImageUri != null) {
@@ -587,7 +595,7 @@ fun AgentFeedbackDialog(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false).align(Alignment.CenterVertically),
                         )
-                        UpdateButton("移除 Remove", enabled = !sending) {
+                        UpdateButton(strings.commonRemove, enabled = !sending) {
                             attachedImageUri = null
                             attachedImageName = null
                             statusMessage = null
@@ -596,10 +604,10 @@ fun AgentFeedbackDialog(
                 }
 
                 if (gameContext != null && gameContext.scene.isNotBlank()) {
-                    OptionRow("场景上下文 Scene context") {
+                    OptionRow(strings.feedbackSceneContextLabel) {
                         val toggle = @Composable {
                             Segmented(
-                                options = listOf(true to "附带 On", false to "不附带 Off"),
+                                options = listOf(true to strings.feedbackAttachOn, false to strings.feedbackAttachOff),
                                 selected = includeGameContext,
                                 onSelect = { includeGameContext = it },
                             )
@@ -608,12 +616,12 @@ fun AgentFeedbackDialog(
                             // Narrow: the scene badge becomes a caption below the toggle.
                             Column {
                                 toggle()
-                                Text(gameContext.summaryBadge(), color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                                Text(gameContext.summaryBadge(strings), color = Wa2Colors.TextDim, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                             }
                         } else {
                             toggle()
                             Text(
-                                "  ${gameContext.summaryBadge()}",
+                                "  ${gameContext.summaryBadge(strings)}",
                                 color = Wa2Colors.TextDim,
                                 fontSize = 12.sp,
                             )
@@ -627,7 +635,7 @@ fun AgentFeedbackDialog(
                     title = title,
                 )
                 Text(
-                    "邮件主题 Subject: $previewSubject",
+                    strings.feedbackSubjectPreview(previewSubject),
                     color = Wa2Colors.TextDim,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp),
@@ -650,15 +658,15 @@ fun AgentFeedbackDialog(
             ) {
                 UpdateButton(
                     when {
-                        sending -> "准备附件… Preparing"
-                        attachedImageUri != null -> "发送反馈（含图片） Send"
-                        else -> "发送反馈给 Agent"
+                        sending -> strings.feedbackPreparingBtn
+                        attachedImageUri != null -> strings.feedbackSendWithImageBtn
+                        else -> strings.feedbackSendBtn
                     },
                     primary = canSend,
                     enabled = !sending,
                 ) { send() }
                 if (hasDraft) {
-                    UpdateButton("清空 Clear", enabled = !sending) {
+                    UpdateButton(strings.commonClear, enabled = !sending) {
                         title = ""
                         feedbackText = ""
                         attachedImageUri = null
@@ -666,7 +674,7 @@ fun AgentFeedbackDialog(
                         statusMessage = null
                     }
                 }
-                UpdateButton("关闭 Close", onClick = onDismiss)
+                UpdateButton(strings.commonClose, onClick = onDismiss)
             }
         }
     }
@@ -698,10 +706,10 @@ private fun copyFeedbackImage(context: Context, source: Uri, displayName: String
         ?: displayName?.substringAfterLast('.', "")?.lowercase(Locale.ROOT)?.takeIf { it.matches(Regex("[a-z0-9]{1,5}")) }
         ?: "jpg"
     val dir = File(context.cacheDir, FEEDBACK_CACHE_DIR)
-    if (!dir.isDirectory && !dir.mkdirs()) throw IOException("无法创建缓存目录 Cannot create cache dir")
+    if (!dir.isDirectory && !dir.mkdirs()) throw IOException(Wa2I18n.s.feedbackErrCreateCacheDir)
     dir.listFiles()?.forEach { it.delete() }
     val out = File(dir, "wa2port_feedback_${System.currentTimeMillis()}.$ext")
-    val input = resolver.openInputStream(source) ?: throw IOException("无法打开图片 Cannot open image")
+    val input = resolver.openInputStream(source) ?: throw IOException(Wa2I18n.s.feedbackErrOpenImage)
     input.use { inp -> out.outputStream().use { inp.copyTo(it) } }
     return out to mimeType
 }
@@ -713,11 +721,11 @@ private fun launchMailto(context: Context, mail: AgentFeedbackMail): Pair<String
     }
     return try {
         context.startActivity(intent)
-        "已唤起邮件客户端发送至 ${mail.toEmail} Opened email app" to false
+        Wa2I18n.s.feedbackOpenedEmail(mail.toEmail) to false
     } catch (_: ActivityNotFoundException) {
-        "未找到可用的邮件客户端 No email app found" to true
+        Wa2I18n.s.feedbackNoEmailApp to true
     } catch (e: Exception) {
-        "无法打开邮件客户端 Cannot open email app: ${e.message ?: e.javaClass.simpleName}" to true
+        Wa2I18n.s.feedbackCannotOpenEmail(e.message ?: e.javaClass.simpleName) to true
     }
 }
 
@@ -755,7 +763,7 @@ private fun launchImageMail(
             if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         if (context.tryStart(intent)) {
-            return "已打开邮件撰写页（含图片）发送至 ${mail.toEmail} Opened email compose with image" to false
+            return Wa2I18n.s.feedbackOpenedImageEmail(mail.toEmail) to false
         }
     }
     // Last resort: no email client exposes a visible ACTION_SEND compose activity.
@@ -768,17 +776,17 @@ private fun launchImageMail(
         clipData = ClipData.newRawUri(FeedbackEmailTargetResolver.CLIP_LABEL, contentUri)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    val chooser = Intent.createChooser(fallbackSend, "发送反馈 Send feedback").apply {
+    val chooser = Intent.createChooser(fallbackSend, Wa2I18n.s.feedbackShareChooserTitle).apply {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     return try {
         context.startActivity(chooser)
-        "未找到邮件客户端，已打开分享面板 Choose an app to send" to false
+        Wa2I18n.s.feedbackOpenedShareSheet to false
     } catch (_: ActivityNotFoundException) {
-        "未找到可用的邮件客户端 No email app found" to true
+        Wa2I18n.s.feedbackNoEmailApp to true
     } catch (e: Exception) {
-        "无法打开邮件客户端 Cannot open email app: ${e.message ?: e.javaClass.simpleName}" to true
+        Wa2I18n.s.feedbackCannotOpenEmail(e.message ?: e.javaClass.simpleName) to true
     }
 }
 
@@ -851,10 +859,11 @@ private fun feedbackFieldColors() = OutlinedTextFieldDefaults.colors(
 
 @Composable
 private fun ReleaseMeta(release: ReleaseInfo) {
+    val strings = LocalAppStrings.current
     val parts = buildList {
         release.apkAsset?.let { a -> add(a.name + if (a.sizeBytes > 0) " · ${mb(a.sizeBytes)}" else "") }
-        release.publishedAt?.takeIf { it.length >= 10 }?.let { add("发布于 ${it.substring(0, 10)}") }
-        if (release.isPreRelease) add("预发布 pre-release")
+        release.publishedAt?.takeIf { it.length >= 10 }?.let { add(strings.updatePublishedAt(it.substring(0, 10))) }
+        if (release.isPreRelease) add(strings.updatePreRelease)
     }
     if (parts.isNotEmpty()) Text(parts.joinToString("  ·  "), color = Wa2Colors.TextDim, fontSize = 12.sp)
 }

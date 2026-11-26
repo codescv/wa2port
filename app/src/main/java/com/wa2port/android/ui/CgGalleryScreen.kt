@@ -67,6 +67,7 @@ import com.wa2port.core.engine.SystemData
 import com.wa2port.core.gallery.CgCategory
 import com.wa2port.core.gallery.CgGallery
 import com.wa2port.core.gallery.CgGroup
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -76,10 +77,17 @@ private const val THUMB_HEIGHT = 180
 private const val GALLERY_CACHE_BUDGET_BYTES = 96 * 1024 * 1024
 
 /** Filter tabs shown at the top of the CG Gallery screen. */
-enum class CgFilter(val label: String, val category: CgCategory?) {
-    ALL("全部 All", null),
-    IC("IC 序章", CgCategory.IC),
-    CC("CC 终章·Coda", CgCategory.CC),
+enum class CgFilter(val category: CgCategory?) {
+    ALL(null),
+    IC(CgCategory.IC),
+    CC(CgCategory.CC),
+    ;
+
+    fun localizedLabel(s: Wa2Strings): String = when (this) {
+        ALL -> s.cgFilterAll
+        IC -> s.cgFilterIc
+        CC -> s.cgFilterCc
+    }
 }
 
 /**
@@ -94,12 +102,13 @@ fun CgGalleryScreen(
     vm: AppViewModel,
     onClose: () -> Unit = { vm.back() },
 ) {
+    val strings = LocalAppStrings.current
     val root = vm.assetRoot
     if (root == null) {
         Box(Modifier.fillMaxSize().background(Wa2Colors.Night), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("未找到游戏资源 Assets not found", color = Wa2Colors.Text, fontSize = 16.sp)
-                MenuButton("返回 Back", onClick = onClose)
+                Text(strings.commonAssetNotFound, color = Wa2Colors.Text, fontSize = 16.sp)
+                MenuButton(strings.commonBack, onClick = onClose)
             }
         }
         return
@@ -168,6 +177,7 @@ fun CgGalleryScreen(
         if (showAll) filteredGroups.size else filteredGroups.count { it.isUnlocked(system) }
     }
 
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     Box(Modifier.fillMaxSize().background(Wa2Colors.Night)) {
         Column(
@@ -179,7 +189,7 @@ fun CgGalleryScreen(
             val titleBlock: @Composable (Modifier) -> Unit = { m ->
                 Column(m) {
                     Text(
-                        "CG 鉴赏 CG Gallery",
+                        strings.cgTitle,
                         color = Wa2Colors.Text,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Medium,
@@ -187,7 +197,7 @@ fun CgGalleryScreen(
                         overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
                     )
                     Text(
-                        "共 ${filteredGroups.size} 组 ($unlockedCount 已解锁 Unlocked)",
+                        strings.cgCountSummary(filteredGroups.size, unlockedCount),
                         color = Wa2Colors.TextDim,
                         fontSize = 11.sp,
                     )
@@ -205,7 +215,7 @@ fun CgGalleryScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Segmented(
-                        options = CgFilter.entries.map { it to it.label },
+                        options = CgFilter.entries.map { it to it.localizedLabel(strings) },
                         selected = filter,
                         onSelect = { filter = it },
                         modifier = Modifier.weight(1f, fill = false),
@@ -226,7 +236,7 @@ fun CgGalleryScreen(
                     titleBlock(Modifier.weight(1f))
 
                     Segmented(
-                        options = CgFilter.entries.map { it to it.label },
+                        options = CgFilter.entries.map { it to it.localizedLabel(strings) },
                         selected = filter,
                         onSelect = { filter = it },
                     )
@@ -294,6 +304,7 @@ private fun ShowAllToggle(
     onToggle: () -> Unit,
     compact: Boolean = false,
 ) {
+    val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(8.dp)
     Box(
         Modifier
@@ -306,7 +317,11 @@ private fun ShowAllToggle(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (compact) "解锁全部 ${if (checked) "ON" else "OFF"}" else "解锁全部 Show All: ${if (checked) "ON" else "OFF"}",
+            if (compact) {
+                if (checked) strings.galleryShowAllShortOn else strings.galleryShowAllShortOff
+            } else {
+                if (checked) strings.galleryShowAllOn else strings.galleryShowAllOff
+            },
             color = if (checked) Wa2Colors.Night else Wa2Colors.Text,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
@@ -376,10 +391,8 @@ private fun CgGroupCard(
                     Text("…", color = Wa2Colors.TextDim, fontSize = 13.sp)
                 }
             } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("LOCKED", color = Wa2Colors.TextDim, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    Text("未解锁", color = Wa2Colors.TextDim, fontSize = 11.sp)
-                }
+                val strings = LocalAppStrings.current
+                Text(strings.commonLocked, color = Wa2Colors.TextDim, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
 
             // Variation-count badge (e.g. "1/4") in the top-right corner
@@ -599,12 +612,13 @@ fun CgViewer(
             },
         contentAlignment = Alignment.Center,
     ) {
+        val strings = LocalAppStrings.current
         if (!variantUnlocked) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text("LOCKED VARIANT · 未解锁差分", color = Wa2Colors.TextDim, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Text(strings.cgLockedVariant, color = Wa2Colors.TextDim, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 Text("$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size}", color = Wa2Colors.Accent, fontSize = 14.sp)
             }
         } else {
@@ -650,7 +664,7 @@ fun CgViewer(
                     if (variantUnlocked) {
                         "$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size}"
                     } else {
-                        "$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size} ${if (compact) "(锁)" else "(未解锁 Locked)"}"
+                        "$stemLabel · ${safeVarIdx + 1}/${currentGroup.variations.size} ${if (compact) strings.cgViewerLockedShort else strings.cgViewerLockedTag}"
                     },
                     color = if (variantUnlocked) Wa2Colors.Text else Wa2Colors.TextDim,
                     fontSize = 14.sp,

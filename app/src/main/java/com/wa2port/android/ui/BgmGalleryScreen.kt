@@ -51,15 +51,23 @@ import com.wa2port.core.engine.SystemData
 import com.wa2port.core.gallery.BgmGallery
 import com.wa2port.core.gallery.BgmPage
 import com.wa2port.core.gallery.BgmTrackEntry
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /** Filter tabs for the 63-track BGM Gallery (`WA2.exe` `.data 0x4c1dd0`). */
-enum class BgmFilter(val label: String, val page: BgmPage?) {
-    ALL("全部 All (63)", null),
-    PAGE_1("Page 1 · IC (31)", BgmPage.PAGE_1),
-    PAGE_2("Page 2 · CC/Coda (32)", BgmPage.PAGE_2),
+enum class BgmFilter(val page: BgmPage?) {
+    ALL(null),
+    PAGE_1(BgmPage.PAGE_1),
+    PAGE_2(BgmPage.PAGE_2),
+    ;
+
+    fun localizedLabel(s: Wa2Strings): String = when (this) {
+        ALL -> s.bgmFilterAll(63)
+        PAGE_1 -> s.bgmFilterPage1(31)
+        PAGE_2 -> s.bgmFilterPage2(32)
+    }
 }
 
 /**
@@ -74,12 +82,13 @@ fun BgmGalleryScreen(
     vm: AppViewModel,
     onClose: () -> Unit = { vm.back() },
 ) {
+    val strings = LocalAppStrings.current
     val root = vm.assetRoot
     if (root == null) {
         Box(Modifier.fillMaxSize().background(Wa2Colors.Night), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("未找到游戏资源 Assets not found", color = Wa2Colors.Text, fontSize = 16.sp)
-                MenuButton("返回 Back", onClick = onClose)
+                Text(strings.commonAssetNotFound, color = Wa2Colors.Text, fontSize = 16.sp)
+                MenuButton(strings.commonBack, onClick = onClose)
             }
         }
         return
@@ -196,6 +205,7 @@ private fun BgmGalleryContent(
 
     val activeEntry = allTracks.firstOrNull { it.slotNumber == currentSlot }
 
+    val strings = LocalAppStrings.current
     val compact = LocalCompact.current
     Column(
         Modifier
@@ -207,7 +217,7 @@ private fun BgmGalleryContent(
         val titleBlock: @Composable (Modifier) -> Unit = { m ->
             Column(m) {
                 Text(
-                    "音乐鉴赏  BGM Gallery  ·  音楽モード",
+                    strings.bgmTitle,
                     color = Wa2Colors.Text,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
@@ -215,7 +225,7 @@ private fun BgmGalleryContent(
                     overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
                 )
                 Text(
-                    "已解锁 $unlockedCount / ${allTracks.size} 曲  ·  当前列表 ${visibleTracks.size} 曲",
+                    strings.bgmCountSummary(unlockedCount, allTracks.size, visibleTracks.size),
                     color = Wa2Colors.TextDim,
                     fontSize = 12.sp,
                 )
@@ -236,9 +246,9 @@ private fun BgmGalleryContent(
                     Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    BgmFilter.entries.forEach { tab -> BgmTab(tab.label, filter == tab) { filter = tab } }
+                    BgmFilter.entries.forEach { tab -> BgmTab(tab.localizedLabel(strings), filter == tab) { filter = tab } }
                 }
-                BgmShowAllPill(showAll, if (showAll) "解锁全部 ON" else "解锁全部 OFF") { onShowAllChange(!showAll) }
+                BgmShowAllPill(showAll, if (showAll) strings.galleryShowAllShortOn else strings.galleryShowAllShortOff) { onShowAllChange(!showAll) }
             }
         } else {
             // ---- Top bar
@@ -248,8 +258,8 @@ private fun BgmGalleryContent(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 titleBlock(Modifier.weight(1f))
-                BgmFilter.entries.forEach { tab -> BgmTab(tab.label, filter == tab) { filter = tab } }
-                BgmShowAllPill(showAll, if (showAll) "解锁全部 Show All: ON" else "解锁全部 Show All: OFF") { onShowAllChange(!showAll) }
+                BgmFilter.entries.forEach { tab -> BgmTab(tab.localizedLabel(strings), filter == tab) { filter = tab } }
+                BgmShowAllPill(showAll, if (showAll) strings.galleryShowAllOn else strings.galleryShowAllOff) { onShowAllChange(!showAll) }
                 CloseButton(onClose)
             }
         }
@@ -309,7 +319,7 @@ private fun BgmGalleryContent(
                     // Track title & credits
                     Column(Modifier.weight(1f)) {
                         Text(
-                            if (unlocked) entry.titleJp else "？？？（未解锁 Locked）",
+                            if (unlocked) entry.titleJp else strings.bgmLockedTitle,
                             color = if (unlocked) Wa2Colors.Text else Wa2Colors.TextDim,
                             fontSize = 15.sp,
                             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
@@ -317,7 +327,7 @@ private fun BgmGalleryContent(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            if (unlocked) entry.creditsJp else "在游戏正篇中播放该曲目后自动解锁",
+                            if (unlocked) entry.creditsJp else strings.bgmLockedHint,
                             color = Wa2Colors.TextDim,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -334,7 +344,7 @@ private fun BgmGalleryContent(
                             fontWeight = FontWeight.Medium,
                         )
                         Text(
-                            if (hasIntro) "A→B 无缝循环" else "单曲循环 Loop",
+                            if (hasIntro) strings.bgmLoopSeamless else strings.bgmLoopSingle,
                             color = Wa2Colors.TextDim.copy(alpha = 0.8f),
                             fontSize = 10.sp,
                         )
@@ -351,10 +361,10 @@ private fun BgmGalleryContent(
             Column(m) {
                 Text(
                     if (activeEntry != null && isPlaying) {
-                        val stateTag = if (isPaused) "已暂停 Paused" else "正在播放 Now Playing"
+                        val stateTag = if (isPaused) strings.bgmStatePaused else strings.bgmStatePlaying
                         "$stateTag  ·  #%02d  %s".format(Locale.ROOT, activeEntry.slotNumber, activeEntry.titleJp)
                     } else {
-                        "未播放 Stopped  ·  点击任意曲目开始欣赏 Tap any track to play"
+                        strings.bgmStateStopped
                     },
                     color = if (activeEntry != null && isPlaying) Wa2Colors.Accent else Wa2Colors.Text,
                     fontSize = 14.sp,
@@ -363,7 +373,7 @@ private fun BgmGalleryContent(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    activeEntry?.creditsJp ?: "支持原版 BGM_nnn_A 前奏 → BGM_nnn_B 无缝循环播放",
+                    activeEntry?.creditsJp ?: strings.bgmDefaultSubtitle,
                     color = Wa2Colors.TextDim,
                     fontSize = 11.sp,
                     maxLines = 1,
@@ -384,20 +394,20 @@ private fun BgmGalleryContent(
             ) {
                 statusText(Modifier.fillMaxWidth())
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    CompactTransportPill("⏮", "上一曲", Modifier.weight(1f), onClick = { stepTrack(-1) })
+                    CompactTransportPill("⏮", strings.bgmPrev, Modifier.weight(1f), onClick = { stepTrack(-1) })
                     CompactTransportPill(
                         icon = if (isPlaying && !isPaused) "⏸" else "▶",
                         caption = when {
-                            !isPlaying -> "播放"
-                            isPaused -> "继续"
-                            else -> "暂停"
+                            !isPlaying -> strings.bgmPlay
+                            isPaused -> strings.bgmResume
+                            else -> strings.bgmPause
                         },
                         modifier = Modifier.weight(1f),
                         highlighted = isPlaying && !isPaused,
                         onClick = ::togglePlayPause,
                     )
-                    CompactTransportPill("⏹", "停止", Modifier.weight(1f), onClick = ::stopPlayback)
-                    CompactTransportPill("⏭", "下一曲", Modifier.weight(1f), onClick = { stepTrack(+1) })
+                    CompactTransportPill("⏹", strings.bgmStop, Modifier.weight(1f), onClick = ::stopPlayback)
+                    CompactTransportPill("⏭", strings.bgmNext, Modifier.weight(1f), onClick = { stepTrack(+1) })
                 }
             }
         } else {
@@ -413,18 +423,18 @@ private fun BgmGalleryContent(
             ) {
                 statusText(Modifier.weight(1f))
 
-                TransportPill("⏮ 上一曲", onClick = { stepTrack(-1) })
+                TransportPill("⏮ ${strings.bgmPrev}", onClick = { stepTrack(-1) })
                 TransportPill(
                     label = when {
-                        !isPlaying -> "▶ 播放 Play"
-                        isPaused -> "▶ 继续 Resume"
-                        else -> "⏸ 暂停 Pause"
+                        !isPlaying -> "▶ ${strings.bgmPlay}"
+                        isPaused -> "▶ ${strings.bgmResume}"
+                        else -> "⏸ ${strings.bgmPause}"
                     },
                     highlighted = isPlaying && !isPaused,
                     onClick = ::togglePlayPause,
                 )
-                TransportPill("⏹ 停止 Stop", onClick = ::stopPlayback)
-                TransportPill("⏭ 下一曲", onClick = { stepTrack(+1) })
+                TransportPill("⏹ ${strings.bgmStop}", onClick = ::stopPlayback)
+                TransportPill("⏭ ${strings.bgmNext}", onClick = { stepTrack(+1) })
             }
         }
     }

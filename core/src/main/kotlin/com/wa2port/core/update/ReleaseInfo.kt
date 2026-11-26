@@ -1,5 +1,6 @@
 package com.wa2port.core.update
 
+import com.wa2port.core.i18n.Wa2I18n
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -53,19 +54,19 @@ object ReleaseJson {
         val root = try {
             json.parseToJsonElement(text)
         } catch (e: Exception) {
-            throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "更新信息不是有效的 JSON Invalid release JSON", e)
+            throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errInvalidReleaseJson, e)
         }
         val obj = when (root) {
             is JsonObject -> root
             is JsonArray -> {
                 val releases = root.filterIsInstance<JsonObject>().filter { !it.bool("draft") }
                 releases.firstOrNull { !it.bool("prerelease") } ?: releases.firstOrNull()
-                    ?: throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "没有找到发布版本 No release found")
+                    ?: throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errNoReleaseFound)
             }
-            else -> throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "更新信息格式错误 Release JSON is not an object")
+            else -> throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errReleaseJsonNotObject)
         }
         val tag = obj.str("tag_name")?.trim()?.takeIf { it.isNotEmpty() }
-            ?: throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, "更新信息缺少版本号 Release JSON has no tag_name")
+            ?: throw UpdateException(UpdateErrorCode.INVALID_RESPONSE, Wa2I18n.s.errReleaseJsonNoTag)
         val assets = (obj["assets"] as? JsonArray).orEmpty().mapNotNull { el ->
             val a = el as? JsonObject ?: return@mapNotNull null
             val name = a.str("name") ?: return@mapNotNull null

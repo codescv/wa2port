@@ -96,6 +96,7 @@ import com.wa2port.android.ai.OfflinePackOfferCard
 import com.wa2port.android.ai.StarButton
 import com.wa2port.android.ui.CloseButton
 import com.wa2port.android.ui.DragHandle
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.LocalCompact
 import com.wa2port.android.ui.LocalIsPortrait
 import com.wa2port.android.ui.PullDismissLogic
@@ -119,6 +120,7 @@ import com.wa2port.core.ai.SpanAlign
 import com.wa2port.core.ai.SpanAlignment
 import com.wa2port.core.ai.VocabEntry
 import com.wa2port.core.ai.partOfSpeechLabel
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -152,7 +154,11 @@ private val RUBY_BOX = 13.sp
 /** Chunk card surface glyph size. */
 private val CHUNK_SURFACE_SIZE = 18.sp
 
-private val QUICK_QUESTIONS = listOf("这句为什么用这个说法？", "换成敬体怎么说？", "再举一个例句")
+private fun personaDisplayName(persona: AiPersonaSettings, s: Wa2Strings): String = when (persona.id) {
+    AiPersonaSettings.KAZUSA.id -> s.aiPersonaKazusaName
+    AiPersonaSettings.SETSUNA.id -> s.aiPersonaSetsunaName
+    else -> persona.shortName
+}
 
 /**
  * Kotori-style AI breakdown sheet (✨ AI 解说), drawn above the game and any overlay.
@@ -278,12 +284,13 @@ fun AiBreakdownOverlay(
                 }
             }
             if (bottomNav) {
+                val strings = LocalAppStrings.current
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip("◀ 上一句", enabled = canPrev, modifier = Modifier.weight(1f), minHeight = 48.dp) { ai.openPrev() }
-                    Chip("🔊 原声", enabled = state.voice != null, modifier = Modifier.weight(1f), minHeight = 48.dp) {
+                    Chip(strings.aiPrevLine, enabled = canPrev, modifier = Modifier.weight(1f), minHeight = 48.dp) { ai.openPrev() }
+                    Chip(strings.aiVoiceBtn, enabled = state.voice != null, modifier = Modifier.weight(1f), minHeight = 48.dp) {
                         if (onReplayVoice != null) onReplayVoice() else ai.replayVoice(state.voice)
                     }
-                    Chip("下一句 ▶", enabled = canNext, modifier = Modifier.weight(1f), minHeight = 48.dp) { ai.openNext() }
+                    Chip(strings.aiNextLine, enabled = canNext, modifier = Modifier.weight(1f), minHeight = 48.dp) { ai.openNext() }
                 }
             }
         }
@@ -316,14 +323,16 @@ private fun HeaderRow(
     compact: Boolean = false,
     showNav: Boolean = true,
 ) {
+    val strings = LocalAppStrings.current
+    val titleText = strings.aiBreakdownTitle(personaDisplayName(persona, strings))
     if (compact) {
         Column(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "✨ AI 解说 · ${persona.shortName}", color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium,
+                    titleText, color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                 )
-                Chip("📒 笔记本") { ai.openNotebook() }
+                Chip(strings.aiNotebookChip) { ai.openNotebook() }
                 CloseButton(onClose)
             }
             Row(
@@ -331,38 +340,38 @@ private fun HeaderRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (!state.isSample && showNav) {
-                    Chip("◀ 上一句", enabled = ai.canPrev()) { ai.openPrev() }
-                    Chip("下一句 ▶", enabled = ai.canNext()) { ai.openNext() }
+                    Chip(strings.aiPrevLine, enabled = ai.canPrev()) { ai.openPrev() }
+                    Chip(strings.aiNextLine, enabled = ai.canNext()) { ai.openNext() }
                     Spacer(Modifier.width(4.dp))
                 }
                 ai.personas.forEach { p ->
-                    val label = if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName
+                    val label = if (p.id == AiPersonaSettings.ID_CUSTOM) strings.aiPersonaCustomChip(p.shortName) else personaDisplayName(p, strings)
                     Chip(label, selected = p.id == persona.id) { onPersona(p.id) }
                 }
                 Spacer(Modifier.width(6.dp))
                 val loading = state.status is AiStatus.Loading
-                Chip(if (state.isSample) "↻ 示例" else "↻ 重新生成", enabled = !loading) { ai.regenerate() }
+                Chip(if (state.isSample) strings.aiSampleBtn else strings.aiRegenerateBtn, enabled = !loading) { ai.regenerate() }
             }
         }
         return
     }
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("✨ AI 解说 · ${persona.shortName}", color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+        Text(titleText, color = Wa2Colors.Text, fontSize = 18.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.width(12.dp))
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!state.isSample) {
-                Chip("◀ 上一句", enabled = ai.canPrev()) { ai.openPrev() }
-                Chip("下一句 ▶", enabled = ai.canNext()) { ai.openNext() }
+                Chip(strings.aiPrevLine, enabled = ai.canPrev()) { ai.openPrev() }
+                Chip(strings.aiNextLine, enabled = ai.canNext()) { ai.openNext() }
                 Spacer(Modifier.width(4.dp))
             }
             ai.personas.forEach { p ->
-                val label = if (p.id == AiPersonaSettings.ID_CUSTOM) "自定义 (${p.shortName})" else p.shortName
+                val label = if (p.id == AiPersonaSettings.ID_CUSTOM) strings.aiPersonaCustomChip(p.shortName) else personaDisplayName(p, strings)
                 Chip(label, selected = p.id == persona.id) { onPersona(p.id) }
             }
             Spacer(Modifier.width(6.dp))
             val loading = state.status is AiStatus.Loading
-            Chip(if (state.isSample) "↻ 示例" else "↻ 重新生成", enabled = !loading) { ai.regenerate() }
-            Chip("📒 笔记本") { ai.openNotebook() }
+            Chip(if (state.isSample) strings.aiSampleBtn else strings.aiRegenerateBtn, enabled = !loading) { ai.regenerate() }
+            Chip(strings.aiNotebookChip) { ai.openNotebook() }
         }
         CloseButton(onClose)
     }
@@ -418,11 +427,12 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CARD).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        val strings = LocalAppStrings.current
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val speaker = listOfNotNull(state.speakerJp, state.speakerCn?.takeIf { it != state.speakerJp }).joinToString(" · ")
-            Text(speaker.ifEmpty { "（旁白 / 内心独白）" }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text(speaker.ifEmpty { strings.commonNarration }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 14.sp, modifier = Modifier.weight(1f))
             if (state.voice != null) {
-                Chip("▶ 原声") {
+                Chip(strings.aiVoiceBtn) {
                     if (onReplayVoice != null) onReplayVoice() else ai.replayVoice(state.voice)
                 }
             }
@@ -524,7 +534,7 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
         }
         if (state.status is AiStatus.Loading) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = Wa2Colors.Accent, trackColor = Wa2Colors.AccentDim.copy(alpha = 0.3f))
-            Text("${ai.persona.shortName}正在分析… Analyzing…", color = Wa2Colors.TextDim, fontSize = 12.sp)
+            Text(strings.aiAnalyzing(personaDisplayName(ai.persona, strings)), color = Wa2Colors.TextDim, fontSize = 12.sp)
         }
     }
 }
@@ -534,17 +544,18 @@ private fun SentenceHeader(state: AiBreakdownState, ai: AiLearningController, on
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOpenSettings: (() -> Unit)?) {
+    val strings = LocalAppStrings.current
     val expl = state.explanation
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (expl != null) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                expl.register?.let { Tag("语体 ${it.labelCn}", Wa2Colors.Accent) }
-                expl.tone?.let { Tag("语气 $it", EVOLVED) }
-                if (state.isSample) Tag("示例 Sample", TEXTBOOK)
+                expl.register?.let { Tag(strings.aiRegisterTag(it.localizedLabel(strings)), Wa2Colors.Accent) }
+                expl.tone?.let { Tag(strings.aiToneTag(it), EVOLVED) }
+                if (state.isSample) Tag(strings.aiSampleTag, TEXTBOOK)
                 val fromPack = OfflineAiPack.isPackExplanation(expl)
-                if (fromPack) Tag("📦 离线包", PACK_TAG)
-                if (expl.model == OfflineExplainer.MODEL) Tag("离线 Offline", TEXTBOOK)
-                if (expl.fromCache && !fromPack) Tag("已缓存 Cached")
+                if (fromPack) Tag(strings.aiOfflinePackTag, PACK_TAG)
+                if (expl.model == OfflineExplainer.MODEL) Tag(strings.aiOfflineTag, TEXTBOOK)
+                if (expl.fromCache && !fromPack) Tag(strings.aiCachedTag)
                 if (!state.isSample && !fromPack && expl.model != OfflineExplainer.MODEL && expl.model.isNotBlank()) {
                     Tag(expl.model, Color(0x33FFFFFF), Wa2Colors.TextDim)
                 }
@@ -554,7 +565,7 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
         // While loading, the detail pane's skeleton card carries the translation (shown once, not twice).
         if (!state.isSkeleton) TranslationCard(state, expl)
         if (expl != null && expl.chunks.isNotEmpty()) {
-            Text("意群 Chunks", color = Wa2Colors.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(strings.aiChunksHeader, color = Wa2Colors.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val active = state.activeChunk
                 expl.chunks.forEach { c ->
@@ -568,14 +579,10 @@ private fun SummaryBlock(state: AiBreakdownState, ai: AiLearningController, onOp
     }
 }
 
-/**
- * Translations. With [skeleton] (loading, see [DetailPane]) it also carries the
- * speaker, the script-furigana sentence ([showSentence]: only when the sentence header is not
- * already right above) and the preceding context lines, so the detail pane is useful at once.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?, skeleton: Boolean = false, showSentence: Boolean = false) {
+    val strings = LocalAppStrings.current
     val official = expl?.officialCnTranslation ?: state.officialCn
     if (!skeleton && expl == null && official == null) return
     Column(
@@ -584,7 +591,7 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
     ) {
         if (skeleton) {
             val speaker = listOfNotNull(state.speakerJp, state.speakerCn?.takeIf { it != state.speakerJp }).joinToString(" · ")
-            Text(speaker.ifEmpty { "（旁白 / 内心独白）" }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 13.sp)
+            Text(speaker.ifEmpty { strings.commonNarration }, color = if (speaker.isEmpty()) Wa2Colors.TextDim else Wa2Colors.Name, fontSize = 13.sp)
             if (showSentence && expl != null) {
                 // Ruby-less runs break per character so long kana runs wrap.
                 val cells = remember(expl.ruby) { RubyFlow.cells(expl.ruby, "", rubyScale = 9f / 16f) }
@@ -592,25 +599,25 @@ private fun TranslationCard(state: AiBreakdownState, expl: SentenceExplanation?,
             }
         }
         if (expl != null && expl.model != OfflineExplainer.MODEL) {
-            Label("AI 译")
+            Label(strings.aiTranslationLabel)
             Text(expl.translation, color = Wa2Colors.Text, fontSize = 16.sp)
             expl.literalTranslation?.let {
-                Label("直译 Literal")
+                Label(strings.aiLiteralLabel)
                 Text(it, color = Wa2Colors.TextDim, fontSize = 14.sp)
             }
         }
         if (official != null) {
-            Text("官方汉化 CK-GAL", color = Wa2Colors.Name, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(strings.aiOfficialCnLabel, color = Wa2Colors.Name, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             Text(official, color = Wa2Colors.Text, fontSize = 14.sp)
         } else if (skeleton) {
-            Text("（本行没有官方汉化 No CK-GAL line）", color = Wa2Colors.TextDim, fontSize = 12.sp)
+            Text(strings.aiNoOfficialCn, color = Wa2Colors.TextDim, fontSize = 12.sp)
         }
         expl?.officialTranslationNote?.let {
-            Label("对照说明 💬")
+            Label(strings.aiOfficialNoteLabel)
             Text(it, color = Wa2Colors.Text, fontSize = 13.sp)
         }
         if (skeleton && state.contextBefore.isNotEmpty()) {
-            Label("前文 Context", Wa2Colors.TextDim)
+            Label(strings.aiContextLabel, Wa2Colors.TextDim)
             state.contextBefore.forEach { Text(it, color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE) }
         }
     }
@@ -685,13 +692,14 @@ private fun Label(text: String, color: Color = Wa2Colors.Accent) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ErrorCard(state: AiBreakdownState, err: AiStatus.Error, ai: AiLearningController, onOpenSettings: (() -> Unit)?) {
+    val strings = LocalAppStrings.current
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CARD).border(1.dp, ERROR.copy(alpha = 0.5f), RoundedCornerShape(12.dp)).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(AiLearningController.errorText(err.code), color = ERROR, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text(AiLearningController.errorText(err.code, strings), color = ERROR, fontSize = 15.sp, fontWeight = FontWeight.Medium)
         if (err.code == AiErrorCode.NOT_CONFIGURED) {
-            Text("在 设置 → AI 学习 中填写 Gemini API Key 或 Vertex AI（可设置自定义服务器地址 / 代理）。", color = Wa2Colors.TextDim, fontSize = 12.sp)
+            Text(strings.aiNotConfiguredHint, color = Wa2Colors.TextDim, fontSize = 12.sp)
         }
         if (err.message.isNotBlank() && err.code != AiErrorCode.NOT_CONFIGURED) {
             Text(
@@ -703,15 +711,15 @@ private fun ErrorCard(state: AiBreakdownState, err: AiStatus.Error, ai: AiLearni
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (err.code == AiErrorCode.NOT_CONFIGURED) {
-                if (onOpenSettings != null) Chip("前往设置 Settings", selected = true, onClick = onOpenSettings)
+                if (onOpenSettings != null) Chip(strings.aiGoSettingsBtn, selected = true, onClick = onOpenSettings)
             } else {
-                Chip("重试 Retry", selected = true) { ai.explain() }
+                Chip(strings.commonRetry, selected = true) { ai.explain() }
                 if (onOpenSettings != null && (err.code == AiErrorCode.INVALID_ARGUMENT || err.code == AiErrorCode.AUTH || err.code == AiErrorCode.NOT_FOUND)) {
-                    Chip("前往设置 Settings", onClick = onOpenSettings)
+                    Chip(strings.aiGoSettingsBtn, onClick = onOpenSettings)
                 }
             }
-            Chip("示例预览 Preview") { ai.openSample(null) }
-            if (!state.isSample) Chip("离线分段 Offline") { ai.showOffline() }
+            Chip(strings.aiPreviewBtn) { ai.openSample(null) }
+            if (!state.isSample) Chip(strings.aiOfflineSplitBtn) { ai.showOffline() }
         }
     }
 }
@@ -777,6 +785,7 @@ private fun DetailPane(
         }
     }
     Crossfade(targetState = state.isSkeleton, modifier = modifier, animationSpec = tween(durationMillis = 300), label = "ai-skeleton") { skeleton ->
+        val strings = LocalAppStrings.current
         if (skeleton) {
             LazyColumn(
                 Modifier.fillMaxSize(),
@@ -788,7 +797,7 @@ private fun DetailPane(
                 item(key = "skeleton-translation") { TranslationCard(state, state.shownExplanation, skeleton = true, showSentence = header == null) }
                 item(key = "skeleton-title") { SkeletonTitle() }
                 items(SHIMMER_CARDS, key = { "shimmer-$it" }) { ShimmerCard(it) }
-                item(key = "followup-locked") { FollowUpLockedBar("AI 解析完成后即可向助教追问") }
+                item(key = "followup-locked") { FollowUpLockedBar(strings.aiFollowUpWaitLoading) }
             }
         } else {
             FullDetailList(state, ai, persona, onOpenSettings, header, listState, panes.input, onInput = panes.onInput)
@@ -808,6 +817,7 @@ private fun FullDetailList(
     input: String,
     onInput: (String) -> Unit,
 ) {
+    val strings = LocalAppStrings.current
     val scope = rememberCoroutineScope()
     val expl = state.explanation
     // Scrolling to the last item clamps at the end of the list: newest Q&A + input.
@@ -835,13 +845,13 @@ private fun FullDetailList(
             item(key = "pack-offer") { OfflinePackOfferCard(ai.packs) }
         }
         if (expl != null) {
-            item(key = "chunks-title") { SectionHeader("逐块解析 · 📘 课本标准 vs 🔥 口语演变") }
+            item(key = "chunks-title") { SectionHeader(strings.aiChunkBreakdownHeader) }
             val active = state.activeChunk
             expl.chunks.forEachIndexed { i, c ->
                 item(key = "chunk-${c.id}") { ChunkCard(i, c, expl, active?.id == c.id, ai) { ai.selectChunk(c) } }
             }
             if (expl.vocab.isNotEmpty()) {
-                item(key = "vocab-title") { SectionHeader("词汇 Vocab (${expl.vocab.size})") }
+                item(key = "vocab-title") { SectionHeader(strings.aiVocabHeader(expl.vocab.size)) }
                 expl.vocab.forEach { v ->
                     item(key = "vocab-${v.id}") {
                         VocabCard(
@@ -857,7 +867,7 @@ private fun FullDetailList(
                 }
             }
             if (expl.grammar.isNotEmpty()) {
-                item(key = "grammar-title") { SectionHeader("语法 Grammar (${expl.grammar.size})") }
+                item(key = "grammar-title") { SectionHeader(strings.aiGrammarHeader(expl.grammar.size)) }
                 expl.grammar.forEach { g ->
                     item(key = "grammar-${g.id}") {
                         GrammarCard(
@@ -869,7 +879,7 @@ private fun FullDetailList(
                     }
                 }
             }
-            followUpItems(state, persona)
+            followUpItems(state, persona, strings)
             val canAsk = state.status !is AiStatus.Loading && state.shownExplanation?.model != OfflineExplainer.MODEL
             if (canAsk) {
                 item(key = "followup-input") {
@@ -879,7 +889,7 @@ private fun FullDetailList(
                 }
             } else {
                 item(key = "followup-locked") {
-                    FollowUpLockedBar(if (state.status is AiStatus.Loading) "AI 解析完成后即可向助教追问" else "当前为离线分段模式 · 配置 AI 后可追问")
+                    FollowUpLockedBar(if (state.status is AiStatus.Loading) strings.aiFollowUpWaitLoading else strings.aiFollowUpLockedOffline)
                 }
             }
         }
@@ -891,9 +901,10 @@ private val SHIMMER_CARDS = listOf(0, 1, 2)
 
 @Composable
 private fun SkeletonTitle() {
+    val strings = LocalAppStrings.current
     Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         CircularProgressIndicator(Modifier.size(14.dp), color = Wa2Colors.Accent, strokeWidth = 2.dp)
-        Text("正在通过 AI 拆解意群、口语演变与核心词汇语法…", color = Wa2Colors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(strings.aiSkeletonLoading, color = Wa2Colors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -947,6 +958,7 @@ private fun SectionHeader(text: String) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, active: Boolean, ai: AiLearningController, onClick: () -> Unit) {
+    val strings = LocalAppStrings.current
     val shape = RoundedCornerShape(12.dp)
     val chunkRuby = if (c.alignment == SpanAlignment.UNALIGNED) emptyList() else RubyBuilder.sliceRuby(expl.ruby, c.span)
     val hasChunkRuby = chunkRuby.any { !it.ruby.isNullOrBlank() }
@@ -958,7 +970,7 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
     ) {
         ChunkHeader(index, c, chunkRuby, hasChunkRuby)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("📘 课本标准  ", color = TEXTBOOK, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(strings.aiTextbookLabel, color = TEXTBOOK, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Text(c.textbookForm, color = Wa2Colors.Text, fontSize = 15.sp, style = JP_TEXT_STYLE)
         }
         c.spokenEvolution?.let { evo ->
@@ -966,18 +978,18 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(EVOLVED.copy(alpha = 0.10f)).padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("🔥 口语演变 · ${evo.kind}", color = EVOLVED, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(strings.aiSpokenEvoHeader(evo.kind), color = EVOLVED, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text(evo.derivation, color = Wa2Colors.Text, fontSize = 14.sp, style = JP_TEXT_STYLE)
                 FormalityBar(evo.formalityLevel)
             }
         }
         if (c.meaning.isNotBlank()) Text(c.meaning, color = Wa2Colors.Text, fontSize = 14.sp)
         c.nuance?.let { Text("💡 $it", color = Wa2Colors.TextDim, fontSize = 13.sp) }
-        if (c.alignment == SpanAlignment.UNALIGNED) Text("⚠ 未能定位到原句", color = ERROR, fontSize = 12.sp)
+        if (c.alignment == SpanAlignment.UNALIGNED) Text(strings.aiUnalignedWarning, color = ERROR, fontSize = 12.sp)
         if (active) {
             val vocab = SpanAlign.findVocabForChunk(c, expl.vocab)
             if (vocab.isNotEmpty()) {
-                Label("词汇")
+                Label(strings.aiVocabLabel)
                 vocab.forEach { v ->
                     VocabRow(
                         v = v,
@@ -988,7 +1000,7 @@ private fun ChunkCard(index: Int, c: SemanticChunk, expl: SentenceExplanation, a
             }
             val grammar = SpanAlign.grammarForChunk(c, expl.grammar)
             if (grammar.isNotEmpty()) {
-                Label("语法")
+                Label(strings.aiGrammarLabel)
                 grammar.forEach { g ->
                     GrammarRow(
                         g = g,
@@ -1087,16 +1099,17 @@ private fun ChunkHeader(index: Int, c: SemanticChunk, chunkRuby: List<RubyToken>
 /** Formality 1..5 pills (rough → formal). */
 @Composable
 private fun FormalityBar(level: Int) {
+    val strings = LocalAppStrings.current
     val colors = listOf(Color(0xFFFF6B6B), Color(0xFFFFA36B), Color(0xFFFFD36B), Color(0xFFB6E36B), Color(0xFF6BD3A8))
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("随意 ◀", color = Wa2Colors.TextDim, fontSize = 11.sp)
+        Text(strings.aiFormalityCasual, color = Wa2Colors.TextDim, fontSize = 11.sp)
         for (i in 1..5) {
             Box(
                 Modifier.width(22.dp).height(8.dp).clip(RoundedCornerShape(4.dp))
                     .background(if (i <= level) colors[i - 1] else Color(0x33FFFFFF)),
             )
         }
-        Text("▶ 正式", color = Wa2Colors.TextDim, fontSize = 11.sp)
+        Text(strings.aiFormalityFormal, color = Wa2Colors.TextDim, fontSize = 11.sp)
         Text("  $level/5", color = Wa2Colors.TextDim, fontSize = 11.sp)
     }
 }
@@ -1104,6 +1117,7 @@ private fun FormalityBar(level: Int) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
+    val strings = LocalAppStrings.current
     Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FlowRow(
@@ -1114,7 +1128,7 @@ private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() 
                 // Lemma and 【reading】 stay together when they fit; a long reading wraps below the
                 // lemma as a unit instead of breaking mid-word or crushing the badges / ☆ 收藏.
                 LemmaHead(v.lemma, v.lemmaReading, 15.sp, Modifier.align(Alignment.CenterVertically))
-                Tag(partOfSpeechLabel(v.partOfSpeech), modifier = Modifier.align(Alignment.CenterVertically))
+                Tag(partOfSpeechLabel(v.partOfSpeech, strings), modifier = Modifier.align(Alignment.CenterVertically))
                 v.jlpt?.let { Tag(it, TEXTBOOK, modifier = Modifier.align(Alignment.CenterVertically)) }
                 v.pitchAccent?.let { Tag("[$it]", Color(0x33FFFFFF), Wa2Colors.TextDim, Modifier.align(Alignment.CenterVertically)) }
                 if (v.surface != v.lemma) {
@@ -1126,8 +1140,8 @@ private fun VocabRow(v: VocabEntry, starred: Boolean = false, onToggleStar: (() 
             }
         }
         Text(v.meaning, color = Wa2Colors.Text, fontSize = 13.sp)
-        v.conjugation?.let { Text("变形：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
-        v.notes?.let { Text("注：$it", color = Wa2Colors.TextDim, fontSize = 12.sp) }
+        v.conjugation?.let { Text(strings.aiConjugationPrefix(it), color = Wa2Colors.TextDim, fontSize = 12.sp) }
+        v.notes?.let { Text(strings.aiNotesPrefix(it), color = Wa2Colors.TextDim, fontSize = 12.sp) }
     }
 }
 
@@ -1182,24 +1196,26 @@ private fun GrammarRow(g: GrammarPoint, starred: Boolean = false, onToggleStar: 
 
 @Composable
 private fun GrammarCard(g: GrammarPoint, expl: SentenceExplanation, starred: Boolean = false, onToggleStar: (() -> Unit)? = null) {
+    val strings = LocalAppStrings.current
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CARD).padding(horizontal = 12.dp, vertical = 8.dp)) {
         GrammarRow(g, starred = starred, onToggleStar = onToggleStar)
         val surfaces = g.chunkIds.mapNotNull { id -> expl.chunks.firstOrNull { it.id == id }?.surface }
-        if (surfaces.isNotEmpty()) Text("见：" + surfaces.joinToString("、") { "「$it」" }, color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE)
+        if (surfaces.isNotEmpty()) Text(strings.aiGrammarSeenPrefix(surfaces.joinToString("、") { "「$it」" }), color = Wa2Colors.TextDim, fontSize = 12.sp, style = JP_TEXT_STYLE)
     }
 }
 
 // ------------------------------------------------------------------------------------- follow-up
 
-private fun LazyListScope.followUpItems(state: AiBreakdownState, persona: AiPersonaSettings) {
-    item(key = "followup-title") { SectionHeader("追问 Follow-up · ${persona.shortName}") }
+private fun LazyListScope.followUpItems(state: AiBreakdownState, persona: AiPersonaSettings, strings: Wa2Strings) {
+    val name = personaDisplayName(persona, strings)
+    item(key = "followup-title") { SectionHeader(strings.aiFollowUpHeader(name)) }
     state.thread.forEach { m -> item(key = "msg-${m.id}") { Bubble(m.role == FollowUpMessage.ROLE_USER, m.text, persona) } }
     state.pendingQuestion?.let { q ->
         item(key = "pending-q") { Bubble(true, q, persona) }
         item(key = "pending-a") {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator(Modifier.size(16.dp), color = Wa2Colors.Accent, strokeWidth = 2.dp)
-                Text("${persona.shortName}思考中…", color = Wa2Colors.TextDim, fontSize = 12.sp)
+                Text(strings.aiThinkingStatus(name), color = Wa2Colors.TextDim, fontSize = 12.sp)
             }
         }
     }
@@ -1208,12 +1224,13 @@ private fun LazyListScope.followUpItems(state: AiBreakdownState, persona: AiPers
 
 @Composable
 private fun Bubble(user: Boolean, text: String, persona: AiPersonaSettings) {
+    val strings = LocalAppStrings.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
         Column(
             Modifier.widthIn(max = 520.dp).clip(RoundedCornerShape(12.dp))
                 .background(if (user) Wa2Colors.AccentDim.copy(alpha = 0.55f) else CARD).padding(10.dp),
         ) {
-            if (!user) Text(persona.shortName, color = Wa2Colors.Name, fontSize = 11.sp)
+            if (!user) Text(personaDisplayName(persona, strings), color = Wa2Colors.Name, fontSize = 11.sp)
             Text(if (user) AnnotatedString(text) else markdownLight(text), color = Wa2Colors.Text, fontSize = 14.sp)
         }
     }
@@ -1269,9 +1286,10 @@ private fun FollowUpInput(
         if (state.pendingQuestion != null) onInput("")
         onSent()
     }
+    val strings = LocalAppStrings.current
     Column(Modifier.fillMaxWidth().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            QUICK_QUESTIONS.forEach { q -> Chip(q, enabled = !state.followUpPending) { send(q) } }
+            strings.aiQuickQuestions.forEach { q -> Chip(q, enabled = !state.followUpPending) { send(q) } }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -1279,7 +1297,7 @@ private fun FollowUpInput(
                 onValueChange = onInput,
                 modifier = Modifier.weight(1f).onFocusChanged { onFocusChange(it.isFocused) },
                 singleLine = true,
-                placeholder = { Text("向${ai.persona.shortName}追问… Ask a follow-up", fontSize = 13.sp) },
+                placeholder = { Text(strings.aiFollowUpPlaceholder(personaDisplayName(ai.persona, strings)), fontSize = 13.sp) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send(input) }),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -1288,7 +1306,7 @@ private fun FollowUpInput(
                     cursorColor = Wa2Colors.Accent,
                 ),
             )
-            Chip("发送 Send", selected = true, enabled = input.isNotBlank() && !state.followUpPending) { send(input) }
+            Chip(strings.aiSendBtn, selected = true, enabled = input.isNotBlank() && !state.followUpPending) { send(input) }
         }
     }
 }

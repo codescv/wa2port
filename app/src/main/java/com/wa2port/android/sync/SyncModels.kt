@@ -1,5 +1,7 @@
 package com.wa2port.android.sync
 
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import com.wa2port.core.sync.CloudSyncSchema
 import com.wa2port.core.sync.ConflictReason
 import com.wa2port.core.sync.SavePreviewMeta
@@ -178,17 +180,17 @@ data class SyncResult(
     val hasErrors: Boolean get() = errors.isNotEmpty()
     val hasPendingConflicts: Boolean get() = pendingConflicts.isNotEmpty()
 
-    fun summaryText(): String = when {
+    fun summaryText(strings: Wa2Strings = Wa2I18n.s): String = when {
         hasErrors && uploaded == 0 && downloaded == 0 && pendingConflicts.isEmpty() -> errors.first()
         pendingConflicts.isNotEmpty() ->
-            "上传 $uploaded · 下载 $downloaded · 待处理冲突 ${pendingConflicts.size}"
+            strings.syncSummaryConflicts(uploaded, downloaded, pendingConflicts.size)
         uploaded == 0 && downloaded == 0 && deletedLocal == 0 && deletedRemote == 0 ->
-            "已是最新 Up to date"
+            strings.syncSummaryUpToDate
         else -> buildList {
-            if (uploaded > 0) add("上传 $uploaded")
-            if (downloaded > 0) add("下载 $downloaded")
-            if (deletedLocal > 0 || deletedRemote > 0) add("删除 ${deletedLocal + deletedRemote}")
-            if (autoResolvedConflicts > 0) add("自动合并 $autoResolvedConflicts")
+            if (uploaded > 0) add(strings.syncSummaryUploaded(uploaded))
+            if (downloaded > 0) add(strings.syncSummaryDownloaded(downloaded))
+            if (deletedLocal > 0 || deletedRemote > 0) add(strings.syncSummaryDeleted(deletedLocal + deletedRemote))
+            if (autoResolvedConflicts > 0) add(strings.syncSummaryMerged(autoResolvedConflicts))
         }.joinToString(" · ")
     }
 }

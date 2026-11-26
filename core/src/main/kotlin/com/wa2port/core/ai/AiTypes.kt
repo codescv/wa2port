@@ -1,5 +1,7 @@
 package com.wa2port.core.ai
 
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.serialization.Serializable
 import kotlin.math.roundToInt
 
@@ -104,6 +106,8 @@ enum class RegisterTag(val wire: String, val labelCn: String) {
     DIALECT("dialect", "方言"),
     LITERARY("literary", "书面语"),
     ;
+
+    fun localizedLabel(strings: Wa2Strings = Wa2I18n.s): String = strings.registerLabel(this)
 
     companion object {
         /** Lower-cased / trimmed wire value → tag; null when unknown. */
@@ -253,23 +257,5 @@ val PARTS_OF_SPEECH: List<String> = listOf(
 
 val JLPT_LEVELS: List<String> = listOf("N5", "N4", "N3", "N2", "N1")
 
-/** zh-CN label for a [PARTS_OF_SPEECH] value (UI chips). */
-fun partOfSpeechLabel(pos: String): String = when (pos) {
-    "noun" -> "名词"
-    "verb" -> "动词"
-    "i-adjective" -> "い形容词"
-    "na-adjective" -> "な形容词"
-    "adverb" -> "副词"
-    "particle" -> "助词"
-    "auxiliary" -> "助动词"
-    "conjunction" -> "接续词"
-    "pronoun" -> "代词"
-    "counter" -> "量词"
-    "interjection" -> "感叹词"
-    "expression" -> "惯用语"
-    "prefix" -> "接头词"
-    "suffix" -> "接尾词"
-    "proper-noun" -> "专有名词"
-    "onomatopoeia" -> "拟声拟态"
-    else -> "其他"
-}
+/** Localized label for a [PARTS_OF_SPEECH] value (UI chips). */
+fun partOfSpeechLabel(pos: String, strings: Wa2Strings = Wa2I18n.s): String = strings.posLabel(pos)

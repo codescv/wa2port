@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
 import com.wa2port.core.ai.CancelToken
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.update.AppUpdater
 import com.wa2port.core.update.DirectInstallAction
 import com.wa2port.core.update.DirectInstallCoordinator
@@ -128,7 +129,7 @@ class UpdateController(
                 val cancelled = e.code == UpdateErrorCode.CANCELLED
                 state = when {
                     prevReady != null && prevReady.apkFile.isFile -> {
-                        if (!silent && !cancelled) toast("检查更新失败 Check failed: ${e.message ?: e.code.name}")
+                        if (!silent && !cancelled) toast(Wa2I18n.s.updateToastCheckFailed(e.message ?: e.code.name))
                         prevReady
                     }
                     silent || cancelled -> UpdateState.Idle
@@ -243,7 +244,7 @@ class UpdateController(
                 persistPending(true)
                 Toast.makeText(
                     context,
-                    "请允许「安装未知应用」，返回后将自动开始安装\nAllow \"Install unknown apps\" to continue installation",
+                    Wa2I18n.s.updateToastUnknownApps,
                     Toast.LENGTH_LONG,
                 ).show()
                 val intent = Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
@@ -254,7 +255,7 @@ class UpdateController(
                     // Some ROMs lack the per-app screen: fall back to the generic settings list.
                     runCatching {
                         context.startActivity(Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    }.onFailure { toast("无法打开权限设置 Cannot open settings: ${e.message ?: e.javaClass.simpleName}") }
+                    }.onFailure { toast(Wa2I18n.s.updateToastCannotOpenSettings(e.message ?: e.javaClass.simpleName)) }
                 }
             }
             DirectInstallAction.None -> Unit
@@ -269,7 +270,7 @@ class UpdateController(
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         } catch (e: Exception) {
-            state = UpdateState.Error("无法启动安装程序 Cannot start installer: ${e.message ?: e.javaClass.simpleName}", release)
+            state = UpdateState.Error(Wa2I18n.s.updateErrCannotStartInstaller(e.message ?: e.javaClass.simpleName), release)
         }
     }
 
@@ -287,9 +288,9 @@ class UpdateController(
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: ActivityNotFoundException) {
-            Toast.makeText(context, "没有可用的浏览器 No browser: $url", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, Wa2I18n.s.updateToastNoBrowser(url), Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            Toast.makeText(context, "无法打开 Cannot open: $url", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, Wa2I18n.s.updateToastCannotOpenUrl(url), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -319,15 +320,15 @@ class UpdateController(
      * otherwise a user-facing reason (the installer would only say "App not installed").
      */
     private fun validateApk(apk: File): String? {
-        if (!apk.isFile) return "安装包不存在 APK file missing"
+        if (!apk.isFile) return Wa2I18n.s.updateErrApkMissing
         val info = runCatching { app.packageManager.getPackageArchiveInfo(apk.path, 0) }.getOrNull()
-            ?: return "安装包无效或已损坏 Invalid or corrupt APK"
+            ?: return Wa2I18n.s.updateErrApkCorrupt
         if (info.packageName != app.packageName) {
-            return "安装包无效：包名不符 Wrong package (${info.packageName})"
+            return Wa2I18n.s.updateErrApkWrongPackage(info.packageName)
         }
         val code = PackageInfoCompat.getLongVersionCode(info)
         if (code <= currentVersionCode) {
-            return "安装包版本不高于当前版本 APK is not newer (v${info.versionName ?: "?"} / $code ≤ v$currentVersion / $currentVersionCode)"
+            return Wa2I18n.s.updateErrApkNotNewer(info.versionName ?: "?", code, currentVersion, currentVersionCode)
         }
         return null
     }

@@ -1,5 +1,7 @@
 package com.wa2port.core.text
 
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -176,8 +178,20 @@ object TextScale {
     /** Scale factor (1.0 = 100 %) for a stored percent. */
     fun factor(percent: Int): Float = clamp(percent) / 100f
 
+    /** Localized one-tap presets (percent) with their labels, smallest first. */
+    fun localizedPresets(strings: Wa2Strings = Wa2I18n.s): List<Pair<Int, String>> = listOf(
+        85 to strings.textScaleSmall,
+        100 to strings.textScaleNormal,
+        115 to strings.textScaleLarge,
+        130 to strings.textScaleXLarge,
+        145 to strings.textScaleXXLarge,
+    )
+
     /** Label of the preset at [percent], or null when [percent] is not a preset. */
     fun presetLabel(percent: Int): String? = PRESETS.firstOrNull { it.first == percent }?.second
+
+    /** Localized label of the preset at [percent], or null when [percent] is not a preset. */
+    fun presetLabel(percent: Int, strings: Wa2Strings): String? = strings.textScalePresetLabel(percent)
 
     /**
      * Quick-bar cycle: the next preset above [percent], wrapping to the smallest

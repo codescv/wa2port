@@ -2,6 +2,8 @@ package com.wa2port.core.sync
 
 import com.wa2port.core.engine.GFLAG_COUNT
 import com.wa2port.core.engine.SystemDataJson
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -86,13 +88,13 @@ object CloudSyncSchema {
 
     fun isSyncedSaveFileName(fileName: String): Boolean = slotForSaveFileName(fileName) != null
 
-    fun displayLabelForPath(relativePath: String): String {
-        if (relativePath == SYSTEM_REMOTE_PATH) return "系统数据 System"
-        if (relativePath == LOCKS_REMOTE_PATH) return "存档锁定 Locks"
+    fun displayLabelForPath(relativePath: String, strings: Wa2Strings = Wa2I18n.s): String {
+        if (relativePath == SYSTEM_REMOTE_PATH) return strings.syncPathSystem
+        if (relativePath == LOCKS_REMOTE_PATH) return strings.syncPathLocks
         return when (val slot = slotForRelativePath(relativePath)) {
-            AUTO_SLOT -> "自动存档 Auto"
-            QUICK_SLOT -> "快速存档 Quick"
-            in 1..MAX_USER_SLOT -> "存档 %02d".format(Locale.ROOT, slot)
+            AUTO_SLOT -> strings.syncPathAuto
+            QUICK_SLOT -> strings.syncPathQuick
+            in 1..MAX_USER_SLOT -> strings.syncPathSlot(slot!!)
             else -> relativePath
         }
     }
@@ -270,12 +272,17 @@ object SavePreviewParser {
     }
 }
 
-enum class ConflictReason(val label: String) {
-    TIMESTAMP_TIE("本地与云端存档时间非常接近，请手动选择"),
-    MISSING_TIMESTAMP("存档缺少可靠时间戳，无法自动判断"),
-    LOCAL_LOCKED("本地存档已锁定，需手动确认是否使用云端版本"),
-    MODIFY_VS_DELETE("一侧已修改而另一侧已删除，请手动选择"),
-    UNPARSEABLE("文件无法自动合并，请手动选择保留哪一侧"),
+enum class ConflictReason {
+    TIMESTAMP_TIE,
+    MISSING_TIMESTAMP,
+    LOCAL_LOCKED,
+    MODIFY_VS_DELETE,
+    UNPARSEABLE,
+    ;
+
+    val label: String get() = localizedLabel()
+
+    fun localizedLabel(strings: Wa2Strings = Wa2I18n.s): String = strings.syncConflictReason(this)
 }
 
 sealed interface SaveConflictDecision {

@@ -17,8 +17,8 @@ android {
         applicationId = "com.wa2port.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "1.4.17"
+        versionCode = 27
+        versionName = "1.4.18"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

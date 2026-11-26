@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.wa2port.android.movie.AsfMoviePlayer
 import com.wa2port.android.movie.NativeMovieDecoder
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.core.archive.Wa2Assets
 import java.io.File
 import kotlinx.coroutines.delay
@@ -104,10 +105,11 @@ fun MoviePlayer(
                 delay(unavailableMs)
                 complete()
             }
+            val strings = LocalAppStrings.current
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("影片无法播放 / ムービーを再生できません", color = Color.White, fontSize = 18.sp, textAlign = TextAlign.Center)
+                Text(strings.movieUnavailableTitle, color = Color.White, fontSize = 18.sp, textAlign = TextAlign.Center)
                 Text(
-                    "Movie \"$stem\" unavailable — place $stem.mp4 next to the game files to enable it.",
+                    strings.movieUnavailableDetail(stem),
                     color = Color(0xFFAAAAAA), fontSize = 13.sp, textAlign = TextAlign.Center,
                 )
             }

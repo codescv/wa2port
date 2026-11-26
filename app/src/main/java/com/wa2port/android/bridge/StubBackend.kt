@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.VoiceRef
@@ -187,8 +188,9 @@ class StubRenderBackend(decoder: BilingualTextDecoder) : RenderBackend {
             delay(1500)
             onFinished()
         }
+        val strings = LocalAppStrings.current
         Box(modifier.background(androidx.compose.ui.graphics.Color.Black).clickable { onFinished() }, contentAlignment = Alignment.Center) {
-            Text("影片 $stem 不可用 / ムービー再生不可", color = androidx.compose.ui.graphics.Color.Gray)
+            Text(strings.movieStubUnavailable(stem), color = androidx.compose.ui.graphics.Color.Gray)
         }
     }
 

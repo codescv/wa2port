@@ -2,6 +2,8 @@ package com.wa2port.core.update
 
 import com.wa2port.core.ai.JpSentence
 import com.wa2port.core.engine.DialogueLine
+import com.wa2port.core.i18n.Wa2I18n
+import com.wa2port.core.i18n.Wa2Strings
 import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.TextLang
 import java.net.URLEncoder
@@ -26,10 +28,10 @@ data class FeedbackGameContext(
     val inReplayMode: Boolean = false,
 ) {
     /** Compact one-line summary shown next to the in-game context toggle. */
-    fun summaryBadge(): String = buildString {
+    fun summaryBadge(s: Wa2Strings = Wa2I18n.s): String = buildString {
         append((sceneTitle?.takeIf { it.isNotBlank() } ?: scene).trim())
         if (lineNo != null && lineNo >= 0) append(" · #").append(lineNo)
-        if (inReplayMode) append(" · 回想")
+        if (inReplayMode) append(" · ").append(s.feedbackReplayTag)
     }
 
     companion object {
@@ -113,43 +115,43 @@ object AgentFeedbackHelper {
 
     /**
      * Returns `null` when [raw] is a valid RFC-compatible email address safe for `mailto:`, or a
-     * bilingual user-facing error message when blank or malformed.
+     * localized user-facing error message when blank or malformed.
      */
-    fun validateEmail(raw: String): String? {
+    fun validateEmail(raw: String, s: Wa2Strings = Wa2I18n.s): String? {
         val email = normalizeEmail(raw)
         if (email.isEmpty()) {
-            return "请先填写 Agent 反馈邮箱 Please configure Agent feedback email"
+            return s.feedbackValidateEmpty
         }
         if (email.length > 254 || email.any { it.isWhitespace() || it.code < 0x20 || it.code == 0x7F }) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         val at = email.indexOf('@')
         if (at <= 0 || at != email.lastIndexOf('@') || at == email.lastIndex) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         val local = email.substring(0, at)
         val domain = email.substring(at + 1)
         if (local.length > 64 || local.startsWith('.') || local.endsWith('.') || ".." in local) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         if (!LOCAL_PART_CHARS.matches(local)) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         if (domain.length > 253 || domain.startsWith('.') || domain.endsWith('.') || ".." in domain) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         val labels = domain.split('.')
         if (labels.size < 2) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         for (label in labels) {
             if (label.isEmpty() || label.length > 63 || label.startsWith('-') || label.endsWith('-') || !DOMAIN_LABEL_CHARS.matches(label)) {
-                return "邮箱格式无效 Invalid email address"
+                return s.feedbackValidateInvalid
             }
         }
         val tld = labels.last()
         if (tld.length < 2 || ALL_DIGITS.matches(tld)) {
-            return "邮箱格式无效 Invalid email address"
+            return s.feedbackValidateInvalid
         }
         return null
     }
@@ -235,7 +237,7 @@ object AgentFeedbackHelper {
         val normalizedFeedback = feedbackText.replace("\r\n", "\n").replace('\r', '\n').trim()
         return buildString {
             if (normalizedTitle.isNotEmpty()) {
-                append("标题 Title: ").append(normalizedTitle)
+                append("Title: ").append(normalizedTitle)
                 append("\n\n")
             }
             if (normalizedFeedback.isNotEmpty()) {

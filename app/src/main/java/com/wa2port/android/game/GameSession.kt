@@ -17,6 +17,7 @@ import com.wa2port.core.engine.SaveData
 import com.wa2port.core.engine.SkipMode
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.Wa2Engine
+import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.text.TextLang
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -389,7 +390,7 @@ class GameSession(
      * written to [SaveStore.UNDO_SLOT] and a 「撤销 Undo」 offer ([undoAction]) brings it back via
      * [undoLoad] — which passes `isUndo = true`, so undoing never overwrites `undo.json` itself.
      */
-    suspend fun loadFrom(slot: Int, isUndo: Boolean = false, undoMessage: String = "已读取存档 Loaded"): Boolean {
+    suspend fun loadFrom(slot: Int, isUndo: Boolean = false, undoMessage: String = Wa2I18n.s.toastLoaded): Boolean {
         if (inReplayMode) return false
         val data = saves.read(slot) ?: return false
         val backedUp = !isUndo && line != null && runCatching {
@@ -404,28 +405,28 @@ class GameSession(
     /** Goes back to the state replaced by the last in-session load (`undo.json`). */
     suspend fun undoLoad(): Boolean {
         val ok = loadFrom(SaveStore.UNDO_SLOT, isUndo = true)
-        toast = if (ok) "已撤销读档 Load undone" else "无法撤销 Nothing to undo"
+        toast = if (ok) Wa2I18n.s.toastLoadUndone else Wa2I18n.s.toastNothingToUndo
         return ok
     }
 
     suspend fun quickSave() {
-        if (inReplayMode) { toast = "回想模式下无法存档 Save disabled in replay"; return }
-        if (saves.isLocked(SaveStore.QUICK_SLOT)) { toast = "快速存档已锁定 Quick slot locked"; return }
+        if (inReplayMode) { toast = Wa2I18n.s.toastSaveDisabledReplay; return }
+        if (saves.isLocked(SaveStore.QUICK_SLOT)) { toast = Wa2I18n.s.toastQuickSlotLocked; return }
         // SaveStore backs the previous quick.json up to quick.prev.json before writing.
         if (saveTo(SaveStore.QUICK_SLOT)) {
-            offerUndo("已快速存档 Quick saved") {
+            offerUndo(Wa2I18n.s.toastQuickSaved) {
                 saves.restoreQuickPrev()
-                toast = "已撤销快速存档 Quick save undone"
+                toast = Wa2I18n.s.toastQuickSaveUndone
             }
         } else {
-            toast = "存档失败 Save failed"
+            toast = Wa2I18n.s.toastSaveFailed
         }
     }
 
     suspend fun quickLoad() {
-        if (inReplayMode) { toast = "回想模式下无法读档 Load disabled in replay"; return }
-        if (!loadFrom(SaveStore.QUICK_SLOT, undoMessage = "已快速读档 Quick loaded")) toast = "没有快速存档 No quick save"
-        else if (undoAction == null) toast = "已快速读档 Quick loaded"
+        if (inReplayMode) { toast = Wa2I18n.s.toastLoadDisabledReplay; return }
+        if (!loadFrom(SaveStore.QUICK_SLOT, undoMessage = Wa2I18n.s.toastQuickLoaded)) toast = Wa2I18n.s.toastNoQuickSave
+        else if (undoAction == null) toast = Wa2I18n.s.toastQuickLoaded
     }
 
     private fun offerUndo(message: String, perform: suspend () -> Unit) {
