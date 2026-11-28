@@ -52,8 +52,10 @@ class JpSentence(
                 is TextItem.Ruby -> {
                     val from = sb.length
                     item.base.forEach(::add)
-                    val reading = item.reading.joinToString("") { decoder.jpChar(it) }.trim()
-                    if (sb.length > from && reading.isNotEmpty()) ruby += ScriptRuby(CharSpan(from, sb.length), reading)
+                    if (!item.auto) {
+                        val reading = item.reading.joinToString("") { decoder.jpChar(it) }.trim()
+                        if (sb.length > from && reading.isNotEmpty()) ruby += ScriptRuby(CharSpan(from, sb.length), reading)
+                    }
                 }
                 else -> {}
             }

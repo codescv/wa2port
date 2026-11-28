@@ -64,6 +64,8 @@ interface TextPainter {
         visibleGlyphs: Int = Int.MAX_VALUE,
         maxChars: Float = 0f,
         reflow: Reflow = Reflow.KEEP_ALL,
+        hideAutoRuby: Boolean = false,
+        revealedRubyGroups: Set<Int> = emptySet(),
     ): Float
 
     /**
@@ -72,6 +74,22 @@ interface TextPainter {
      * Glyphs with index ≥ [visibleGlyphs] never hit. See `com.wa2port.core.ai.GlyphHit`.
      */
     fun glyphIndexAt(
+        rich: RichText,
+        lang: TextLang,
+        maxWidth: Float,
+        sizePx: Float,
+        maxChars: Float,
+        reflow: Reflow,
+        localX: Float,
+        localY: Float,
+        visibleGlyphs: Int = Int.MAX_VALUE,
+    ): Int = -1
+
+    /**
+     * Group id (`>= 0`, first base glyph index of the ruby group) of the auto-injected furigana
+     * group under ([localX], [localY]), or `-1` when none or not an auto ruby.
+     */
+    fun autoRubyGroupAt(
         rich: RichText,
         lang: TextLang,
         maxWidth: Float,

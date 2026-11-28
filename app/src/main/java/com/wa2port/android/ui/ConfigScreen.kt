@@ -5,10 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wa2port.android.ai.AiLearningController
@@ -54,6 +58,7 @@ import com.wa2port.android.sync.CloudSyncManager
 import com.wa2port.android.update.UpdateController
 import com.wa2port.core.i18n.AppLanguage
 import com.wa2port.core.i18n.Wa2Strings
+import com.wa2port.core.text.FuriganaMode
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.TextScale
 import com.wa2port.core.update.AgentFeedbackHelper
@@ -211,7 +216,22 @@ fun ConfigPanel(
                     LabeledSlider(strings.configAutoDelay, settings.autoDelayMs / 100, 3..60, "%.1f s".format(Locale.ROOT, settings.autoDelayMs / 1000f)) { v ->
                         onChange { it.copy(autoDelayMs = v * 100) }
                     }
-                    FontSizeSection(settings.textScale, settings.lang) { v -> onChange { it.withTextScale(v) } }
+                    FontSizeSection(settings.textScale, settings.lang, settings.furiganaMode) { v -> onChange { it.withTextScale(v) } }
+                    OptionRow(strings.configFurigana) {
+                        Segmented(
+                            listOf(
+                                FuriganaMode.ALL to strings.furiganaModeAll,
+                                FuriganaMode.TAP to strings.furiganaModeTap,
+                                FuriganaMode.OFF to strings.furiganaModeOff,
+                            ),
+                            settings.furiganaMode,
+                            { v -> onChange { it.copy(furiganaMode = v) } },
+                        )
+                    }
+                    Text(
+                        strings.configFuriganaHint,
+                        color = Wa2Colors.TextDim, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                    )
                     OptionRow(strings.configWindowOpacityPresets) {
                         Segmented(
                             windowOpacityPresets(strings),
@@ -309,7 +329,7 @@ fun ConfigPanel(
  * and a live preview of the ADV window at the chosen size.
  */
 @Composable
-private fun FontSizeSection(textScale: Int, lang: DisplayLang, onSet: (Int) -> Unit) {
+private fun FontSizeSection(textScale: Int, lang: DisplayLang, furiganaMode: FuriganaMode, onSet: (Int) -> Unit) {
     val strings = LocalAppStrings.current
     val current = TextScale.clamp(textScale)
     OptionRow(strings.configFontPresets) {
@@ -334,7 +354,7 @@ private fun FontSizeSection(textScale: Int, lang: DisplayLang, onSet: (Int) -> U
         StepButton("+", enabled = current < TextScale.MAX) { onSet(TextScale.step(current, up = true)) }
         Text("$current%", color = Wa2Colors.TextDim, fontSize = 13.sp, textAlign = TextAlign.End, modifier = Modifier.width(if (compact) 48.dp else 56.dp))
     }
-    FontPreviewCard(current, lang, LocalIsPortrait.current)
+    FontPreviewCard(current, lang, furiganaMode, LocalIsPortrait.current)
 }
 
 /** 48 dp square − / + button. */
@@ -360,9 +380,9 @@ private fun StepButton(label: String, enabled: Boolean, onClick: () -> Unit) {
  * `Text` (no glyph-atlas painter exists on the title screen), so it shows the relative size.
  */
 @Composable
-private fun FontPreviewCard(percent: Int, lang: DisplayLang, portrait: Boolean = false) {
+private fun FontPreviewCard(percent: Int, lang: DisplayLang, furiganaMode: FuriganaMode = FuriganaMode.ALL, portrait: Boolean = false) {
     if (portrait) {
-        PortraitFontPreviewCard(percent, lang)
+        PortraitFontPreviewCard(percent, lang, furiganaMode)
         return
     }
     val t = TextScale.factor(percent)
@@ -401,10 +421,12 @@ private fun FontPreviewCard(percent: Int, lang: DisplayLang, portrait: Boolean =
                             Box(Modifier.width(dpOf(MessageLayout.advColumnGap(t))).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                                 Box(Modifier.width(1.dp).fillMaxHeight().background(Wa2Colors.AccentDim.copy(alpha = 0.45f)))
                             }
-                            Text(PREVIEW_JP, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp, modifier = Modifier.weight(1f))
+                            PreviewJpText(textSp, lineSp, furiganaMode, modifier = Modifier.weight(1f))
                         }
+                    } else if (lang == DisplayLang.JP) {
+                        PreviewJpText(textSp, lineSp, furiganaMode)
                     } else {
-                        Text(if (lang == DisplayLang.JP) PREVIEW_JP else PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
+                        Text(PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
                     }
                 }
                 // Speaker name box overlapping the window top, as in AdvWindow.
@@ -443,7 +465,7 @@ private const val PREVIEW_STACKED_GAP_DP = 18f
  * gap) unless two 19-char columns fit; 中文 / 日本語 use one 30 px × scale block.
  */
 @Composable
-private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
+private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang, furiganaMode: FuriganaMode = FuriganaMode.ALL) {
     val strings = LocalAppStrings.current
     val t = TextScale.factor(percent)
     val density = LocalDensity.current
@@ -481,16 +503,17 @@ private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
                                 Box(Modifier.width(colGap.dp).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                                     Box(Modifier.width(1.dp).fillMaxHeight().background(Wa2Colors.AccentDim.copy(alpha = 0.45f)))
                                 }
-                                Text(PREVIEW_JP, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp, modifier = Modifier.weight(1f))
+                                PreviewJpText(textSp, lineSp, furiganaMode, modifier = Modifier.weight(1f))
                             }
                             bilingual -> {
                                 Text(PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
                                 Box(Modifier.fillMaxWidth().height(PREVIEW_STACKED_GAP_DP.dp), contentAlignment = Alignment.Center) {
                                     Box(Modifier.fillMaxWidth().height(1.dp).background(Wa2Colors.AccentDim.copy(alpha = 0.45f)))
                                 }
-                                Text(PREVIEW_JP, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
+                                PreviewJpText(textSp, lineSp, furiganaMode)
                             }
-                            else -> Text(if (lang == DisplayLang.JP) PREVIEW_JP else PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
+                            lang == DisplayLang.JP -> PreviewJpText(textSp, lineSp, furiganaMode)
+                            else -> Text(PREVIEW_CN, color = Wa2Colors.Text, fontSize = textSp, lineHeight = lineSp)
                         }
                     }
                     // Speaker name box overlapping the deck top, as in AdvWindow.
@@ -520,6 +543,78 @@ private fun PortraitFontPreviewCard(percent: Int, lang: DisplayLang) {
 private const val PREVIEW_NAME = "雪菜"
 private const val PREVIEW_CN = "「……啊，下雪了呢。今年的冬天，好像也会很冷吧。」"
 private const val PREVIEW_JP = "「……あ、雪だね。今年の冬も、きっと寒くなるね」"
+
+private data class PreviewToken(val base: String, val ruby: String? = null)
+
+private val PREVIEW_JP_TOKENS = listOf(
+    PreviewToken("「"), PreviewToken("…"), PreviewToken("…"), PreviewToken("あ、"),
+    PreviewToken("雪", "ゆき"),
+    PreviewToken("だ"), PreviewToken("ね。"),
+    PreviewToken("今年", "ことし"),
+    PreviewToken("の"),
+    PreviewToken("冬", "ふゆ"),
+    PreviewToken("も、"), PreviewToken("き"), PreviewToken("っ"), PreviewToken("と"),
+    PreviewToken("寒", "さむ"),
+    PreviewToken("く"), PreviewToken("な"), PreviewToken("る"), PreviewToken("ね」"),
+)
+
+/**
+ * Live preview of the Japanese sample line reflecting [furiganaMode]:
+ * - [FuriganaMode.ALL]: shows hiragana readings above kanji.
+ * - [FuriganaMode.TAP]: reserves ruby headroom with zero shift; tapping a kanji toggles its reading.
+ * - [FuriganaMode.OFF]: plain text without auto furigana.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PreviewJpText(
+    fontSize: TextUnit,
+    lineHeight: TextUnit,
+    furiganaMode: FuriganaMode,
+    modifier: Modifier = Modifier,
+) {
+    if (furiganaMode == FuriganaMode.OFF) {
+        Text(PREVIEW_JP, color = Wa2Colors.Text, fontSize = fontSize, lineHeight = lineHeight, modifier = modifier)
+        return
+    }
+    var revealed by remember(furiganaMode) { mutableStateOf(emptySet<Int>()) }
+    val rubySize = fontSize * 0.45f
+    val rubyLine = fontSize * 0.50f
+    FlowRow(modifier = modifier) {
+        PREVIEW_JP_TOKENS.forEachIndexed { idx, tok ->
+            val hasRuby = tok.ruby != null
+            val showRuby = hasRuby && (furiganaMode == FuriganaMode.ALL || idx in revealed)
+            val tapModifier = if (furiganaMode == FuriganaMode.TAP && hasRuby) {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    revealed = if (idx in revealed) revealed - idx else revealed + idx
+                }
+            } else {
+                Modifier
+            }
+            Column(
+                modifier = tapModifier,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = tok.ruby ?: " ",
+                    color = if (showRuby) Wa2Colors.Text else Color.Transparent,
+                    fontSize = rubySize,
+                    lineHeight = rubyLine,
+                    maxLines = 1,
+                )
+                Text(
+                    text = tok.base,
+                    color = Wa2Colors.Text,
+                    fontSize = fontSize,
+                    lineHeight = fontSize,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 internal fun OptionRow(label: String, content: @Composable () -> Unit) {

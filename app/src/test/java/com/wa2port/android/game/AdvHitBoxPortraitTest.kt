@@ -32,7 +32,7 @@ class AdvHitBoxPortraitTest {
 
         override fun draw(
             canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float, maxWidth: Float, sizePx: Float, color: Int,
-            visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
+            visibleGlyphs: Int, maxChars: Float, reflow: Reflow, hideAutoRuby: Boolean, revealedRubyGroups: Set<Int>,
         ): Float = measureHeight(rich, lang, maxWidth, sizePx, maxChars, reflow)
 
         override fun glyphIndexAt(

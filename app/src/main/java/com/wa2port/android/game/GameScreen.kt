@@ -65,8 +65,11 @@ import com.wa2port.android.ui.SaveLoadMode
 import com.wa2port.android.ui.SaveLoadPanel
 import com.wa2port.android.ui.Wa2Colors
 import com.wa2port.core.ai.JpSentence
+import com.wa2port.core.engine.DialogueLine
+import com.wa2port.core.engine.LineRef
 import com.wa2port.core.i18n.Wa2I18n
 import com.wa2port.core.text.DeckLayout
+import com.wa2port.core.text.FuriganaMode
 import com.wa2port.core.text.MessageLayout
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -285,13 +288,88 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
         val handle = session.backend.rememberStageHandle()
         SideEffect { session.stageHandle = handle }
 
-        // Geometry of the JP block drawn by AdvWindow, for tap-to-analyze and overflow window scroll.
+        // Per-line (ADV) and per-page (NOVEL) revealed auto-ruby groups for FuriganaMode.TAP.
+        var revealedRubyGroups by remember(session) { mutableStateOf(emptySet<Int>()) }
+        var revealedForLine by remember(session) { mutableStateOf<DialogueLine?>(null) }
+        var revealedForMode by remember(session) { mutableStateOf(settings.furiganaMode) }
+        val activeRevealedRubyGroups = if (revealedForLine === session.line && revealedForMode == settings.furiganaMode) {
+            revealedRubyGroups
+        } else {
+            emptySet()
+        }
+        LaunchedEffect(session.line, settings.furiganaMode) {
+            revealedRubyGroups = emptySet()
+            revealedForLine = session.line
+            revealedForMode = settings.furiganaMode
+        }
+
+        val pageRoot = session.page.firstOrNull() ?: session.line
+        var revealedPageRubyGroups by remember(session) { mutableStateOf<Map<LineRef, Set<Int>>>(emptyMap()) }
+        var revealedPageRoot by remember(session) { mutableStateOf<DialogueLine?>(null) }
+        var revealedPageMode by remember(session) { mutableStateOf(settings.furiganaMode) }
+        val activeRevealedPageRubies = if (revealedPageRoot === pageRoot && revealedPageMode == settings.furiganaMode) {
+            revealedPageRubyGroups
+        } else {
+            emptyMap()
+        }
+        LaunchedEffect(pageRoot, settings.furiganaMode) {
+            revealedPageRubyGroups = emptyMap()
+            revealedPageRoot = pageRoot
+            revealedPageMode = settings.furiganaMode
+        }
+
+        // Geometry of the JP block drawn by AdvWindow / NovelPage, for tap-to-reveal furigana, tap-to-analyze and overflow window scroll.
         val advHit = remember(session) { AdvHitBox() }
         val gestureHandler = remember(session) {
             StageGestureHandler(
-                // Rim pills (🔊 重听 / landscape ✨ AI解读) first, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
+                // Rim pills (🔊 重听 / landscape ✨ AI解读) first, then TAP-mode furigana reveal, then tap-to-analyze on a JP glyph, otherwise a normal advance tap.
                 onTap = { p ->
-                    if (!tryVoiceTap(vm, session, advHit, p) && !tryAiPillTap(vm, session, advHit, p) && !tryAiTap(vm, session, advHit, p)) {
+                    if (!tryVoiceTap(vm, session, advHit, p) &&
+                        !tryAiPillTap(vm, session, advHit, p) &&
+                        !tryFuriganaTap(
+                            vm = vm,
+                            session = session,
+                            advHit = advHit,
+                            p = p,
+                            currentRevealed = {
+                                if (revealedForLine === session.line && revealedForMode == vm.settings.furiganaMode) {
+                                    revealedRubyGroups
+                                } else {
+                                    emptySet()
+                                }
+                            },
+                            onReveal = { groupId ->
+                                val base = if (revealedForLine === session.line && revealedForMode == vm.settings.furiganaMode) {
+                                    revealedRubyGroups
+                                } else {
+                                    emptySet()
+                                }
+                                revealedForLine = session.line
+                                revealedForMode = vm.settings.furiganaMode
+                                revealedRubyGroups = base + groupId
+                            },
+                            currentPageRevealed = { ref ->
+                                val curRoot = session.page.firstOrNull() ?: session.line
+                                if (revealedPageRoot === curRoot && revealedPageMode == vm.settings.furiganaMode) {
+                                    revealedPageRubyGroups[ref] ?: emptySet()
+                                } else {
+                                    emptySet()
+                                }
+                            },
+                            onRevealPage = { ref, groupId ->
+                                val curRoot = session.page.firstOrNull() ?: session.line
+                                val baseMap = if (revealedPageRoot === curRoot && revealedPageMode == vm.settings.furiganaMode) {
+                                    revealedPageRubyGroups
+                                } else {
+                                    emptyMap()
+                                }
+                                revealedPageRoot = curRoot
+                                revealedPageMode = vm.settings.furiganaMode
+                                revealedPageRubyGroups = baseMap + (ref to ((baseMap[ref] ?: emptySet()) + groupId))
+                            },
+                        ) &&
+                        !tryAiTap(vm, session, advHit, p)
+                    ) {
                         session.onTap()
                     }
                 },
@@ -336,9 +414,22 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                         painter, session.page.ifEmpty { listOf(line) }, settings.lang, session.visibleJp, session.visibleCn,
                         waiting, opacity, textScale, stageWpx, stageHpx, onOverflow = { session.trimPage() }, modifier = Modifier.fillMaxSize(),
                         frame = advFrame, hitBox = advHit,
+                        furiganaMode = settings.furiganaMode,
+                        revealedPageRubyGroups = activeRevealedPageRubies,
+                        decoder = session.engine.decoder,
+                        fallbackAiPack = vm.ai.offlinePack,
+                        fallbackAiPackRevision = vm.ai.offlinePackRevision,
                     )
                 } else {
-                    AdvWindow(painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale, Modifier.fillMaxSize(), advHit, advFrame)
+                    AdvWindow(
+                        painter, line, settings.lang, session.visibleJp, session.visibleCn, waiting, opacity, textScale,
+                        Modifier.fillMaxSize(), advHit, advFrame,
+                        furiganaMode = settings.furiganaMode,
+                        revealedRubyGroups = activeRevealedRubyGroups,
+                        decoder = session.engine.decoder,
+                        fallbackAiPack = vm.ai.offlinePack,
+                        fallbackAiPackRevision = vm.ai.offlinePackRevision,
+                    )
                 }
             }
             // Gesture layer above text, below interactive controls. Inert while any overlay or the AI
@@ -366,6 +457,10 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                         modifier = Modifier.offset(choiceRect.left.dp, choiceRect.top.dp).size(choiceRect.width.dp, choiceRect.height.dp),
                         cardWidth = choiceRect.width.dp,
                         scalePx = DeckLayout.DECK_SCALE * density.density * textScale,
+                        furiganaMode = settings.furiganaMode,
+                        decoder = session.engine.decoder,
+                        fallbackAiPack = vm.ai.offlinePack,
+                        fallbackAiPackRevision = vm.ai.offlinePackRevision,
                     )
                 } else {
                     val twoColAdv = settings.lang == DisplayLang.BOTH && line?.cn?.isEmpty == false
@@ -373,6 +468,10 @@ fun GameScreen(vm: AppViewModel, session: GameSession) {
                         painter, session.choices, settings.lang, stageHpx, textScale, onChoose = { session.choose(it) },
                         // Above the ADV window, which grows upwards with large text and 4-line bilingual mode.
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(if (novel || line == null) 1f else MessageLayout.advTop(textScale, twoColAdv) - 0.015f),
+                        furiganaMode = settings.furiganaMode,
+                        decoder = session.engine.decoder,
+                        fallbackAiPack = vm.ai.offlinePack,
+                        fallbackAiPackRevision = vm.ai.offlinePackRevision,
                     )
                 }
             }
@@ -633,6 +732,56 @@ private fun tryAiPillTap(vm: AppViewModel, session: GameSession, advHit: AdvHitB
 }
 
 /**
+ * Tap-to-reveal furigana (ADV & NOVEL, [FuriganaMode.TAP]): when tapping an unrevealed
+ * auto-injected kanji ruby group inside a visible JP text box, reveals that group in place
+ * (0 px shift). If [com.wa2port.android.data.Settings.aiTapToAnalyze] is ON, also opens the AI
+ * breakdown at the tapped glyph (matching Kotori); otherwise consumes the tap so the dialogue
+ * does not advance. Tapping kana, empty space, CN column, already-revealed kanji, or stage
+ * returns false.
+ */
+private fun tryFuriganaTap(
+    vm: AppViewModel,
+    session: GameSession,
+    advHit: AdvHitBox,
+    p: Offset,
+    currentRevealed: () -> Set<Int>,
+    onReveal: (Int) -> Unit,
+    currentPageRevealed: (LineRef) -> Set<Int>,
+    onRevealPage: (LineRef, Int) -> Unit,
+): Boolean {
+    val s = vm.settings
+    val line = session.line ?: return false
+    val novel = s.windowMode == WindowMode.NOVEL || session.stage.novelMode
+    if (s.furiganaMode != FuriganaMode.TAP || session.windowHidden || session.choices.isNotEmpty() || !session.revealDone) return false
+    if (session.skipToggle || session.autoMode || session.overlay != Overlay.NONE || vm.ai.breakdown != null || vm.ai.notebookOpen) return false
+    if (novel) {
+        val hit = advHit.pageAutoRubyAt(session.backend.text, p) ?: return false
+        val activePage = session.page.ifEmpty { listOf(line) }
+        if (activePage.none { it === hit.line }) return false
+        if (hit.groupId in currentPageRevealed(hit.line.ref)) return false
+        onRevealPage(hit.line.ref, hit.groupId)
+        if (s.aiTapToAnalyze && hit.glyphIndex >= 0) {
+            val charIndex = JpSentence.fromRich(hit.line.jp, session.engine.decoder).charIndexOfGlyph(hit.glyphIndex)
+            vm.ai.open(session, hit.line, charIndex, Overlay.NONE)
+        }
+        return true
+    }
+    // ADV: the hit box must belong to this very line (never map a stale box onto a new line).
+    if (advHit.jp?.sourceRich !== line.jp) return false
+    val groupId = advHit.autoRubyGroupAt(session.backend.text, p)
+    if (groupId < 0 || groupId in currentRevealed()) return false
+    onReveal(groupId)
+    if (s.aiTapToAnalyze) {
+        val g = advHit.glyphAt(session.backend.text, p)
+        if (g >= 0) {
+            val charIndex = JpSentence.fromRich(line.jp, session.engine.decoder).charIndexOfGlyph(g)
+            vm.ai.open(session, line, charIndex, Overlay.NONE)
+        }
+    }
+    return true
+}
+
+/**
  * Tap-to-analyze (ADV, opt-in): when the tap lands on a revealed Japanese glyph, opens the AI
  * breakdown focused on that character and returns true; otherwise the tap keeps its normal meaning.
  * Reads settings at call time (the gesture handler outlives recompositions).
@@ -644,7 +793,7 @@ private fun tryAiTap(vm: AppViewModel, session: GameSession, advHit: AdvHitBox, 
     if (!s.aiTapToAnalyze || novel || session.windowHidden || session.choices.isNotEmpty() || !session.revealDone) return false
     if (session.skipToggle || session.autoMode || session.overlay != Overlay.NONE || vm.ai.breakdown != null) return false
     // The hit box must belong to this very line (never map a stale box onto a new line).
-    if (advHit.jp?.rich !== line.jp) return false
+    if (advHit.jp?.sourceRich !== line.jp) return false
     val g = advHit.glyphAt(session.backend.text, p)
     if (g < 0) return false
     val charIndex = JpSentence.fromRich(line.jp, session.engine.decoder).charIndexOfGlyph(g)

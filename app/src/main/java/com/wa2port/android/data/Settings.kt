@@ -3,6 +3,7 @@ package com.wa2port.android.data
 import com.wa2port.core.ai.AiPersonaSettings
 import com.wa2port.core.ai.AiProviderSettings
 import com.wa2port.core.i18n.AppLanguage
+import com.wa2port.core.text.FuriganaMode
 import com.wa2port.core.text.TextScale
 import com.wa2port.core.update.AgentFeedbackHelper
 import kotlinx.serialization.Serializable
@@ -53,6 +54,8 @@ data class Settings(
     /** App UI language (`SYSTEM` = follow OS locale, `ZH`, `EN`, `JA`). Applies immediately without restart. */
     val appLanguage: AppLanguage = AppLanguage.SYSTEM,
     val lang: DisplayLang = DisplayLang.BOTH,
+    /** Automatic Japanese kanji furigana mode: ALL (default), TAP (tap kanji to reveal), OFF. */
+    val furiganaMode: FuriganaMode = FuriganaMode.ALL,
     val windowMode: WindowMode = WindowMode.ADV,
     /** Message window background opacity, percent. */
     val windowOpacity: Int = 70,

@@ -115,6 +115,7 @@ class FallbackTextPainter(private val decoder: BilingualTextDecoder) : TextPaint
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
         maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
+        hideAutoRuby: Boolean, revealedRubyGroups: Set<Int>,
     ): Float {
         // Lay out the full text (stable line breaks while revealing), then clip to the visible prefix.
         val full = plain(rich, lang, Int.MAX_VALUE, reflow)

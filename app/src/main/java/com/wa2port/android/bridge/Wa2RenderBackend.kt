@@ -18,9 +18,12 @@ import com.wa2port.core.engine.EngineEvent
 import com.wa2port.core.engine.StageState
 import com.wa2port.core.engine.VoiceRef
 import com.wa2port.core.engine.Wa2Engine
+import com.wa2port.core.text.FuriganaPack
 import com.wa2port.core.text.Reflow
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** [TextPainter] over @render's fon.pak/fnt.pak [GlyphAtlasText], with a small layout cache. */
 class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
@@ -57,9 +60,13 @@ class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
     override fun draw(
         canvas: Canvas, rich: RichText, lang: TextLang, x: Float, y: Float,
         maxWidth: Float, sizePx: Float, color: Int, visibleGlyphs: Int, maxChars: Float, reflow: Reflow,
+        hideAutoRuby: Boolean, revealedRubyGroups: Set<Int>,
     ): Float {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
-        glyphs.drawLayout(canvas, l, lang, x, y, color, visibleGlyphs)
+        glyphs.drawLayout(
+            canvas, l, lang, x, y, color, visibleGlyphs,
+            hideAutoRuby = hideAutoRuby, revealedRubyGroups = revealedRubyGroups,
+        )
         return l.height
     }
 
@@ -70,6 +77,17 @@ class AtlasTextPainter(val glyphs: GlyphAtlasText) : TextPainter {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
         val boxes = l.glyphs.map { GlyphHit.Box(it.index, it.x, it.top, it.advance) }
         return GlyphHit.glyphIndexAt(boxes, sizePx * glyphs.lineSpacing, sizePx, localX, localY, visibleGlyphs)
+    }
+
+    override fun autoRubyGroupAt(
+        rich: RichText, lang: TextLang, maxWidth: Float, sizePx: Float, maxChars: Float, reflow: Reflow,
+        localX: Float, localY: Float, visibleGlyphs: Int,
+    ): Int {
+        val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
+        if (l.rubyGroups.none { it.auto }) return -1
+        val boxes = l.glyphs.map { GlyphHit.Box(it.index, it.x, it.top, it.advance) }
+        val g = GlyphHit.glyphIndexAt(boxes, sizePx * glyphs.lineSpacing, sizePx, localX, localY, visibleGlyphs)
+        return if (g >= 0) l.autoRubyGroupForGlyph(g) else -1
     }
 }
 
@@ -95,6 +113,7 @@ class Wa2RenderBackend(private val context: Context, private val engine: Wa2Engi
     }
 
     override suspend fun preload() {
+        withContext(Dispatchers.IO) { FuriganaPack.shared }
         glyphs.preload(TextLang.CN, TextLang.JP)
     }
 

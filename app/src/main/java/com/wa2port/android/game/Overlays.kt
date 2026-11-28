@@ -72,9 +72,14 @@ import com.wa2port.android.ui.pullDismissSheet
 import com.wa2port.android.ui.rememberPullDismissState
 import com.wa2port.android.ui.sceneLabel
 import com.wa2port.android.ui.screenSafePadding
+import com.wa2port.core.ai.OfflineAiPack
 import com.wa2port.core.engine.ChoiceOption
 import com.wa2port.core.engine.DialogueLine
 import com.wa2port.core.engine.LineRef
+import com.wa2port.core.text.BilingualTextDecoder
+import com.wa2port.core.text.FuriganaMode
+import com.wa2port.core.text.FuriganaOverlay
+import com.wa2port.core.text.FuriganaPack
 import com.wa2port.core.text.RichText
 import com.wa2port.core.text.TextLang
 import com.wa2port.core.text.TextScale
@@ -133,7 +138,23 @@ fun ChoiceCards(
     modifier: Modifier,
     cardWidth: Dp? = null,
     scalePx: Float? = null,
+    furiganaMode: FuriganaMode = FuriganaMode.OFF,
+    furiganaPack: FuriganaPack = FuriganaPack.shared,
+    decoder: BilingualTextDecoder? = null,
+    fallbackAiPack: OfflineAiPack? = null,
+    fallbackAiPackRevision: Int = 0,
 ) {
+    val dec = decoder ?: remember { BilingualTextDecoder() }
+    val displayChoices = remember(choices, furiganaMode, furiganaPack, fallbackAiPackRevision) {
+        if (furiganaMode != FuriganaMode.ALL) {
+            choices
+        } else {
+            choices.map { ch ->
+                val enriched = FuriganaOverlay.apply(ch.jp, furiganaPack, dec, FuriganaMode.ALL, fallbackAiPack)
+                if (enriched === ch.jp) ch else ch.copy(jp = enriched)
+            }
+        }
+    }
     val scale = scalePx ?: (stageHeightPx / 720f * textScale)
     BoxWithConstraints(modifier.background(Color(0x55000000)), contentAlignment = if (cardWidth != null) Alignment.BottomCenter else Alignment.Center) {
         val density = LocalDensity.current
@@ -144,7 +165,7 @@ fun ChoiceCards(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            choices.forEachIndexed { i, ch ->
+            displayChoices.forEachIndexed { i, ch ->
                 val shape = RoundedCornerShape(12.dp)
                 Box(
                     Modifier
@@ -352,6 +373,31 @@ fun GameMenu(
                 onSelect = { lang -> onUpdateSettings { it.copy(lang = lang) } },
                 modifier = Modifier.fillMaxWidth(),
             )
+            // Kotori-style 3-segment Furigana mode selector (ALL / TAP / OFF), compact & responsive down to 360dp.
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    strings.configFurigana,
+                    color = Wa2Colors.TextDim,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    Segmented(
+                        options = listOf(
+                            FuriganaMode.ALL to strings.furiganaModeAll,
+                            FuriganaMode.TAP to strings.furiganaModeTap,
+                            FuriganaMode.OFF to strings.furiganaModeOff,
+                        ),
+                        selected = settings.furiganaMode,
+                        onSelect = { mode -> onUpdateSettings { it.copy(furiganaMode = mode) } },
+                    )
+                }
+            }
             // Chips: WIDE keeps today's [窗口][字号] / [点词][📒][👁] rows; compact wraps 2 per row.
             val chips: List<@Composable (Modifier) -> Unit> = listOf(
                 { m ->

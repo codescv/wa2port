@@ -32,9 +32,14 @@ import com.wa2port.android.bridge.TextPainter
 import com.wa2port.android.data.DisplayLang
 import com.wa2port.android.ui.LocalAppStrings
 import com.wa2port.android.ui.Wa2Colors
+import com.wa2port.core.ai.OfflineAiPack
 import com.wa2port.core.engine.DialogueLine
+import com.wa2port.core.engine.LineRef
 import com.wa2port.core.text.BilingualTextDecoder
 import com.wa2port.core.text.DeckLayout
+import com.wa2port.core.text.FuriganaMode
+import com.wa2port.core.text.FuriganaOverlay
+import com.wa2port.core.text.FuriganaPack
 import com.wa2port.core.text.MessageLayout
 import com.wa2port.core.text.MessageLayout.MAIN_PX
 import com.wa2port.core.text.MessageLayout.NAME_PX
@@ -83,9 +88,21 @@ private fun twoColumns(
         Block(line.jp, TextLang.JP, sizePx, TEXT_COLOR, visJp, maxChars, reflow = reflow)
 }
 
-private fun DrawScope.drawBlock(painter: TextPainter, b: Block, x: Float, y: Float, width: Float): Float {
+private fun DrawScope.drawBlock(
+    painter: TextPainter,
+    b: Block,
+    x: Float,
+    y: Float,
+    width: Float,
+    hideAutoRuby: Boolean = false,
+    revealedRubyGroups: Set<Int> = emptySet(),
+): Float {
     var h = 0f
-    drawIntoCanvas { c -> h = painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible, b.maxChars, b.reflow) }
+    val hide = hideAutoRuby && b.lang == TextLang.JP
+    val revealed = if (b.lang == TextLang.JP) revealedRubyGroups else emptySet()
+    drawIntoCanvas { c ->
+        h = painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible, b.maxChars, b.reflow, hide, revealed)
+    }
     return h
 }
 
@@ -139,12 +156,23 @@ internal fun nameBlocks(line: DialogueLine, lang: DisplayLang, scale: Float, dec
     }
 }
 
-private fun DrawScope.drawBlocks(painter: TextPainter, blocks: List<Block>, x: Float, y0: Float, width: Float, gap: Float): Float {
+private fun DrawScope.drawBlocks(
+    painter: TextPainter,
+    blocks: List<Block>,
+    x: Float,
+    y0: Float,
+    width: Float,
+    gap: Float,
+    hideAutoRuby: Boolean = false,
+    revealedRubyGroups: Set<Int> = emptySet(),
+): Float {
     var y = y0
     drawIntoCanvas { c ->
         blocks.forEachIndexed { i, b ->
             if (i > 0) y += gap
-            y += painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible, b.maxChars, b.reflow)
+            val hide = hideAutoRuby && b.lang == TextLang.JP
+            val revealed = if (b.lang == TextLang.JP) revealedRubyGroups else emptySet()
+            y += painter.draw(c.nativeCanvas, b.rich, b.lang, x, y, width, b.size, b.color, b.visible, b.maxChars, b.reflow, hide, revealed)
         }
     }
     return y - y0
@@ -270,10 +298,22 @@ class AdvHitBox {
         val visibleGlyphs: Int,
         val clipTop: Float,
         val clipBottom: Float,
+        /** Unmodified script [DialogueLine.jp] used to verify this hit box belongs to the current line. */
+        val sourceRich: RichText = rich,
     )
+
+    /** One JP text box belonging to a line on a NOVEL page, paired with its unmodified [line]. */
+    class PageJpBox(val line: DialogueLine, val box: JpBox)
+
+    /** Hit result on a NOVEL page: unmodified [line], auto ruby [groupId], and [glyphIndex]. */
+    data class PageRubyHit(val line: DialogueLine, val groupId: Int, val glyphIndex: Int)
 
     @Volatile
     var jp: JpBox? = null
+
+    /** JP text boxes drawn on the current NOVEL page (landscape or portrait), for TAP furigana. */
+    @Volatile
+    var pageJp: List<PageJpBox> = emptyList()
 
     /**
      * Touch target of the `🔊 重听` pill (stage-box px, ≥ 48 dp square, entirely above the first text
@@ -392,6 +432,7 @@ class AdvHitBox {
 
     fun clearGeometry() {
         jp = null
+        pageJp = emptyList()
         voiceRect = null
         aiRect = null
         windowRect = Rect.Zero
@@ -399,12 +440,40 @@ class AdvHitBox {
         frameMode = false
     }
 
-    /** Glyph index ([RichText.baseCodes] order) of the JP glyph under [p] (stage-box px), or −1. */
-    fun glyphAt(painter: TextPainter, p: Offset): Int {
-        val b = jp ?: return -1
+    private fun glyphAtBox(painter: TextPainter, b: JpBox, p: Offset): Int {
         val tol = maxOf(b.sizePx * 0.35f, minTolPx)
         if (p.x < b.x - tol || p.x > b.x + b.width + tol || p.y < b.clipTop || p.y > b.clipBottom) return -1
         return painter.glyphIndexAt(b.rich, TextLang.JP, b.width, b.sizePx, b.maxChars, b.reflow, p.x - b.x, p.y - b.y, b.visibleGlyphs)
+    }
+
+    private fun autoRubyGroupAtBox(painter: TextPainter, b: JpBox, p: Offset): Int {
+        val tol = maxOf(b.sizePx * 0.35f, minTolPx)
+        if (p.x < b.x - tol || p.x > b.x + b.width + tol || p.y < b.clipTop || p.y > b.clipBottom) return -1
+        return painter.autoRubyGroupAt(b.rich, TextLang.JP, b.width, b.sizePx, b.maxChars, b.reflow, p.x - b.x, p.y - b.y, b.visibleGlyphs)
+    }
+
+    /** Glyph index ([RichText.baseCodes] order) of the JP glyph under [p] (stage-box px), or −1. */
+    fun glyphAt(painter: TextPainter, p: Offset): Int {
+        val b = jp ?: return -1
+        return glyphAtBox(painter, b, p)
+    }
+
+    /** Auto-injected ruby group id (`>= 0`) under [p] (stage-box px), or `-1` when none / not auto ruby. */
+    fun autoRubyGroupAt(painter: TextPainter, p: Offset): Int {
+        val b = jp ?: return -1
+        return autoRubyGroupAtBox(painter, b, p)
+    }
+
+    /** Auto-injected ruby hit across all drawn NOVEL page JP boxes under [p], or null. */
+    fun pageAutoRubyAt(painter: TextPainter, p: Offset): PageRubyHit? {
+        for (entry in pageJp) {
+            val groupId = autoRubyGroupAtBox(painter, entry.box, p)
+            if (groupId >= 0) {
+                val glyphIndex = glyphAtBox(painter, entry.box, p)
+                return PageRubyHit(entry.line, groupId, glyphIndex)
+            }
+        }
+        return null
     }
 }
 
@@ -438,16 +507,30 @@ fun AdvWindow(
     modifier: Modifier,
     hitBox: AdvHitBox? = null,
     frame: AdvFrame? = null,
+    furiganaMode: FuriganaMode = FuriganaMode.OFF,
+    revealedRubyGroups: Set<Int> = emptySet(),
+    furiganaPack: FuriganaPack = FuriganaPack.shared,
+    decoder: BilingualTextDecoder = NAME_DECODER,
+    fallbackAiPack: OfflineAiPack? = null,
+    fallbackAiPackRevision: Int = 0,
 ) {
     val strings = LocalAppStrings.current
     val state = hitBox ?: remember { AdvHitBox() }
     DisposableEffect(state) {
         onDispose { state.clearGeometry() }
     }
+    val enrichedJp = remember(line.ref, line.jp, furiganaMode, furiganaPack, fallbackAiPackRevision) {
+        FuriganaOverlay.apply(line.jp, furiganaPack, decoder, furiganaMode, fallbackAiPack, line.ref.scene, line.ref.token)
+    }
+    val displayLine = remember(line, enrichedJp) {
+        if (enrichedJp === line.jp) line else line.copy(jp = enrichedJp)
+    }
+    val hideAutoRuby = furiganaMode == FuriganaMode.TAP
     val blink = rememberBlink()
     Canvas(modifier) {
         state.syncLine(line, lang, textScale)
         state.jp = null
+        state.pageJp = emptyList()
         state.voiceRect = null
         state.aiRect = null
         state.frameMode = frame != null
@@ -520,7 +603,7 @@ fun AdvWindow(
         val gap = 8f * stageScale
         // Portrait: bottom of the drawn text (canvas px) for the ▼ wait mark.
         var contentEnd = textTop
-        val cols = twoColumns(line, lang, TWO_COL_PX * scale, TWO_COL_MAX_CHARS, visibleJp, visibleCn)
+        val cols = twoColumns(displayLine, lang, TWO_COL_PX * scale, TWO_COL_MAX_CHARS, visibleJp, visibleCn)
         if (cols != null && stacked) {
             val em = cols.first.size
             val cap = DeckLayout.lineCap(width, em, stageScale)
@@ -559,9 +642,9 @@ fun AdvWindow(
                     Wa2Colors.AccentDim.copy(alpha = 0.45f), Offset(left + pad, divY), Offset(right - pad, divY),
                     strokeWidth = 1.2f * stageScale,
                 )
-                drawBlock(painter, jp, left + pad, jpY, width)
+                drawBlock(painter, jp, left + pad, jpY, width, hideAutoRuby, revealedRubyGroups)
             }
-            state.jp = AdvHitBox.JpBox(jp.rich, left + pad, jpY, width, jp.size, jp.maxChars, jp.reflow, jp.visible, clipTop, clipBottom)
+            state.jp = AdvHitBox.JpBox(jp.rich, left + pad, jpY, width, jp.size, jp.maxChars, jp.reflow, jp.visible, clipTop, clipBottom, sourceRich = line.jp)
             if (maxScroll > 0.5f) {
                 drawAdvScrollbar(right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
             }
@@ -604,9 +687,9 @@ fun AdvWindow(
                 drawBlock(painter, cn, left + pad, textTop - cnScrollY, colW)
             }
             clipRect(left, jpClipTop, right, clipBottom) {
-                drawBlock(painter, jp, divX + colGap / 2f, textTop - jpScrollY, colW)
+                drawBlock(painter, jp, divX + colGap / 2f, textTop - jpScrollY, colW, hideAutoRuby, revealedRubyGroups)
             }
-            state.jp = AdvHitBox.JpBox(jp.rich, divX + colGap / 2f, textTop - jpScrollY, colW, jp.size, jp.maxChars, jp.reflow, jp.visible, jpClipTop, clipBottom)
+            state.jp = AdvHitBox.JpBox(jp.rich, divX + colGap / 2f, textTop - jpScrollY, colW, jp.size, jp.maxChars, jp.reflow, jp.visible, jpClipTop, clipBottom, sourceRich = line.jp)
             if (maxScroll > 0.5f) {
                 drawAdvScrollbar(right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
             }
@@ -615,9 +698,9 @@ fun AdvWindow(
             // Portrait: full-width deck cap (one hanging closer allowed) and no KEEP_ALL step (PC
             // 34-char breaks would leave orphans at caps 18–21).
             val base = if (frame == null) {
-                blocksFor(line, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.KEEP_ALL)
+                blocksFor(displayLine, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.KEEP_ALL)
             } else {
-                blocksFor(line, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.SENTENCE)
+                blocksFor(displayLine, lang, scale, width, visibleJp, visibleCn, defaultReflow = Reflow.SENTENCE)
                     .map { it.copy(maxChars = DeckLayout.lineCap(width, it.size, stageScale)) }
             }
             var blocks = base
@@ -642,13 +725,13 @@ fun AdvWindow(
             val clipBottom = if (maxScroll > 0.5f) bottom - pad * 0.55f else bottom - pad * 0.3f
             val clipTop = if (blockScrollY > 0.5f) textTop else textTop - 3f * stageScale
             clipRect(left, clipTop, right, clipBottom) {
-                drawBlocks(painter, blocks, left + pad, textTop - blockScrollY, width, gap)
+                drawBlocks(painter, blocks, left + pad, textTop - blockScrollY, width, gap, hideAutoRuby, revealedRubyGroups)
             }
             var y = textTop - blockScrollY
             blocks.forEachIndexed { i, b ->
                 if (i > 0) y += gap
                 if (b.lang == TextLang.JP) {
-                    state.jp = AdvHitBox.JpBox(b.rich, left + pad, y, width, b.size, b.maxChars, b.reflow, b.visible, clipTop, clipBottom)
+                    state.jp = AdvHitBox.JpBox(b.rich, left + pad, y, width, b.size, b.maxChars, b.reflow, b.visible, clipTop, clipBottom, sourceRich = line.jp)
                 }
                 y += measureBlock(painter, b, width)
             }
@@ -827,6 +910,12 @@ fun NovelPage(
     modifier: Modifier,
     frame: AdvFrame? = null,
     hitBox: AdvHitBox? = null,
+    furiganaMode: FuriganaMode = FuriganaMode.OFF,
+    revealedPageRubyGroups: Map<LineRef, Set<Int>> = emptyMap(),
+    furiganaPack: FuriganaPack = FuriganaPack.shared,
+    decoder: BilingualTextDecoder = NAME_DECODER,
+    fallbackAiPack: OfflineAiPack? = null,
+    fallbackAiPackRevision: Int = 0,
 ) {
     val strings = LocalAppStrings.current
     if (hitBox != null) {
@@ -834,6 +923,17 @@ fun NovelPage(
             onDispose { hitBox.clearGeometry() }
         }
     }
+    val enrichedPage = remember(page, furiganaMode, furiganaPack, fallbackAiPackRevision) {
+        if (furiganaMode == FuriganaMode.OFF) {
+            page
+        } else {
+            page.map { l ->
+                val enriched = FuriganaOverlay.apply(l.jp, furiganaPack, decoder, furiganaMode, fallbackAiPack, l.ref.scene, l.ref.token)
+                if (enriched === l.jp) l else l.copy(jp = enriched)
+            }
+        }
+    }
+    val hideAutoRuby = furiganaMode == FuriganaMode.TAP
     val blink = rememberBlink()
     val stageScale = heightPx / 720f
     val scale = stageScale * textScale
@@ -844,13 +944,13 @@ fun NovelPage(
     val gap = 6f * stageScale
     val paraGap = 18f * stageScale
     // Measure the full page (all lines fully revealed) to detect overflow.
-    val overflow = remember(page, lang, widthPx, heightPx, textScale, frame) {
-        if (page.size <= 1) {
+    val overflow = remember(enrichedPage, lang, widthPx, heightPx, textScale, frame) {
+        if (enrichedPage.size <= 1) {
             false
         } else if (frame != null) {
-            NovelDeck(painter, lang, textScale, frame).overflows(page)
+            NovelDeck(painter, lang, textScale, frame).overflows(enrichedPage)
         } else {
-            val total = page.sumOf { l ->
+            val total = enrichedPage.sumOf { l ->
                 val names = nameBlocks(l, lang, scale * 0.8f)
                 val nameH = if (names.isNotEmpty()) NAME_PX * scale * 0.8f * 1.3f else 0f
                 (paragraphHeight(painter, l, lang, scale, Int.MAX_VALUE, Int.MAX_VALUE, width, gap) + nameH + paraGap).toDouble()
@@ -862,16 +962,26 @@ fun NovelPage(
     Canvas(modifier) {
         if (frame != null) {
             // Until trimPage() lands, show only the newest line so the overflowing frame never flashes.
-            val shown = if (overflow && page.size > 1) listOf(page.last()) else page
-            drawNovelDeck(NovelDeck(painter, lang, textScale, frame), shown, visibleJp, visibleCn, waiting, opacity, hitBox, blink, strings.advPillVoice)
+            val shown = if (overflow && enrichedPage.size > 1) listOf(enrichedPage.last()) else enrichedPage
+            val rawShown = if (overflow && page.size > 1) listOf(page.last()) else page
+            drawNovelDeck(
+                NovelDeck(painter, lang, textScale, frame), shown, rawShown, visibleJp, visibleCn, waiting, opacity,
+                hitBox, blink, strings.advPillVoice, hideAutoRuby, revealedPageRubyGroups,
+            )
             return@Canvas
         }
-        // Landscape NOVEL keeps no hit geometry (e.g. left over from a portrait deck before a rotation).
-        if (hitBox != null && (hitBox.frameMode || hitBox.voiceRect != null || hitBox.aiRect != null)) hitBox.clearGeometry()
+        // Landscape NOVEL keeps no portrait deck / rim-pill geometry (only pageJp boxes for TAP furigana).
+        if (hitBox != null && (hitBox.frameMode || hitBox.voiceRect != null || hitBox.aiRect != null || hitBox.jp != null)) {
+            hitBox.clearGeometry()
+        }
+        hitBox?.minTolPx = 12.dp.toPx()
+        val pageJpBoxes = ArrayList<AdvHitBox.PageJpBox>(enrichedPage.size)
         drawRect(Color(0xFF050A16).copy(alpha = 0.35f + 0.55f * opacity))
         var y = top
-        page.forEachIndexed { i, l ->
-            val last = i == page.lastIndex
+        enrichedPage.forEachIndexed { i, l ->
+            val rawLine = page[i]
+            val lineRevealed = revealedPageRubyGroups[rawLine.ref] ?: emptySet()
+            val last = i == enrichedPage.lastIndex
             val names = nameBlocks(l, lang, scale * 0.8f)
             if (names.isNotEmpty()) {
                 drawIntoCanvas { c ->
@@ -889,13 +999,32 @@ fun NovelPage(
             y += if (cols != null) {
                 val colW = MessageLayout.novelColumnWidth(width, scale)
                 val colGap = width - colW * 2f
+                val jpX = left + colW + colGap
                 val hCn = drawBlock(painter, cols.first, left, y, colW)
-                val hJp = drawBlock(painter, cols.second, left + colW + colGap, y, colW)
+                val hJp = drawBlock(painter, cols.second, jpX, y, colW, hideAutoRuby, lineRevealed)
+                pageJpBoxes += AdvHitBox.PageJpBox(
+                    rawLine,
+                    AdvHitBox.JpBox(cols.second.rich, jpX, y, colW, cols.second.size, cols.second.maxChars, cols.second.reflow, cols.second.visible, 0f, size.height, sourceRich = rawLine.jp),
+                )
                 maxOf(hCn, hJp) + paraGap
             } else {
-                drawBlocks(painter, blocksFor(l, lang, scale, width, vJp, vCn), left, y, width, gap) + paraGap
+                val blocks = blocksFor(l, lang, scale, width, vJp, vCn)
+                val drawnH = drawBlocks(painter, blocks, left, y, width, gap, hideAutoRuby, lineRevealed)
+                var by = y
+                blocks.forEachIndexed { bi, b ->
+                    if (bi > 0) by += gap
+                    if (b.lang == TextLang.JP) {
+                        pageJpBoxes += AdvHitBox.PageJpBox(
+                            rawLine,
+                            AdvHitBox.JpBox(b.rich, left, by, width, b.size, b.maxChars, b.reflow, b.visible, 0f, size.height, sourceRich = rawLine.jp),
+                        )
+                    }
+                    by += measureBlock(painter, b, width)
+                }
+                drawnH + paraGap
             }
         }
+        hitBox?.pageJp = pageJpBoxes
         if (waiting) drawWaitMark(left + width, (y - paraGap * 0.5f).coerceAtMost(size.height - 20f * stageScale), 9f * stageScale, blink)
     }
 }
@@ -996,6 +1125,7 @@ private class NovelDeck(val painter: TextPainter, val lang: DisplayLang, val tex
 private fun DrawScope.drawNovelDeck(
     deck: NovelDeck,
     shown: List<DialogueLine>,
+    rawShown: List<DialogueLine>,
     visibleJp: Int,
     visibleCn: Int,
     waiting: Boolean,
@@ -1003,6 +1133,8 @@ private fun DrawScope.drawNovelDeck(
     hitBox: AdvHitBox?,
     blink: Float,
     voiceLabel: String,
+    hideAutoRuby: Boolean = false,
+    revealedPageRubyGroups: Map<LineRef, Set<Int>> = emptyMap(),
 ) {
     val frame = deck.frame
     val stageScale = deck.stageScale
@@ -1010,10 +1142,11 @@ private fun DrawScope.drawNovelDeck(
     val textTop = deck.textTop
     val avail = deck.avail
     val painter = deck.painter
-    val lastLine = shown.last()
+    val lastLine = rawShown.last()
     hitBox?.let {
         it.syncLine(lastLine, deck.lang, deck.textScale)
         it.jp = null
+        it.pageJp = emptyList()
         it.voiceRect = null
         it.aiRect = null
         it.frameMode = true
@@ -1055,9 +1188,12 @@ private fun DrawScope.drawNovelDeck(
     }
     val clipBottom = if (maxScroll > 0.5f) frame.bottom - pad * 0.55f else frame.bottom - pad * 0.3f
     val clipTop = if (curScroll > 0.5f) textTop else textTop - 3f * stageScale
+    val pageJpBoxes = ArrayList<AdvHitBox.PageJpBox>(paragraphs.size)
     var y = textTop - curScroll
     clipRect(frame.left, clipTop, frame.right, clipBottom) {
         paragraphs.forEachIndexed { i, p ->
+            val rawLine = rawShown[i]
+            val lineRevealed = revealedPageRubyGroups[rawLine.ref] ?: emptySet()
             if (i > 0) y += deck.paraGap
             if (p.names.isNotEmpty()) {
                 drawIntoCanvas { c ->
@@ -1071,15 +1207,32 @@ private fun DrawScope.drawNovelDeck(
             }
             y += if (p.cols != null) {
                 val colGap = deck.width - deck.colW * 2f
-                maxOf(
-                    drawBlock(painter, p.cols.first, deck.left, y, deck.colW),
-                    drawBlock(painter, p.cols.second, deck.left + deck.colW + colGap, y, deck.colW),
+                val jpX = deck.left + deck.colW + colGap
+                val hCn = drawBlock(painter, p.cols.first, deck.left, y, deck.colW)
+                val hJp = drawBlock(painter, p.cols.second, jpX, y, deck.colW, hideAutoRuby, lineRevealed)
+                pageJpBoxes += AdvHitBox.PageJpBox(
+                    rawLine,
+                    AdvHitBox.JpBox(p.cols.second.rich, jpX, y, deck.colW, p.cols.second.size, p.cols.second.maxChars, p.cols.second.reflow, p.cols.second.visible, clipTop, clipBottom, sourceRich = rawLine.jp),
                 )
+                maxOf(hCn, hJp)
             } else {
-                drawBlocks(painter, p.blocks, deck.left, y, deck.width, deck.gap)
+                val drawnH = drawBlocks(painter, p.blocks, deck.left, y, deck.width, deck.gap, hideAutoRuby, lineRevealed)
+                var by = y
+                p.blocks.forEachIndexed { bi, b ->
+                    if (bi > 0) by += deck.gap
+                    if (b.lang == TextLang.JP) {
+                        pageJpBoxes += AdvHitBox.PageJpBox(
+                            rawLine,
+                            AdvHitBox.JpBox(b.rich, deck.left, by, deck.width, b.size, b.maxChars, b.reflow, b.visible, clipTop, clipBottom, sourceRich = rawLine.jp),
+                        )
+                    }
+                    by += measureBlock(painter, b, deck.width)
+                }
+                drawnH
             }
         }
     }
+    hitBox?.pageJp = pageJpBoxes
     if (maxScroll > 0.5f) {
         drawAdvScrollbar(frame.right - pad * 0.42f, textTop + 2f * stageScale, clipBottom - 12f * stageScale, 3.5f * stageScale, avail, contentH, curScroll, maxScroll)
     }

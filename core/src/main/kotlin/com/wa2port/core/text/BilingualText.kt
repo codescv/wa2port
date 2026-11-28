@@ -10,10 +10,10 @@ sealed class TextItem {
         override fun hashCode() = codes.contentHashCode() * 31 + size
     }
 
-    /** `<Rbase|reading>` ruby (furigana). */
-    data class Ruby(val base: IntArray, val reading: IntArray, val size: Int = 0) : TextItem() {
-        override fun equals(other: Any?) = other is Ruby && base.contentEquals(other.base) && reading.contentEquals(other.reading)
-        override fun hashCode() = base.contentHashCode() * 31 + reading.contentHashCode()
+    /** `<Rbase|reading>` ruby (furigana). [auto] is true for overlay-injected furigana (non-script). */
+    data class Ruby(val base: IntArray, val reading: IntArray, val size: Int = 0, val auto: Boolean = false) : TextItem() {
+        override fun equals(other: Any?) = other is Ruby && base.contentEquals(other.base) && reading.contentEquals(other.reading) && size == other.size && auto == other.auto
+        override fun hashCode() = ((base.contentHashCode() * 31 + reading.contentHashCode()) * 31 + size) * 31 + auto.hashCode()
     }
 
     /** Literal `\n` in the script. */

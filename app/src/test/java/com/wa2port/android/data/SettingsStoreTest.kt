@@ -1,6 +1,7 @@
 package com.wa2port.android.data
 
 import com.wa2port.core.i18n.AppLanguage
+import com.wa2port.core.text.FuriganaMode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
@@ -151,5 +152,23 @@ class SettingsStoreTest {
         val legacy = SettingsStore(file).load()
         assertEquals(AppLanguage.SYSTEM, legacy.appLanguage)
         assertEquals(75, legacy.textSpeed)
+    }
+
+    @Test
+    fun furiganaModeDefaultsToAllAndRoundTrips() {
+        assertEquals(FuriganaMode.ALL, Settings().furiganaMode)
+        val store = SettingsStore(file)
+        assertEquals(FuriganaMode.ALL, store.load().furiganaMode)
+
+        for (mode in FuriganaMode.entries) {
+            store.save(store.load().copy(furiganaMode = mode))
+            assertEquals(mode, SettingsStore(file).load().furiganaMode)
+        }
+
+        // Legacy settings.json without furiganaMode key falls back cleanly to ALL.
+        file.writeText("""{ "textSpeed": 65, "portraitDefaultMigrated": true }""")
+        val legacy = SettingsStore(file).load()
+        assertEquals(FuriganaMode.ALL, legacy.furiganaMode)
+        assertEquals(65, legacy.textSpeed)
     }
 }

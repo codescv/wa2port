@@ -83,8 +83,28 @@ class GlyphAtlasText(
     /** One positioned base glyph (box-relative; [top] is the glyph box top, [size] its edge length). */
     class PlacedGlyph(val code: Int, val x: Float, val top: Float, val size: Float, val advance: Float, val index: Int)
 
-    /** One positioned ruby reading glyph; visible together with base glyph [baseIndex]. */
-    class PlacedRuby(val code: Int, val x: Float, val top: Float, val baseIndex: Int)
+    /**
+     * One positioned ruby reading glyph; visible together with base glyph [baseIndex].
+     * [size] is the drawn glyph size (0 = default `sizePx * rubyScale`). [auto] is true for
+     * overlay-injected furigana (veiled in TAP mode until [groupId] is revealed).
+     */
+    class PlacedRuby(
+        val code: Int,
+        val x: Float,
+        val top: Float,
+        val baseIndex: Int,
+        val size: Float = 0f,
+        val auto: Boolean = false,
+        val groupId: Int = baseIndex,
+    )
+
+    /** One ruby group covering base glyph indices `[startGlyph, endGlyph)` in display order. */
+    data class RubyGroup(
+        val groupId: Int,
+        val startGlyph: Int,
+        val endGlyph: Int,
+        val auto: Boolean,
+    )
 
     /**
      * Result of [layout]: positions relative to the text box origin.
@@ -101,7 +121,27 @@ class GlyphAtlasText(
         val endX: Float,
         val endY: Float,
         val pageBreaks: List<Int>,
+        val rubyGroups: List<RubyGroup> = emptyList(),
     ) {
+        /**
+         * Returns the [RubyGroup.groupId] (`>= 0`) of the auto-injected ruby group covering
+         * [glyphIndex], or `-1` if [glyphIndex] is not inside an auto-injected ruby group.
+         */
+        fun autoRubyGroupForGlyph(glyphIndex: Int): Int {
+            if (glyphIndex < 0 || rubyGroups.isEmpty()) return -1
+            var lo = 0
+            var hi = rubyGroups.size - 1
+            while (lo <= hi) {
+                val mid = (lo + hi) ushr 1
+                val g = rubyGroups[mid]
+                when {
+                    glyphIndex < g.startGlyph -> hi = mid - 1
+                    glyphIndex >= g.endGlyph -> lo = mid + 1
+                    else -> return if (g.auto) g.groupId else -1
+                }
+            }
+            return -1
+        }
         /** Right edge and glyph-box top after the first [visibleGlyphs] glyphs (typewriter cursor). */
         fun cursorAfter(visibleGlyphs: Int): Pair<Float, Float> {
             if (visibleGlyphs >= glyphs.size) return endX to endY
@@ -159,9 +199,11 @@ class GlyphAtlasText(
         outlineColor: Int = this.outlineColor,
         maxChars: Float = 0f,
         reflow: Reflow = Reflow.KEEP_ALL,
+        hideAutoRuby: Boolean = false,
+        revealedRubyGroups: Set<Int> = emptySet(),
     ): Float {
         val l = layout(rich, lang, maxWidth, sizePx, maxChars, reflow)
-        drawLayout(canvas, l, lang, x, y, color, visibleGlyphs, outlineColor)
+        drawLayout(canvas, l, lang, x, y, color, visibleGlyphs, outlineColor, hideAutoRuby, revealedRubyGroups)
         return l.height
     }
 
@@ -175,9 +217,11 @@ class GlyphAtlasText(
         color: Int,
         visibleGlyphs: Int = Int.MAX_VALUE,
         outlineColor: Int = this.outlineColor,
+        hideAutoRuby: Boolean = false,
+        revealedRubyGroups: Set<Int> = emptySet(),
     ) {
         val atlas = atlas(lang)
-        val rubySize = layout.sizePx * rubyScale
+        val defaultRubySize = layout.sizePx * rubyScale
         val passes = if (outlineColor != 0) 2 else 1
         // Outline pass for every visible glyph first, so outlines never cover neighbouring bodies.
         for (pass in 0 until passes) {
@@ -189,7 +233,9 @@ class GlyphAtlasText(
             }
             for (r in layout.rubies) {
                 if (r.baseIndex >= visibleGlyphs) continue
-                drawGlyph(canvas, atlas, lang, r.code, x + r.x, y + r.top, rubySize, tint, outline)
+                if (r.auto && hideAutoRuby && r.groupId !in revealedRubyGroups) continue
+                val rSize = if (r.size > 0f) r.size else defaultRubySize
+                drawGlyph(canvas, atlas, lang, r.code, x + r.x, y + r.top, rSize, tint, outline)
             }
         }
     }
@@ -209,7 +255,14 @@ class GlyphAtlasText(
         val rubySize = sizePx * rubyScale
 
         // 1) Build unbreakable units.
-        class Chunk(val codes: IntArray, val reading: IntArray?, val scale: Float = 1f, val hardBreak: Boolean = false, val pageBreak: Boolean = false) {
+        class Chunk(
+            val codes: IntArray,
+            val reading: IntArray?,
+            val scale: Float = 1f,
+            val hardBreak: Boolean = false,
+            val pageBreak: Boolean = false,
+            val autoRuby: Boolean = false,
+        ) {
             val width: Float = codes.fold(0f) { acc, c -> acc + adv(c, full) * scale }
         }
         val units = ArrayList<Chunk>()
@@ -230,7 +283,7 @@ class GlyphAtlasText(
                     }
                 }
             }
-            is TextItem.Ruby -> units += Chunk(item.base, item.reading, if (item.size != 0) smallScale else 1f)
+            is TextItem.Ruby -> units += Chunk(item.base, item.reading, if (item.size != 0) smallScale else 1f, autoRuby = item.auto)
             TextItem.NewLine -> units += Chunk(IntArray(0), null, hardBreak = true)
             TextItem.PageBreak -> units += Chunk(IntArray(0), null, hardBreak = pageBreakIsNewLine, pageBreak = true)
             is TextItem.Wait -> {}
@@ -239,6 +292,7 @@ class GlyphAtlasText(
         // 2) Place them.
         val glyphs = ArrayList<PlacedGlyph>()
         val rubies = ArrayList<PlacedRuby>()
+        val rubyGroups = ArrayList<RubyGroup>()
         var line = 0
         var penX = 0f
         var index = 0
@@ -321,6 +375,66 @@ class GlyphAtlasText(
             return n2 >= 0 && units[n2].codes[0] in NO_LINE_START
         }
 
+        // Per-line 2-pass 1D ruby packer: centers each ruby over its base kanji, pushes right for
+        // min gap, pushes left from maxWidth into free left space, and uniformly shrinks only when
+        // the line's total ruby width exceeds maxWidth — guaranteeing zero collisions and zero clipping.
+        class PendingRuby(
+            val reading: IntArray,
+            val readingUnits: Float,
+            val baseStartX: Float,
+            val baseEndX: Float,
+            val top: Float,
+            val firstIndex: Int,
+            val autoRuby: Boolean,
+        )
+        val lineRubies = ArrayList<PendingRuby>()
+        fun flushLineRubies() {
+            val n = lineRubies.size
+            if (n == 0) return
+            val gapRatio = 0.08f
+            var rSize = rubySize
+            var gap = rSize * gapRatio
+            val totalUnits = lineRubies.fold(0f) { acc, p -> acc + p.readingUnits }
+            if (maxWidth > 0f && totalUnits > 0f) {
+                val totalAtDefault = totalUnits * rSize + gap * (n - 1)
+                if (totalAtDefault > maxWidth) {
+                    val denom = totalUnits + gapRatio * (n - 1)
+                    rSize = ((maxWidth / denom) * 0.9999f).coerceAtMost(rubySize)
+                    gap = rSize * gapRatio
+                }
+            }
+            val widths = FloatArray(n) { i -> lineRubies[i].readingUnits * rSize }
+            val xs = FloatArray(n) { i ->
+                val p = lineRubies[i]
+                var cx = p.baseStartX + (p.baseEndX - p.baseStartX - widths[i]) / 2f
+                if (maxWidth > 0f && cx + widths[i] > maxWidth) cx = maxWidth - widths[i]
+                cx.coerceAtLeast(0f)
+            }
+            // Pass 1: forward push so adjacent rubies maintain at least `gap`.
+            for (i in 1 until n) {
+                val minX = xs[i - 1] + widths[i - 1] + gap
+                if (xs[i] < minX) xs[i] = minX
+            }
+            // Pass 2: backward push from `maxWidth` into free left space so nothing clips past right edge.
+            if (maxWidth > 0f && xs[n - 1] + widths[n - 1] > maxWidth) {
+                xs[n - 1] = (maxWidth - widths[n - 1]).coerceAtLeast(0f)
+                for (i in n - 2 downTo 0) {
+                    val maxX = xs[i + 1] - gap - widths[i]
+                    if (xs[i] > maxX) xs[i] = maxX.coerceAtLeast(0f)
+                }
+            }
+            for (i in 0 until n) {
+                val p = lineRubies[i]
+                var rx = xs[i]
+                val rTop = p.top - rSize - band * 0.05f
+                for (c in p.reading) {
+                    rubies += PlacedRuby(c, rx, rTop, p.firstIndex, size = rSize, auto = p.autoRuby, groupId = p.firstIndex)
+                    rx += if (c < 0x100) rSize / 2f else rSize
+                }
+            }
+            lineRubies.clear()
+        }
+
         var lineChars = 0f
         var hungOnLine = false
         var backoffCarry = 0f
@@ -328,6 +442,7 @@ class GlyphAtlasText(
             if (u.pageBreak) pageBreaks += index
             if (u.hardBreak) {
                 if (!keptBreak[ui]) continue // soft join: let the column width / maxChars wrap instead
+                flushLineRubies()
                 line++; penX = 0f; lineChars = 0f; hungOnLine = false; backoffCarry = 0f; continue
             }
             val uChars = charsOf(u)
@@ -341,11 +456,13 @@ class GlyphAtlasText(
                 if (hang) {
                     hungOnLine = true
                 } else {
+                    flushLineRubies()
                     line++; penX = 0f; lineChars = 0f; hungOnLine = false; backoffCarry = 0f
                 }
             } else if (penX > 0f && u.codes.isNotEmpty() && u.codes[0] !in NO_LINE_START &&
                 needsKinsokuBackoff(ui, penX + u.width, lineChars + uChars, cap, hungOnLine)
             ) {
+                flushLineRubies()
                 line++; penX = 0f; lineChars = 0f; hungOnLine = false; backoffCarry = uChars
             }
             lineChars += uChars
@@ -361,15 +478,12 @@ class GlyphAtlasText(
             }
             val reading = u.reading
             if (reading != null && reading.isNotEmpty()) {
-                val rw = reading.fold(0f) { acc, c -> acc + if (c < 0x100) rubySize / 2 else rubySize }
-                var rx = startX + (penX - startX - rw) / 2f
-                val rTop = top - rubySize - band * 0.05f
-                for (c in reading) {
-                    rubies += PlacedRuby(c, rx, rTop, firstIndex)
-                    rx += if (c < 0x100) rubySize / 2 else rubySize
-                }
+                rubyGroups += RubyGroup(groupId = firstIndex, startGlyph = firstIndex, endGlyph = index, auto = u.autoRuby)
+                val readingUnits = reading.fold(0f) { acc, c -> acc + if (c < 0x100) 0.5f else 1f }
+                lineRubies += PendingRuby(reading, readingUnits, startX, penX, top, firstIndex, u.autoRuby)
             }
         }
+        flushLineRubies()
         val lineCount = if (glyphs.isEmpty() && line == 0) 0 else line + 1
         val last = glyphs.lastOrNull()
         return TextLayout(
@@ -382,6 +496,7 @@ class GlyphAtlasText(
             endX = penX,
             endY = last?.top ?: (line * pitch + band),
             pageBreaks = pageBreaks,
+            rubyGroups = rubyGroups,
         )
     }
 
@@ -448,6 +563,8 @@ class GlyphAtlasText(
         private const val TAG = "GlyphAtlasText"
         const val BODY_ATLAS = "本体80.tga"
         const val OUTLINE_ATLAS = "袋影80.tga"
+        /** Minimum ruby scale factor when shrinking to avoid horizontal collision with an adjacent ruby. */
+        const val MIN_RUBY_SCALE = 0.34f
 
         /** Fraction of an atlas cell that forms one em (advance of a full-width glyph): 30/40. */
         private const val CELL_EM = 0.75f

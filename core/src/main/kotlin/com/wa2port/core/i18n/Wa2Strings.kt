@@ -46,6 +46,9 @@ interface Wa2Strings {
     val scriptLangBoth: String
     val scriptLangCn: String
     val scriptLangJp: String
+    val furiganaModeAll: String
+    val furiganaModeTap: String
+    val furiganaModeOff: String
     val windowModeAdv: String
     val windowModeNovel: String
     val textScaleSmall: String
@@ -107,6 +110,8 @@ interface Wa2Strings {
     val configOrientation: String
     val configOrientationHint: String
     val configScriptLanguage: String
+    val configFurigana: String
+    val configFuriganaHint: String
     val configWindowMode: String
     val configSkip: String
     val configSkipReadOnly: String
